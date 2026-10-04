@@ -24,7 +24,7 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
       const checkedBranch = branchRef.current
       let prodQuery = supabase
         .from('products')
-        .select('id, name, stock_quantity, low_stock_alert, has_variants, category, category_id')
+        .select('id, name, stock_quantity, low_stock_alert, barcode, has_variants, category, category_id')
         .eq('is_active', true)
         .eq('has_variants', false)
       if (checkedBranch) prodQuery = prodQuery.eq('branch', checkedBranch)
@@ -37,7 +37,7 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
       // 2. Fetch active variants
       let variantQuery = supabase
         .from('product_variants')
-        .select('id, variant_name, stock, product_id, is_active, products(name, category, category_id, is_active)')
+        .select('id, variant_name, stock, barcode, product_id, is_active, products(name, category, category_id, is_active)')
         .eq('is_active', true)
       if (checkedBranch) variantQuery = variantQuery.eq('branch', checkedBranch)
       const { data: variants, error: varErr } = await variantQuery
@@ -66,6 +66,7 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
             name: p.name,
             stock: currentStock,
             alertThreshold: threshold,
+            barcode: p.barcode,
             category: p.category,
           })
         }
@@ -95,6 +96,7 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
             variantName: v.variant_name,
             stock: currentStock,
             alertThreshold: threshold,
+            barcode: v.barcode,
             category: parentProd?.category,
           })
         }

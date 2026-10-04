@@ -65,8 +65,9 @@ export const InventoryAnalyticsView: React.FC = () => {
       const q = search.toLowerCase().trim()
       const prodName = m.product?.name?.toLowerCase() || ''
       const varName = m.variant?.variant_name?.toLowerCase() || ''
+      const barcode = m.barcode_id?.toLowerCase() || ''
       const user = m.created_by_name?.toLowerCase() || ''
-      if (!prodName.includes(q) && !varName.includes(q) && !user.includes(q)) {
+      if (!prodName.includes(q) && !varName.includes(q) && !barcode.includes(q) && !user.includes(q)) {
         return false
       }
     }
@@ -87,6 +88,7 @@ export const InventoryAnalyticsView: React.FC = () => {
         'Variant ID',
         'Variant Name (Size)',
         'Category',
+        'Barcode',
         'Current Stock (Units)',
         'Purchase Price (INR)',
         'Selling Price (INR)',
@@ -110,6 +112,7 @@ export const InventoryAnalyticsView: React.FC = () => {
           it.variant_id || '',
           (it.variant_name || ''),
           (it.category || 'General'),
+          it.barcode || '',
           stock,
           costPrice,
           sellingPrice,
@@ -136,6 +139,7 @@ export const InventoryAnalyticsView: React.FC = () => {
       'Movement Type',
       'Product Name',
       'Variant',
+      'Barcode',
       'Qty Delta',
       'Qty Before',
       'Qty After',
@@ -148,6 +152,7 @@ export const InventoryAnalyticsView: React.FC = () => {
       m.movement_type,
       (m.product?.name || 'Unknown'),
       (m.variant?.variant_name || ''),
+      m.barcode_id || '',
       m.quantity_delta,
       m.quantity_before,
       m.quantity_after,
@@ -161,6 +166,8 @@ export const InventoryAnalyticsView: React.FC = () => {
 
   const getMovementBadge = (type: InventoryMovement['movement_type']) => {
     switch (type) {
+      case 'INITIAL_BARCODE_STOCK':
+        return <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-50 text-blue-800 border border-blue-200">INTAKE</span>
       case 'RESTOCK':
         return <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200">RESTOCK</span>
       case 'SALE':
@@ -367,6 +374,7 @@ export const InventoryAnalyticsView: React.FC = () => {
               className="h-8 px-2.5 rounded-lg border border-gray-300 bg-white text-xs font-bold text-gray-800 outline-none"
             >
               <option value="all">All Types</option>
+              <option value="INITIAL_BARCODE_STOCK">Intake</option>
               <option value="RESTOCK">Restock</option>
               <option value="SALE">Sale</option>
               <option value="RETURN">Return</option>
@@ -388,6 +396,7 @@ export const InventoryAnalyticsView: React.FC = () => {
                   <th className="p-3">Date &amp; Time</th>
                   <th className="p-3">Type</th>
                   <th className="p-3">Product / Variant</th>
+                  <th className="p-3 whitespace-nowrap">Barcode</th>
                   <th className="p-3 text-center">Qty Delta</th>
                   <th className="p-3 text-center">Before → After</th>
                   <th className="p-3">User</th>
@@ -417,6 +426,9 @@ export const InventoryAnalyticsView: React.FC = () => {
                           Size / Variant: {m.variant.variant_name}
                         </div>
                       )}
+                    </td>
+                    <td className="p-3 font-mono text-xs font-bold text-gray-700 whitespace-nowrap">
+                      {m.barcode_id || '—'}
                     </td>
                     <td className="p-3 text-center font-black">
                       <span

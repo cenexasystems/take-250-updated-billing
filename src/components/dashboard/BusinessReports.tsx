@@ -94,7 +94,7 @@ export default function BusinessReports() {
       const results = await Promise.all(BRANCHES.map(async (branch) => {
         const { data } = await supabase
           .from('products')
-          .select('name, category, sku, price, purchase_price, stock_quantity, is_active')
+          .select('name, category, sku, barcode, price, purchase_price, stock_quantity, is_active')
           .eq('branch', branch)
           .eq('is_active', true)
         return (data || []).map((p) => [
@@ -102,6 +102,7 @@ export default function BusinessReports() {
           p.name,
           p.category || '',
           p.sku || '',
+          p.barcode || '',
           Number(p.stock_quantity || 0),
           Number(p.purchase_price || 0).toFixed(2),
           Number(p.price || 0).toFixed(2),
@@ -110,7 +111,7 @@ export default function BusinessReports() {
       }))
       downloadCsv(
         `Consolidated_Inventory_Ledger_${new Date().toISOString().slice(0, 10)}.csv`,
-        ['Branch', 'Product', 'Category', 'SKU', 'Stock Qty', 'Cost Price', 'Sell Price', 'Retail Value'],
+        ['Branch', 'Product', 'Category', 'SKU', 'Barcode', 'Stock Qty', 'Cost Price', 'Sell Price', 'Retail Value'],
         results.flat()
       )
     } catch (err) {

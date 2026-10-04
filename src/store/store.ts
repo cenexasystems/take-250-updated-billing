@@ -58,6 +58,7 @@ export interface Product {
 
   // POS inventory fields
   sku?: string
+  barcode?: string
   brand?: string
   purchasePrice?: number
   mrp?: number
@@ -266,6 +267,7 @@ const mapDbProduct = (input: unknown, categoriesById: Record<string, string> = {
 
     // POS inventory mapping
     sku: readString(p.sku),
+    barcode: readString(p.barcode),
     brand: readString(p.brand),
     purchasePrice: toNumber(p.purchase_price, 0),
     mrp: toNumber(p.mrp, 0),

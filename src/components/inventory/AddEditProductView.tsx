@@ -14,6 +14,7 @@ import { supabase } from '../../lib/supabase'
 import { useProductStore, useAdminAuthStore, resolveBranch, type Product } from '../../store/store'
 import { fetchVariantsByProduct } from '../../services/variantService'
 import { inventoryService, type CategoryRecord } from '../../services/inventoryService'
+import { normalizeBarcode } from '../../lib/barcode'
 
 export const STANDARD_LETTER_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL', 'Free Size'] as const
 export const STANDARD_NUMERIC_SIZES = ['28', '30', '32', '34', '36', '38', '40', '42', '44', '46', '48'] as const
@@ -28,7 +29,7 @@ export interface VariantInputRow {
   price: number
   costPrice: number
   stock: number
-  sku?: string
+  customBarcode?: string
 }
 
 export const AddEditProductView: React.FC<{
@@ -52,7 +53,7 @@ export const AddEditProductView: React.FC<{
   const [purchasePrice, setPurchasePrice] = useState<string>('')
   const [stockQuantity, setStockQuantity] = useState<string>('0')
   const [lowStockAlert, setLowStockAlert] = useState<string>('5')
-  const [sku, setSku] = useState<string>('')
+  const [barcode, setBarcode] = useState<string>('')
   const [description, setDescription] = useState<string>('')
   const [hasVariants, setHasVariants] = useState<boolean>(false)
 
@@ -76,7 +77,7 @@ export const AddEditProductView: React.FC<{
     setPurchasePrice('')
     setStockQuantity('0')
     setLowStockAlert('5')
-    setSku('')
+    setBarcode('')
     setDescription('')
     setHasVariants(false)
     setVariantRows([])
@@ -105,7 +106,7 @@ export const AddEditProductView: React.FC<{
     setPurchasePrice(String(p.purchasePrice || ''))
     setStockQuantity(String(p.stockQuantity ?? p.stock ?? 0))
     setLowStockAlert(p.lowStockAlert ? String(p.lowStockAlert) : '5')
-    setSku(p.sku || '')
+    setBarcode(p.barcode || '')
     setDescription(p.description || '')
     setHasVariants(Boolean(p.hasVariants))
     setStatusMessage(null)
@@ -121,7 +122,7 @@ export const AddEditProductView: React.FC<{
             price: v.price,
             costPrice: v.purchasePrice || 0,
             stock: v.stock || 0,
-            sku: v.sku || '',
+            customBarcode: v.barcode || '',
           }))
         )
       } catch (err) {
@@ -154,7 +155,7 @@ export const AddEditProductView: React.FC<{
         price: baseP,
         costPrice: baseC,
         stock: 0,
-        sku: '',
+        customBarcode: '',
       },
     ])
   }
@@ -205,7 +206,7 @@ export const AddEditProductView: React.FC<{
         price: baseP,
         costPrice: baseC,
         stock: 0,
-        sku: '',
+        customBarcode: '',
       },
     ])
   }
@@ -240,7 +241,7 @@ export const AddEditProductView: React.FC<{
             price: baseP,
             costPrice: baseC,
             stock: 0,
-            sku: '',
+            customBarcode: '',
           })
         }
       }
@@ -327,7 +328,7 @@ export const AddEditProductView: React.FC<{
               offer_price: priceNum,
               purchase_price: costNum,
               low_stock_alert: alertThreshold,
-              sku: sku.trim() || null,
+              barcode: barcode.trim() || null,
               description: description.trim() || '',
               has_variants: false,
               stock_quantity: inputStock,
@@ -346,11 +347,25 @@ export const AddEditProductView: React.FC<{
               quantity_delta: delta,
               quantity_before: prevStock,
               quantity_after: inputStock,
+              unit_cost: costNum || null,
               reference_type: 'PRODUCT_UPDATE',
               note: 'Stock updated in product editor',
               created_by_name: 'Admin',
               branch,
             })
+          }
+
+          if (normalizeBarcode(barcode)) {
+            await supabase.from('barcode_registry').upsert(
+              {
+                barcode_value: normalizeBarcode(barcode),
+                product_id: selectedProductId,
+                variant_id: null,
+                is_active: true,
+                branch,
+              },
+              { onConflict: 'branch,barcode_value' }
+            )
           }
 
           setStatusMessage({
@@ -378,7 +393,7 @@ export const AddEditProductView: React.FC<{
                   price: vPrice,
                   purchase_price: vCost,
                   stock: vStock,
-                  sku: v.sku?.trim() || null,
+                  barcode: v.customBarcode?.trim() || null,
                   is_active: true,
                   branch,
                 })
@@ -393,6 +408,7 @@ export const AddEditProductView: React.FC<{
                   quantity_delta: vStock,
                   quantity_before: 0,
                   quantity_after: vStock,
+                  unit_cost: vCost || null,
                   reference_type: 'PRODUCT_UPDATE',
                   note: `Added variant ${v.variantName.trim()} with stock`,
                   created_by_name: 'Admin',
@@ -419,7 +435,7 @@ export const AddEditProductView: React.FC<{
                   price: vPrice,
                   purchase_price: vCost,
                   stock: vStock,
-                  sku: v.sku?.trim() || null,
+                  barcode: v.customBarcode?.trim() || null,
                 })
                 .eq('id', v.id)
                 .eq('branch', branch)
@@ -432,6 +448,7 @@ export const AddEditProductView: React.FC<{
                   quantity_delta: varDelta,
                   quantity_before: prevVarStock,
                   quantity_after: vStock,
+                  unit_cost: vCost || null,
                   reference_type: 'PRODUCT_UPDATE',
                   note: `Stock updated for variant ${v.variantName.trim()}`,
                   created_by_name: 'Admin',
@@ -453,6 +470,7 @@ export const AddEditProductView: React.FC<{
               offer_price: priceNum,
               purchase_price: costNum,
               low_stock_alert: alertThreshold,
+              barcode: null,
               description: description.trim() || '',
               has_variants: true,
               stock_quantity: totalVariantStock,
@@ -482,7 +500,7 @@ export const AddEditProductView: React.FC<{
               offer_price: priceNum,
               purchase_price: costNum,
               low_stock_alert: alertThreshold,
-              sku: sku.trim() || null,
+              barcode: barcode.trim() || null,
               description: description.trim() || '',
               has_variants: false,
               stock_quantity: inputStock,
@@ -495,6 +513,19 @@ export const AddEditProductView: React.FC<{
 
           if (insErr || !newProd) throw insErr || new Error('Failed to create product')
 
+          if (normalizeBarcode(barcode)) {
+            await supabase.from('barcode_registry').upsert(
+              {
+                barcode_value: normalizeBarcode(barcode),
+                product_id: newProd.id,
+                variant_id: null,
+                is_active: true,
+                branch,
+              },
+              { onConflict: 'branch,barcode_value' }
+            )
+          }
+
           if (inputStock > 0) {
             await supabase.from('inventory_movements').insert({
               product_id: newProd.id,
@@ -503,6 +534,7 @@ export const AddEditProductView: React.FC<{
               quantity_delta: inputStock,
               quantity_before: 0,
               quantity_after: inputStock,
+              unit_cost: costNum || null,
               reference_type: 'PRODUCT_CREATION',
               note: 'Initial received stock on product creation',
               created_by_name: 'Admin',
@@ -535,6 +567,7 @@ export const AddEditProductView: React.FC<{
               offer_price: priceNum,
               purchase_price: costNum,
               low_stock_alert: alertThreshold,
+              barcode: null,
               description: description.trim() || '',
               has_variants: true,
               stock_quantity: totalVariantStock,
@@ -562,12 +595,25 @@ export const AddEditProductView: React.FC<{
                 price: vPrice,
                 purchase_price: vCost,
                 stock: vStock,
-                sku: v.sku?.trim() || null,
+                barcode: v.customBarcode?.trim() || null,
                 is_active: true,
                 branch,
               })
               .select('id')
               .single()
+
+            if (createdVar && normalizeBarcode(v.customBarcode)) {
+              await supabase.from('barcode_registry').upsert(
+                {
+                  barcode_value: normalizeBarcode(v.customBarcode),
+                  product_id: newProd.id,
+                  variant_id: createdVar.id,
+                  is_active: true,
+                  branch,
+                },
+                { onConflict: 'branch,barcode_value' }
+              )
+            }
 
             if (createdVar && vStock > 0) {
               await supabase.from('inventory_movements').insert({
@@ -577,6 +623,7 @@ export const AddEditProductView: React.FC<{
                 quantity_delta: vStock,
                 quantity_before: 0,
                 quantity_after: vStock,
+                unit_cost: vCost || null,
                 reference_type: 'PRODUCT_CREATION',
                 note: `Initial stock for variant ${v.variantName.trim()}`,
                 created_by_name: 'Admin',
@@ -603,8 +650,10 @@ export const AddEditProductView: React.FC<{
         msg = 'A product with this name already exists in the selected category.'
       } else if (msg.includes('product_variants_product_name_unique')) {
         msg = 'A variant with this name already exists for this product.'
-      } else if (msg.includes('products_branch_sku_unique') || msg.includes('product_variants_branch_sku_unique')) {
-        msg = 'This SKU / product code is already used by another item in this branch.'
+      } else if (msg.includes('barcode_registry_barcode_value_key') || msg.includes('duplicate key value violates unique constraint')) {
+        if (msg.includes('barcode')) {
+          msg = 'This barcode is already registered to another item.'
+        }
       }
 
       setStatusMessage({ type: 'error', text: msg })
@@ -625,7 +674,7 @@ export const AddEditProductView: React.FC<{
   const filteredProducts = activeProducts.filter((p) =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
     (p.category && p.category.toLowerCase().includes(search.toLowerCase())) ||
-    (p.sku && p.sku.toLowerCase().includes(search.toLowerCase()))
+    (p.barcode && p.barcode.toLowerCase().includes(search.toLowerCase()))
   )
 
   return (
@@ -681,7 +730,7 @@ export const AddEditProductView: React.FC<{
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search products, SKUs..."
+                placeholder="Search products, SKUs, barcode..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-gray-300 bg-white text-xs font-bold text-gray-900 outline-none focus:border-[#7A1220]"
@@ -796,8 +845,8 @@ export const AddEditProductView: React.FC<{
                 </h3>
                 <p className="text-[11px] text-gray-500 font-semibold truncate hidden sm:block">
                   {selectedProductId
-                    ? `Modifying "${name || 'product'}" — update pricing, SKU, threshold or variants`
-                    : 'Receive stock, configure pricing & categories (SKU is optional)'}
+                    ? `Modifying "${name || 'product'}" — update pricing, barcode, threshold or variants`
+                    : 'Receive stock, configure pricing & categories (Barcode is optional)'}
                 </p>
               </div>
             </div>
@@ -881,7 +930,7 @@ export const AddEditProductView: React.FC<{
               </div>
             </div>
 
-            {/* Category, SKU, and Low Stock Alert */}
+            {/* Category, Barcode, and Low Stock Alert */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-[11px] font-bold text-gray-700 mb-1.5 h-4 flex items-center">
@@ -903,14 +952,14 @@ export const AddEditProductView: React.FC<{
 
               <div>
                 <label className="block text-[11px] font-bold text-gray-700 mb-1.5 h-4 flex items-center">
-                  SKU / Product code <span className="text-gray-400 font-normal ml-1">(Optional)</span>
+                  Barcode <span className="text-gray-400 font-normal ml-1">(Optional)</span>
                 </label>
                 <input
                   type="text"
                   disabled={hasVariants}
-                  placeholder={hasVariants ? 'Defined at variant level' : 'e.g. MP-100G'}
-                  value={sku}
-                  onChange={(e) => setSku(e.target.value)}
+                  placeholder={hasVariants ? 'Defined at variant level' : 'e.g. 8901234567'}
+                  value={barcode}
+                  onChange={(e) => setBarcode(e.target.value)}
                   className="w-full h-10 px-3.5 rounded-xl border border-gray-300 bg-white text-xs font-bold text-gray-900 outline-none focus:border-[#7A1220] disabled:bg-gray-100 disabled:text-gray-400"
                 />
               </div>
@@ -1238,13 +1287,13 @@ export const AddEditProductView: React.FC<{
 
                         <div className="sm:col-span-2">
                           <label className="block text-[10px] font-bold text-gray-600 mb-0.5">
-                            SKU (Opt)
+                            Barcode (Opt)
                           </label>
                           <input
                             type="text"
                             placeholder="Optional"
-                            value={v.sku || ''}
-                            onChange={(e) => handleUpdateVariantRow(v.id, 'sku', e.target.value)}
+                            value={v.customBarcode || ''}
+                            onChange={(e) => handleUpdateVariantRow(v.id, 'customBarcode', e.target.value)}
                             className="w-full h-8 px-2.5 rounded-lg border border-gray-300 bg-white text-xs font-bold text-gray-900 outline-none focus:border-[#7A1220]"
                           />
                         </div>

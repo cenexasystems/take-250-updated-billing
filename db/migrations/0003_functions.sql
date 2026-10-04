@@ -73,6 +73,7 @@ DECLARE
   v_expected_branch TEXT := public.resolve_branch(p_branch);
   v_qty_before NUMERIC := 0;
   v_delta NUMERIC := 0;
+  v_barcode_id UUID;
   v_branch TEXT;
 BEGIN
   IF p_new_quantity < 0 THEN
@@ -90,6 +91,7 @@ BEGIN
     END IF;
 
     SELECT stock, branch_id INTO v_qty_before, v_branch FROM public.product_variants WHERE id = p_variant_id FOR UPDATE;
+    SELECT id INTO v_barcode_id FROM public.barcode_registry WHERE variant_id = p_variant_id AND branch_id = v_branch AND is_active = TRUE LIMIT 1;
 
     v_delta := p_new_quantity - v_qty_before;
 
@@ -105,6 +107,7 @@ BEGIN
     WHERE id = p_product_id;
   ELSE
     SELECT stock_quantity, branch_id INTO v_qty_before, v_branch FROM public.products WHERE id = p_product_id FOR UPDATE;
+    SELECT id INTO v_barcode_id FROM public.barcode_registry WHERE product_id = p_product_id AND variant_id IS NULL AND branch_id = v_branch AND is_active = TRUE LIMIT 1;
 
     v_delta := p_new_quantity - v_qty_before;
 
@@ -117,12 +120,12 @@ BEGIN
 
   -- Record Movement
   INSERT INTO public.inventory_movements (
-    product_id, variant_id, movement_type,
+    product_id, variant_id, barcode_id, movement_type,
     quantity_delta, quantity_before, quantity_after,
     reference_type, note, created_by_name, branch_id
   )
   VALUES (
-    p_product_id, p_variant_id, p_reason,
+    p_product_id, p_variant_id, v_barcode_id, p_reason,
     v_delta, v_qty_before, p_new_quantity,
     'adjustment', COALESCE(p_note, ''), COALESCE(p_created_by_name, ''), v_branch
   );
@@ -134,6 +137,206 @@ BEGIN
     'delta', v_delta,
     'reason', p_reason
   );
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.generate_barcode_value(p_entity_type text, p_branch text DEFAULT NULL::text)
+ RETURNS text
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+  v_branch text := public.resolve_branch(p_branch);
+  v_prefix text;
+  v_n bigint;
+BEGIN
+  SELECT barcode_prefix INTO v_prefix FROM public.branches WHERE id = v_branch;
+  -- Each branch has its own sequences (created by register_branch), so numbering is independent per branch.
+  IF p_entity_type = 'variant' THEN
+    EXECUTE format('SELECT nextval(%L)', 'public.' || quote_ident('barcode_variant_seq_' || v_branch)) INTO v_n;
+    RETURN v_prefix || 'V' || LPAD(v_n::TEXT, 8, '0');
+  END IF;
+  EXECUTE format('SELECT nextval(%L)', 'public.' || quote_ident('barcode_product_seq_' || v_branch)) INTO v_n;
+  RETURN v_prefix || 'P' || LPAD(v_n::TEXT, 8, '0');
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.create_barcode_and_receive_stock(p_product_id bigint, p_variant_id uuid DEFAULT NULL::uuid, p_quantity_received numeric DEFAULT 0, p_unit_cost numeric DEFAULT NULL::numeric, p_created_by_name text DEFAULT ''::text, p_custom_barcode text DEFAULT NULL::text, p_note text DEFAULT ''::text, p_branch text DEFAULT NULL::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_branch TEXT := public.resolve_branch(p_branch);
+  v_entity_type TEXT;
+  v_barcode_id UUID;
+  v_barcode_value TEXT;
+  v_is_new_barcode BOOLEAN := FALSE;
+  v_movement_type TEXT;
+  v_qty_before NUMERIC := 0;
+  v_qty_after NUMERIC := 0;
+  v_prod_name TEXT;
+  v_var_name TEXT := '';
+BEGIN
+  IF p_quantity_received < 0 THEN
+    RAISE EXCEPTION 'Quantity received cannot be negative';
+  END IF;
+
+  -- 1. Check Parent Product Exists IN THIS BRANCH
+  SELECT name INTO v_prod_name FROM public.products WHERE id = p_product_id AND branch_id = v_branch;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Product with ID % not found', p_product_id;
+  END IF;
+
+  -- 2. Verify Variant Belongs to Product if Variant is Provided
+  IF p_variant_id IS NOT NULL THEN
+    v_entity_type := 'variant';
+    SELECT variant_name, stock INTO v_var_name, v_qty_before
+    FROM public.product_variants
+    WHERE id = p_variant_id AND product_id = p_product_id AND branch_id = v_branch;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Variant % does not belong to Product %', p_variant_id, p_product_id;
+    END IF;
+  ELSE
+    v_entity_type := 'product';
+    SELECT stock_quantity INTO v_qty_before
+    FROM public.products
+    WHERE id = p_product_id AND branch_id = v_branch;
+  END IF;
+
+  -- 3. Check for Existing Active Barcode in barcode_registry (SKU Identity)
+  IF v_entity_type = 'variant' THEN
+    SELECT id, barcode_value INTO v_barcode_id, v_barcode_value
+    FROM public.barcode_registry
+    WHERE variant_id = p_variant_id AND branch_id = v_branch AND is_active = TRUE
+    ORDER BY created_at DESC
+    LIMIT 1;
+  ELSE
+    SELECT id, barcode_value INTO v_barcode_id, v_barcode_value
+    FROM public.barcode_registry
+    WHERE product_id = p_product_id AND variant_id IS NULL AND branch_id = v_branch AND is_active = TRUE
+    ORDER BY created_at DESC
+    LIMIT 1;
+  END IF;
+
+  -- 4. Reuse Existing or Create New Barcode
+  IF v_barcode_id IS NOT NULL THEN
+    v_is_new_barcode := FALSE;
+    v_movement_type := CASE WHEN v_qty_before = 0 THEN 'INITIAL_BARCODE_STOCK' ELSE 'RESTOCK' END;
+  ELSE
+    v_is_new_barcode := TRUE;
+    v_movement_type := 'INITIAL_BARCODE_STOCK';
+    v_barcode_value := COALESCE(NULLIF(UPPER(BTRIM(p_custom_barcode)), ''), public.generate_barcode_value(v_entity_type, v_branch));
+
+    INSERT INTO public.barcode_registry (
+      barcode_value, entity_type, product_id, variant_id, is_active, created_by_name, branch_id
+    )
+    VALUES (
+      v_barcode_value, v_entity_type, p_product_id, p_variant_id, TRUE, COALESCE(p_created_by_name, ''), v_branch
+    )
+    RETURNING id INTO v_barcode_id;
+  END IF;
+
+  -- 5. Synchronize compatibility column on target table
+  IF v_entity_type = 'variant' THEN
+    UPDATE public.product_variants
+    SET barcode = v_barcode_value, updated_at = NOW()
+    WHERE id = p_variant_id AND branch_id = v_branch;
+  ELSE
+    UPDATE public.products
+    SET barcode = v_barcode_value, updated_at = NOW()
+    WHERE id = p_product_id AND branch_id = v_branch;
+  END IF;
+
+  -- 6. Apply Stock Increment & Parent Aggregate Sync
+  v_qty_after := v_qty_before + p_quantity_received;
+
+  IF p_quantity_received > 0 THEN
+    IF v_entity_type = 'variant' THEN
+      UPDATE public.product_variants
+      SET stock = v_qty_after, updated_at = NOW()
+      WHERE id = p_variant_id AND branch_id = v_branch;
+
+      -- Refresh parent aggregate stock cache
+      UPDATE public.products
+      SET stock_quantity = (
+            SELECT COALESCE(SUM(stock), 0)
+            FROM public.product_variants
+            WHERE product_id = p_product_id AND branch_id = v_branch AND is_active = TRUE
+          ),
+          stock = FLOOR((
+            SELECT COALESCE(SUM(stock), 0)
+            FROM public.product_variants
+            WHERE product_id = p_product_id AND branch_id = v_branch AND is_active = TRUE
+          ))::INTEGER,
+          updated_at = NOW()
+      WHERE id = p_product_id AND branch_id = v_branch;
+    ELSE
+      UPDATE public.products
+      SET stock_quantity = v_qty_after,
+          stock = FLOOR(v_qty_after)::INTEGER,
+          updated_at = NOW()
+      WHERE id = p_product_id AND branch_id = v_branch;
+    END IF;
+  END IF;
+
+  -- 7. Record Immutable Inventory Movement
+  IF p_quantity_received > 0 THEN
+    INSERT INTO public.inventory_movements (
+      product_id, variant_id, barcode_id, movement_type,
+      quantity_delta, quantity_before, quantity_after,
+      unit_cost, reference_type, reference_id, note, created_by_name, branch_id
+    )
+    VALUES (
+      p_product_id, p_variant_id, v_barcode_id, v_movement_type,
+      p_quantity_received, v_qty_before, v_qty_after,
+      p_unit_cost, 'barcode_receipt', v_barcode_value,
+      COALESCE(p_note, ''), COALESCE(p_created_by_name, ''), v_branch
+    );
+  END IF;
+
+  RETURN jsonb_build_object(
+    'success', TRUE,
+    'barcode_id', v_barcode_id,
+    'barcode_value', v_barcode_value,
+    'is_new_barcode', v_is_new_barcode,
+    'movement_type', v_movement_type,
+    'quantity_before', v_qty_before,
+    'quantity_received', p_quantity_received,
+    'quantity_after', v_qty_after,
+    'product_id', p_product_id,
+    'variant_id', p_variant_id,
+    'product_name', v_prod_name,
+    'variant_name', v_var_name
+  );
+END;
+$function$;
+
+-- Barcode / branch consistency: values are normalised to upper case, and a value in the generated format
+-- (<2-char prefix><P|V><8 digits>) must carry THIS branch's prefix (and P for products, V for variants).
+-- Manufacturer barcodes (EAN/UPC etc.) are not in that format and are only unique per branch.
+CREATE OR REPLACE FUNCTION public.enforce_barcode_registry_prefix()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+  v_prefix text;
+  v_kind text;
+BEGIN
+  NEW.barcode_value := UPPER(BTRIM(NEW.barcode_value));
+  IF NEW.barcode_value ~ '^[A-Z][A-Z0-9][PV][0-9]{8}$' THEN
+    SELECT barcode_prefix INTO v_prefix FROM public.branches WHERE id = NEW.branch_id;
+    IF v_prefix IS NULL OR left(NEW.barcode_value, 2) <> v_prefix THEN
+      RAISE EXCEPTION 'Barcode % does not belong to branch % (expected prefix %)', NEW.barcode_value, NEW.branch_id, COALESCE(v_prefix, '<none>')
+        USING ERRCODE = '23514';
+    END IF;
+    v_kind := CASE WHEN NEW.entity_type = 'variant' THEN 'V' ELSE 'P' END;
+    IF substr(NEW.barcode_value, 3, 1) <> v_kind THEN
+      RAISE EXCEPTION 'Barcode % does not match entity type %', NEW.barcode_value, NEW.entity_type USING ERRCODE = '23514';
+    END IF;
+  END IF;
+  RETURN NEW;
 END;
 $function$;
 
@@ -161,6 +364,7 @@ DECLARE
   v_name           text;
   v_stock          numeric;
   v_tracked        boolean;
+  v_barcode_id     uuid;
 BEGIN
   IF lower(coalesce(p_payment_method, '')) NOT IN ('cash', 'upi', 'card') THEN
     RAISE EXCEPTION 'Select a valid payment method';
@@ -332,6 +536,8 @@ BEGIN
 
     IF v_variant_id IS NOT NULL THEN
       SELECT stock INTO v_stock FROM public.product_variants WHERE id = v_variant_id AND branch_id = v_branch;
+      SELECT id INTO v_barcode_id FROM public.barcode_registry
+      WHERE variant_id = v_variant_id AND branch_id = v_branch AND is_active = TRUE LIMIT 1;
 
       UPDATE public.product_variants
       SET stock = greatest(0, stock - v_quantity), updated_at = v_now
@@ -344,6 +550,8 @@ BEGIN
       WHERE id = v_product_id AND branch_id = v_branch;
     ELSE
       SELECT stock_quantity INTO v_stock FROM public.products WHERE id = v_product_id AND branch_id = v_branch;
+      SELECT id INTO v_barcode_id FROM public.barcode_registry
+      WHERE product_id = v_product_id AND variant_id IS NULL AND branch_id = v_branch AND is_active = TRUE LIMIT 1;
 
       UPDATE public.products
       SET stock_quantity = greatest(0, stock_quantity - v_quantity),
@@ -353,11 +561,11 @@ BEGIN
     END IF;
 
     INSERT INTO public.inventory_movements (
-      product_id, variant_id, movement_type,
+      product_id, variant_id, barcode_id, movement_type,
       quantity_delta, quantity_before, quantity_after,
       reference_type, reference_id, note, branch_id
     ) VALUES (
-      v_product_id, v_variant_id, 'SALE',
+      v_product_id, v_variant_id, v_barcode_id, 'SALE',
       -v_quantity, v_stock, greatest(0, v_stock - v_quantity),
       'order', v_invoice, 'Advance order completed (' || v_advance.deposit_id || ')', v_branch
     );
@@ -424,6 +632,7 @@ DECLARE
   v_category TEXT;
   v_current_stock NUMERIC;
   v_created_at TIMESTAMPTZ := COALESCE(p_billing_date, NOW());
+  v_barcode_id UUID;
   v_branch TEXT := public.resolve_branch(p_branch);
 BEGIN
   IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
@@ -540,6 +749,7 @@ BEGIN
     IF NOT v_is_manual AND v_quantity > 0 THEN
       IF v_variant_id IS NOT NULL THEN
         SELECT stock INTO v_current_stock FROM public.product_variants WHERE id = v_variant_id AND branch_id = v_branch;
+        SELECT id INTO v_barcode_id FROM public.barcode_registry WHERE variant_id = v_variant_id AND branch_id = v_branch AND is_active = TRUE LIMIT 1;
 
         UPDATE public.product_variants
         SET stock = GREATEST(0, stock - v_quantity), updated_at = NOW()
@@ -553,18 +763,19 @@ BEGIN
         WHERE id = v_product_id AND branch_id = v_branch;
 
         INSERT INTO public.inventory_movements (
-          product_id, variant_id, movement_type,
+          product_id, variant_id, barcode_id, movement_type,
           quantity_delta, quantity_before, quantity_after,
           reference_type, reference_id, note, branch_id
         )
         VALUES (
-          v_product_id, v_variant_id, 'SALE',
+          v_product_id, v_variant_id, v_barcode_id, 'SALE',
           -v_quantity, v_current_stock, GREATEST(0, v_current_stock - v_quantity),
           'order', v_invoice_no, 'POS Sale checkout', v_branch
         );
 
       ELSIF v_product_id IS NOT NULL THEN
         SELECT stock_quantity INTO v_current_stock FROM public.products WHERE id = v_product_id AND branch_id = v_branch;
+        SELECT id INTO v_barcode_id FROM public.barcode_registry WHERE product_id = v_product_id AND variant_id IS NULL AND branch_id = v_branch AND is_active = TRUE LIMIT 1;
 
         UPDATE public.products
         SET stock_quantity = GREATEST(0, stock_quantity - v_quantity),
@@ -573,12 +784,12 @@ BEGIN
         WHERE id = v_product_id AND branch_id = v_branch;
 
         INSERT INTO public.inventory_movements (
-          product_id, variant_id, movement_type,
+          product_id, variant_id, barcode_id, movement_type,
           quantity_delta, quantity_before, quantity_after,
           reference_type, reference_id, note, branch_id
         )
         VALUES (
-          v_product_id, NULL, 'SALE',
+          v_product_id, NULL, v_barcode_id, 'SALE',
           -v_quantity, v_current_stock, GREATEST(0, v_current_stock - v_quantity),
           'order', v_invoice_no, 'POS Sale checkout', v_branch
         );
@@ -648,6 +859,8 @@ BEGIN
     DELETE FROM public.inventory_movements
     WHERE variant_id = p_variant_id AND branch_id = v_branch;
 
+    DELETE FROM public.barcode_registry
+    WHERE variant_id = p_variant_id AND product_id = p_product_id AND branch_id = v_branch;
 
     DELETE FROM public.product_variants
     WHERE id = p_variant_id AND product_id = p_product_id AND branch_id = v_branch;
@@ -667,6 +880,8 @@ BEGIN
       WHERE product_id = p_product_id AND branch_id = v_branch
     ));
 
+  DELETE FROM public.barcode_registry
+  WHERE product_id = p_product_id AND branch_id = v_branch;
 
   DELETE FROM public.product_variants
   WHERE product_id = p_product_id AND branch_id = v_branch;
@@ -929,6 +1144,7 @@ END;
 $function$;
 
 -- triggers
+CREATE TRIGGER enforce_barcode_registry_prefix_trigger BEFORE INSERT OR UPDATE OF barcode_value, entity_type, branch_id ON public.barcode_registry FOR EACH ROW EXECUTE FUNCTION enforce_barcode_registry_prefix();
 CREATE TRIGGER check_order_invoice_range_trigger BEFORE INSERT OR UPDATE OF invoice_no, branch_id ON public.orders FOR EACH ROW EXECUTE FUNCTION check_order_invoice_range();
 CREATE TRIGGER check_advance_invoice_range_trigger BEFORE INSERT OR UPDATE OF invoice_number, branch_id ON public.advance_orders FOR EACH ROW EXECUTE FUNCTION check_advance_invoice_range();
 CREATE TRIGGER set_branch_from_order_trigger BEFORE INSERT ON public.order_items FOR EACH ROW EXECUTE FUNCTION set_branch_from_order();

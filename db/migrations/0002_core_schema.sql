@@ -94,6 +94,22 @@ CREATE TABLE public.attendance_records (
   CONSTRAINT attendance_records_staff_member_id_attendance_date_key UNIQUE (branch_id, staff_member_id, attendance_date)
 );
 
+CREATE TABLE public.barcode_registry (
+  id uuid DEFAULT gen_random_uuid() NOT NULL,
+  barcode_value text NOT NULL,
+  entity_type text NOT NULL,
+  product_id bigint NOT NULL,
+  variant_id uuid,
+  is_active boolean DEFAULT true NOT NULL,
+  created_by_name text DEFAULT ''::text NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  updated_at timestamp with time zone DEFAULT now() NOT NULL,
+  branch_id text NOT NULL REFERENCES public.branches(id),
+  CONSTRAINT barcode_registry_pkey PRIMARY KEY (id),
+  CONSTRAINT barcode_registry_entity_type_check CHECK ((entity_type = ANY (ARRAY['product'::text, 'variant'::text]))),
+  CONSTRAINT chk_barcode_entity_target CHECK (((entity_type = 'product'::text AND variant_id IS NULL) OR (entity_type = 'variant'::text AND variant_id IS NOT NULL)))
+);
+
 CREATE TABLE public.categories (
   id bigint DEFAULT nextval('categories_id_seq'::regclass) NOT NULL,
   name_en text NOT NULL,
@@ -164,7 +180,9 @@ CREATE TABLE public.inventory_movements (
   created_by_name text DEFAULT ''::text NOT NULL,
   created_at timestamp with time zone DEFAULT now() NOT NULL,
   branch_id text NOT NULL REFERENCES public.branches(id),
-  CONSTRAINT inventory_movements_movement_type_check CHECK ((movement_type = ANY (ARRAY['RESTOCK'::text, 'SALE'::text, 'RETURN'::text, 'DAMAGE'::text, 'CORRECTION'::text, 'VOID'::text]))),
+  barcode_id uuid,
+  unit_cost numeric,
+  CONSTRAINT inventory_movements_movement_type_check CHECK ((movement_type = ANY (ARRAY['INITIAL_BARCODE_STOCK'::text, 'RESTOCK'::text, 'SALE'::text, 'RETURN'::text, 'DAMAGE'::text, 'CORRECTION'::text, 'VOID'::text]))),
   CONSTRAINT inventory_movements_pkey PRIMARY KEY (id)
 );
 
@@ -245,6 +263,7 @@ CREATE TABLE public.product_variants (
   weight_value numeric(12,3),
   weight_unit text,
   sku text,
+  barcode text,
   purchase_price numeric(12,2),
   mrp numeric(12,2),
   price numeric(12,2) DEFAULT 0 NOT NULL,
@@ -291,6 +310,7 @@ CREATE TABLE public.products (
   image text,
   image_url text,
   sku text,
+  barcode text,
   brand text,
   supplier text,
   size text,
@@ -338,6 +358,7 @@ CREATE TABLE public.store_settings (
 -- Parent keys that include branch_id so children can reference them with a composite key.
 -- (id alone is already unique; these exist only to make cross-branch references impossible.)
 ALTER TABLE public.advance_orders ADD CONSTRAINT advance_orders_id_branch_key UNIQUE (id, branch_id);
+ALTER TABLE public.barcode_registry ADD CONSTRAINT barcode_registry_id_branch_key UNIQUE (id, branch_id);
 ALTER TABLE public.categories ADD CONSTRAINT categories_id_branch_key UNIQUE (id, branch_id);
 ALTER TABLE public.coupons ADD CONSTRAINT coupons_id_branch_key UNIQUE (id, branch_id);
 ALTER TABLE public.expense_categories ADD CONSTRAINT expense_categories_id_branch_key UNIQUE (id, branch_id);
@@ -361,6 +382,11 @@ ALTER TABLE public.attendance_records ADD CONSTRAINT attendance_records_staff_fk
 ALTER TABLE public.expenses ADD CONSTRAINT expenses_category_fk FOREIGN KEY (category_id, branch_id) REFERENCES public.expense_categories (id, branch_id) ON DELETE SET NULL (category_id);
 ALTER TABLE public.inventory_movements ADD CONSTRAINT inventory_movements_product_fk FOREIGN KEY (product_id, branch_id) REFERENCES public.products (id, branch_id) ON DELETE SET NULL (product_id);
 ALTER TABLE public.inventory_movements ADD CONSTRAINT inventory_movements_variant_fk FOREIGN KEY (variant_id, branch_id) REFERENCES public.product_variants (id, branch_id) ON DELETE SET NULL (variant_id);
+-- Barcodes: a barcode can only point at a product / variant of its OWN branch. RESTRICT as in the original
+-- app (delete_inventory_item removes the registry rows first); a movement keeps its row if its barcode goes.
+ALTER TABLE public.barcode_registry ADD CONSTRAINT barcode_registry_product_fk FOREIGN KEY (product_id, branch_id) REFERENCES public.products (id, branch_id) ON DELETE RESTRICT;
+ALTER TABLE public.barcode_registry ADD CONSTRAINT barcode_registry_variant_fk FOREIGN KEY (variant_id, branch_id) REFERENCES public.product_variants (id, branch_id) ON DELETE RESTRICT;
+ALTER TABLE public.inventory_movements ADD CONSTRAINT inventory_movements_barcode_fk FOREIGN KEY (barcode_id, branch_id) REFERENCES public.barcode_registry (id, branch_id) ON DELETE SET NULL (barcode_id);
 
 -- indexes (every branch_id column is indexed)
 CREATE INDEX IF NOT EXISTS advance_order_payments_order_idx ON public.advance_order_payments USING btree (advance_order_id, received_at);
@@ -408,8 +434,15 @@ CREATE INDEX IF NOT EXISTS advance_order_timeline_branch_idx ON public.advance_o
 CREATE INDEX IF NOT EXISTS advance_order_payments_branch_idx ON public.advance_order_payments USING btree (branch_id, advance_order_id);
 CREATE INDEX IF NOT EXISTS orders_coupon_idx ON public.orders USING btree (branch_id, coupon_id) WHERE coupon_id IS NOT NULL;
 
--- SKU / product code: unique per branch (the same code may exist in every branch)
-CREATE UNIQUE INDEX IF NOT EXISTS products_branch_sku_unique ON public.products USING btree (branch_id, lower(btrim(sku))) WHERE is_active = true AND btrim(coalesce(sku, '')) <> '';
-CREATE UNIQUE INDEX IF NOT EXISTS product_variants_branch_sku_unique ON public.product_variants USING btree (branch_id, lower(btrim(sku))) WHERE is_active = true AND btrim(coalesce(sku, '')) <> '';
+-- barcode_registry: unique per branch (a manufacturer barcode may exist in several branches, as in the original app).
+-- Values GENERATED by generate_barcode_value (<prefix><P|V><8 digits>) are additionally unique across all branches;
+-- the branch-prefix trigger in 0003 guarantees such a value only ever belongs to its own branch.
+CREATE UNIQUE INDEX IF NOT EXISTS barcode_registry_branch_value_unique ON public.barcode_registry USING btree (branch_id, barcode_value);
+CREATE UNIQUE INDEX IF NOT EXISTS barcode_registry_generated_value_unique ON public.barcode_registry USING btree (barcode_value) WHERE barcode_value ~ '^[A-Z][A-Z0-9][PV][0-9]{8}$';
+CREATE INDEX IF NOT EXISTS idx_barcode_registry_val ON public.barcode_registry USING btree (barcode_value);
+CREATE INDEX IF NOT EXISTS idx_barcode_registry_prod ON public.barcode_registry USING btree (product_id);
+CREATE INDEX IF NOT EXISTS idx_barcode_registry_var ON public.barcode_registry USING btree (variant_id) WHERE variant_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS barcode_registry_branch_idx ON public.barcode_registry USING btree (branch_id);
+CREATE INDEX IF NOT EXISTS inventory_movements_barcode_idx ON public.inventory_movements USING btree (barcode_id) WHERE barcode_id IS NOT NULL;
 
 COMMIT;

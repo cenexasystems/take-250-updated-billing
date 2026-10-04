@@ -3,6 +3,45 @@ export const BRAND_TA = 'YG ENTERPRISES'
 export const BRAND_SHORT = 'YG'
 export const BRAND_MONOGRAM = 'YG'
 
+// Branch-specific barcode prefixes for inventory differentiation
+export function getBarcodePrefix(branch?: string): string {
+  if (branch === 'pos2') return 'YG2'
+  return 'YG1' // Default to POS1
+}
+
+// Branch-specific barcode settings
+export interface BarcodeSettingsConfig {
+  printerType: 'label' | 'regular'
+  selectedSizeId: string
+  showSalePrice: boolean
+  showCompanyName: boolean
+  showItemName: boolean
+  showDiscount: boolean
+}
+
+export function getDefaultBarcodeSettings(branch?: string): BarcodeSettingsConfig {
+  if (branch === 'pos2') {
+    // POS2: Fireworks/Crackers - Large carton labels with discounts
+    return {
+      printerType: 'regular',
+      selectedSizeId: '1_100x50',
+      showSalePrice: true,
+      showCompanyName: true,
+      showItemName: true,
+      showDiscount: true
+    }
+  }
+  // POS1: Wedding Cards/Bags - Standard thermal labels (default)
+  return {
+    printerType: 'label',
+    selectedSizeId: '2_50x25',
+    showSalePrice: true,
+    showCompanyName: true,
+    showItemName: true,
+    showDiscount: false
+  }
+}
+
 export const BRAND_SUBTITLE = 'Wedding Card, Wedding Bag and Jute Bag Manufacturing'
 export const BRAND_LOGO = '/yg-logo.png'
 export const BRAND_ICON = '/yg-icon.png'

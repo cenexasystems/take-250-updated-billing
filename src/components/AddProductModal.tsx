@@ -237,7 +237,7 @@ export default function AddProductModal({ isOpen, onClose, onSuccess }: AddProdu
 
             <div className="bg-[#FBFAF6] border border-[#E8D399] p-3 rounded-xl text-[11px] text-gray-600 flex items-start gap-2">
               <Sparkles size={14} className="text-[#B48811] shrink-0 mt-0.5" />
-              <span>Product will be immediately ready in POS search and catalog.</span>
+              <span>Product will be immediately ready in POS search and catalog. Barcode generation is optional.</span>
             </div>
           </div>
 

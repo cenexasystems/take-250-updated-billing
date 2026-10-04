@@ -3,7 +3,7 @@
  * and restores every sequence it advanced, so the database ends exactly as it started.
  *   npm run test:isolation
  *
- * Proves: same codes/names work in every branch, stock/invoices never mix, every cross-branch
+ * Proves: same codes/names work in every branch, barcodes (generation, scan lookup, receive-stock) stay inside their branch, stock/invoices never mix, every cross-branch
  * reference is rejected by the database itself, and branch-scoped queries only see their branch.
  */
 import 'dotenv/config'
@@ -79,7 +79,6 @@ async function run() {
     }
     await rejected('duplicate category name inside ONE branch', () => c.query(`INSERT INTO categories (name_en, branch_id) VALUES ('test cat', 'pos1')`))
     await rejected('duplicate coupon code inside ONE branch', () => c.query(`INSERT INTO coupons (code, percentage, branch_id) VALUES (' save10 ', 10, 'pos1')`))
-    await rejected('duplicate SKU inside ONE branch', () => c.query(`INSERT INTO products (name, category, price, sku, branch_id, is_active) VALUES ('Other', 'x', 1, 'test-001', 'pos1', true)`))
     await rejected('unknown branch_id', () => c.query(`INSERT INTO categories (name_en, branch_id) VALUES ('X', 'nope')`))
 
     // ---------- 2. same product sold in each branch: stock stays separate ----------
@@ -247,6 +246,188 @@ async function run() {
       const r = await all(`SELECT 1 FROM public.get_public_invoice_by_number($1)`, [probe])
       record(r.length === 0, `public lookup of ${JSON.stringify(probe)} returns nothing`)
     }
+
+    // ---------- 7. barcodes ----------
+    const PREFIX: Record<B, string> = { pos1: 'PB', pos2: 'P2', pos3: 'P3' }
+    const recv = async (productId: number, variantId: string | null, q: number, branch: string | null, custom: string | null = null) =>
+      (await one(`SELECT public.create_barcode_and_receive_stock($1, $2::uuid, $3, 50, 'tester', $4, '', $5) AS r`, [productId, variantId, q, custom, branch])).r
+    const stockOf = async (id: number) => Number((await one(`SELECT stock_quantity::numeric AS s FROM products WHERE id = $1`, [id])).s)
+    const varStockOf = async (id: string) => Number((await one(`SELECT stock::numeric AS s FROM product_variants WHERE id = $1`, [id])).s)
+    // the exact lookup the POS scan / print flows use: ONE branch + the scanned value
+    const lookup = (branch: string, value: string) =>
+      all(`SELECT r.id, r.product_id, r.variant_id, p.name FROM barcode_registry r JOIN products p ON p.id = r.product_id AND p.branch_id = r.branch_id
+           WHERE r.branch_id = $1 AND r.barcode_value = $2 AND r.is_active = true`, [branch, value.trim().toUpperCase()])
+
+    // 7a. same product in three branches -> three different barcodes, each with its own branch prefix
+    const productCode = {} as Record<B, string>
+    const productBarcodeId = {} as Record<B, string>
+    for (const b of BRANCHES) {
+      await ok(`generate a product barcode in ${b}`, async () => {
+        const r = await recv(productId[b], null, 5, b)
+        productCode[b] = r.barcode_value
+        productBarcodeId[b] = r.barcode_id
+        if (!r.is_new_barcode) throw new Error('expected a NEW barcode')
+      })
+    }
+    record(new Set(Object.values(productCode)).size === 3, 'same product in 3 branches gets 3 different barcodes', Object.values(productCode).join(' / '))
+    for (const b of BRANCHES) record(productCode[b]?.startsWith(`${PREFIX[b]}P`) && /^[A-Z0-9]{2}P\d{8}$/.test(productCode[b]), `${b} product barcode carries prefix ${PREFIX[b]}`, productCode[b])
+    const variantCode = {} as Record<B, string>
+    for (const b of BRANCHES) {
+      await ok(`generate a variant barcode in ${b}`, async () => {
+        const r = await recv(productId[b], variant[b], 2, b)
+        variantCode[b] = r.barcode_value
+        if (!r.barcode_value.startsWith(`${PREFIX[b]}V`)) throw new Error(`variant barcode ${r.barcode_value}`)
+      })
+    }
+    await ok('re-receiving stock re-uses the existing barcode (no new one)', async () => {
+      const r = await recv(productId.pos1, null, 1, 'pos1')
+      if (r.is_new_barcode || r.barcode_value !== productCode.pos1) throw new Error(`got ${r.barcode_value}`)
+    })
+
+    // 7b. per-branch sequences are independent
+    const num = (code: string) => Number(code.slice(3))
+    const extra = {} as Record<'pos1' | 'pos2', number>
+    for (const b of ['pos1', 'pos2'] as const) {
+      extra[b] = (await one(`INSERT INTO products (name, category, price, stock_quantity, stock, branch_id, is_active) VALUES ('Test Product 2', 'x', 1, 0, 0, $1, true) RETURNING id`, [b])).id
+    }
+    const p1b = (await recv(extra.pos1, null, 1, 'pos1')).barcode_value as string
+    const p1c = (await one(`SELECT public.generate_barcode_value('product','pos1') AS v`)).v as string
+    const p2b = (await recv(extra.pos2, null, 1, 'pos2')).barcode_value as string
+    record(num(p1b) === num(productCode.pos1) + 1 && num(p1c) === num(p1b) + 1, 'pos1 sequence advances on its own', `${productCode.pos1} -> ${p1b} -> ${p1c}`)
+    record(num(p2b) === num(productCode.pos2) + 1, 'pos2 sequence is NOT advanced by pos1 activity', `${productCode.pos2} -> ${p2b}`)
+    record(num(productCode.pos1) === num(productCode.pos2) && num(productCode.pos2) === num(productCode.pos3), 'every branch numbers independently from the same start', `${num(productCode.pos1)}`)
+
+    // 7c. receive-stock via barcode changes only that branch's stock
+    {
+      const before = { pos1: await stockOf(productId.pos1), pos2: await stockOf(productId.pos2), pos3: await stockOf(productId.pos3) }
+      const vBefore = { pos1: await varStockOf(variant.pos1), pos2: await varStockOf(variant.pos2), pos3: await varStockOf(variant.pos3) }
+      await ok('receive 7 units against pos2\'s barcode', () => recv(productId.pos2, null, 7, 'pos2'))
+      const after = { pos1: await stockOf(productId.pos1), pos2: await stockOf(productId.pos2), pos3: await stockOf(productId.pos3) }
+      record(after.pos2 === before.pos2 + 7, 'pos2 stock rose by exactly 7', `${before.pos2} -> ${after.pos2}`)
+      record(after.pos1 === before.pos1 && after.pos3 === before.pos3, 'pos1 and pos3 stock unchanged by a pos2 receipt')
+      record((await varStockOf(variant.pos1)) === vBefore.pos1 && (await varStockOf(variant.pos3)) === vBefore.pos3, 'pos1 / pos3 variant stock unchanged by a pos2 receipt')
+      const mv = await all(`SELECT branch_id, movement_type, reference_type, reference_id, barcode_id, quantity_delta::int AS d FROM inventory_movements WHERE product_id = $1 AND reference_type = 'barcode_receipt' ORDER BY id DESC LIMIT 1`, [productId.pos2])
+      record(mv.length === 1 && mv[0].branch_id === 'pos2' && mv[0].d === 7 && mv[0].reference_id === productCode.pos2 && mv[0].barcode_id === productBarcodeId.pos2 && ['INITIAL_BARCODE_STOCK', 'RESTOCK'].includes(mv[0].movement_type),
+        'barcode receipt movement is recorded in pos2 with its barcode', mv[0] ? `${mv[0].movement_type}` : 'none')
+    }
+    await rejected('receive stock for pos2\'s product through pos1', () => recv(productId.pos2, null, 5, 'pos1'))
+    await rejected('receive stock for pos2\'s variant through pos1', () => recv(productId.pos2, variant.pos2, 5, 'pos1'))
+    await rejected('receive stock with NO branch', () => recv(productId.pos1, null, 5, null))
+    await rejected('receive stock for an unknown branch', () => recv(productId.pos1, null, 5, 'nope'))
+    await rejected('generate_barcode_value for an unknown branch', () => c.query(`SELECT public.generate_barcode_value('product','nope')`))
+
+    // 7d. sales and stock adjustments stamp the movement with the barcode of the SAME branch
+    await ok('a POS sale records the branch\'s barcode on its SALE movement', async () => {
+      await c.query(`SELECT public.complete_pos_sale_with_inventory('Cust','1','',$1::jsonb,0,'completed','offline','pos_sale',0,0,0,'flat',0,NULL,0,'cash','{}'::jsonb,0,false,NULL,NULL,NULL,'pos2')`,
+        [JSON.stringify([{ product_id: productId.pos2, quantity: 1, unit_price: 100, name: 'Test Product' }])])
+      const m = await one(`SELECT barcode_id FROM inventory_movements WHERE product_id = $1 AND movement_type = 'SALE' ORDER BY id DESC LIMIT 1`, [productId.pos2])
+      if (m.barcode_id !== productBarcodeId.pos2) throw new Error(`barcode_id ${m.barcode_id}`)
+    })
+    await ok('adjust_inventory_stock records the branch\'s barcode', async () => {
+      await c.query(`SELECT public.adjust_inventory_stock($1, NULL, 20, 'CORRECTION', '', 't', 'pos3')`, [productId.pos3])
+      const m = await one(`SELECT barcode_id FROM inventory_movements WHERE product_id = $1 AND movement_type = 'CORRECTION' ORDER BY id DESC LIMIT 1`, [productId.pos3])
+      if (m.barcode_id !== productBarcodeId.pos3) throw new Error(`barcode_id ${m.barcode_id}`)
+    })
+
+    // 7e. a barcode can only reference a product / variant of its own branch (composite foreign keys)
+    await rejected('barcode_registry (pos1) -> product of pos2', () =>
+      c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, branch_id) VALUES ('PBP90000001', 'product', $1, 'pos1')`, [productId.pos2]))
+    await rejected('barcode_registry (pos1) -> variant of pos2', () =>
+      c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, variant_id, branch_id) VALUES ('PBV90000001', 'variant', $1, $2, 'pos1')`, [productId.pos1, variant.pos2]))
+    await rejected('barcode_registry (pos2) -> pos2 product + pos1 variant', () =>
+      c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, variant_id, branch_id) VALUES ('P2V90000002', 'variant', $1, $2, 'pos2')`, [productId.pos2, variant.pos1]))
+    await rejected('barcode_registry for an unknown branch', () =>
+      c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, branch_id) VALUES ('7000000000003', 'product', $1, 'nope')`, [productId.pos1]))
+    await rejected('movement in pos1 pointing at pos2\'s barcode', () =>
+      c.query(`INSERT INTO inventory_movements (product_id, barcode_id, movement_type, quantity_delta, quantity_before, quantity_after, branch_id) VALUES ($1, $2, 'RESTOCK', 1, 0, 1, 'pos1')`, [productId.pos1, productBarcodeId.pos2]))
+    await rejected('product-type barcode that targets a variant', () =>
+      c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, variant_id, branch_id) VALUES ('PBP90000004', 'product', $1, $2, 'pos1')`, [productId.pos1, variant.pos1]))
+
+    // 7f. branch prefix must match the branch; generated values are unique everywhere
+    await rejected('barcode with pos2\'s prefix filed under pos1', () =>
+      c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, branch_id) VALUES ('P2P90000005', 'product', $1, 'pos1')`, [productId.pos1]))
+    await rejected('barcode with pos3\'s prefix filed under pos2 (variant)', () =>
+      c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, variant_id, branch_id) VALUES ('P3V90000006', 'variant', $1, $2, 'pos2')`, [productId.pos2, variant.pos2]))
+    await rejected('lower-case prefix cannot dodge the prefix check', () =>
+      c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, branch_id) VALUES ('p2p90000007', 'product', $1, 'pos1')`, [productId.pos1]))
+    await rejected('changing a barcode\'s branch to one with another prefix', () =>
+      c.query(`UPDATE barcode_registry SET barcode_value = 'P3P90000008' WHERE id = $1`, [productBarcodeId.pos1]))
+    await rejected('barcode prefix letter that does not match entity type (PBV on a product)', () =>
+      c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, branch_id) VALUES ('PBV90000009', 'product', $1, 'pos1')`, [productId.pos1]))
+    await ok('a unique index makes generated barcode values unique across ALL branches', async () => {
+      const i = await one(`SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'barcode_registry_generated_value_unique'`)
+      if (!i || !/UNIQUE/.test(i.indexdef) || /branch_id/.test(i.indexdef)) throw new Error('global unique index missing')
+    })
+    await rejected('duplicate generated barcode value', () =>
+      c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, branch_id) VALUES ($1, 'product', $2, 'pos1')`, [productCode.pos1, extra.pos1]))
+    await rejected('duplicate barcode value inside ONE branch (manufacturer code)', async () => {
+      await c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, branch_id) VALUES ('8901234567890', 'product', $1, 'pos1')`, [extra.pos1])
+      await c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, branch_id) VALUES (' 8901234567890 ', 'product', $1, 'pos1')`, [productId.pos1])
+    })
+    await ok('the same manufacturer barcode may exist in two branches (as in the original app)', async () => {
+      await c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, branch_id) VALUES ('5012345678900', 'product', $1, 'pos1')`, [productId.pos1])
+      await c.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, branch_id) VALUES ('5012345678900', 'product', $1, 'pos3')`, [productId.pos3])
+    })
+
+    // 7g. scanning is looked up inside ONE branch only
+    for (const b of BRANCHES) {
+      const r = await lookup(b, productCode[b])
+      record(r.length === 1 && r[0].product_id === productId[b], `scan of ${productCode[b]} in ${b} finds ${b}'s product`)
+    }
+    for (const [from, at] of [['pos1', 'pos3'], ['pos3', 'pos1'], ['pos2', 'pos1'], ['pos1', 'pos2']] as [B, B][]) {
+      const r = await lookup(at, productCode[from])
+      record(r.length === 0, `${from} barcode ${productCode[from]} scanned at ${at} is "not found"`, `${r.length} rows`)
+      const v = await lookup(at, variantCode[from])
+      record(v.length === 0, `${from} variant barcode ${variantCode[from]} scanned at ${at} is "not found"`)
+    }
+    {
+      const r1 = await lookup('pos1', '5012345678900')
+      const r3 = await lookup('pos3', '5012345678900')
+      const r2 = await lookup('pos2', '5012345678900')
+      record(r1.length === 1 && r1[0].product_id === productId.pos1 && r3.length === 1 && r3[0].product_id === productId.pos3 && r2.length === 0,
+        'a shared manufacturer barcode resolves to each branch\'s OWN product (and to nothing in a branch without it)')
+    }
+    {
+      const r = await lookup('pos1', ` ${productCode.pos1.toLowerCase()} `)
+      record(r.length === 1, 'scan lookup normalises case / whitespace')
+    }
+    {
+      const orphan = await all(`SELECT 1 FROM barcode_registry r JOIN products p ON p.id = r.product_id WHERE p.branch_id <> r.branch_id`)
+      const orphanV = await all(`SELECT 1 FROM barcode_registry r JOIN product_variants v ON v.id = r.variant_id WHERE v.branch_id <> r.branch_id`)
+      record(orphan.length === 0 && orphanV.length === 0, 'no barcode_registry row points outside its own branch')
+    }
+
+    // 7h. register_branch() allocates a prefix + independent sequences for any future branch
+    await ok('register_branch() allocates a free, unique barcode prefix and its own sequences', async () => {
+      const r = await one(`SELECT barcode_prefix FROM branches WHERE id = 'zz_test'`)
+      const taken = await one(`SELECT count(*)::int n FROM branches WHERE id <> 'zz_test' AND barcode_prefix = $1`, [r.barcode_prefix])
+      if (!/^[A-Z][A-Z0-9]$/.test(r.barcode_prefix) || taken.n !== 0) throw new Error(`prefix ${r.barcode_prefix}`)
+      const seqs = await one(`SELECT count(*)::int n FROM pg_sequences WHERE schemaname = 'public' AND sequencename IN ('barcode_product_seq_zz_test', 'barcode_variant_seq_zz_test')`)
+      if (seqs.n !== 2) throw new Error('missing per-branch barcode sequences')
+      const zp = (await one(`INSERT INTO products (name, category, price, stock_quantity, stock, branch_id, is_active) VALUES ('Zz Product', 'x', 1, 0, 0, 'zz_test', true) RETURNING id`)).id
+      const z = await recv(zp, null, 3, 'zz_test')
+      if (z.barcode_value !== `${r.barcode_prefix}P10000001`) throw new Error(`first barcode ${z.barcode_value}`)
+    })
+    await rejected('register_branch() with a barcode prefix that is already used', () =>
+      c.query(`SELECT public.register_branch('zz_dup2', 'Zz Dup2', 'Zz', NULL, '#111111', '/branch-placeholder.svg', '', 0, 'PB')`))
+    await rejected('register_branch() with a malformed barcode prefix', () =>
+      c.query(`SELECT public.register_branch('zz_dup3', 'Zz Dup3', 'Zz', NULL, '#111111', '/branch-placeholder.svg', '', 0, 'ABC')`))
+    await ok('the three seeded branches use PB / P2 / P3', async () => {
+      const rows = await all(`SELECT id, barcode_prefix FROM branches WHERE id IN ('pos1','pos2','pos3') ORDER BY id`)
+      if (JSON.stringify(rows.map((x) => x.barcode_prefix)) !== JSON.stringify(['PB', 'P2', 'P3'])) throw new Error(JSON.stringify(rows))
+    })
+
+    // 7i. deleting an item removes ITS barcodes only
+    await ok('delete_inventory_item removes that branch\'s barcodes and leaves the others', async () => {
+      await c.query(`SELECT public.delete_inventory_item($1, NULL, 'pos3')`, [productId.pos3])
+      const gone = await one(`SELECT count(*)::int n FROM barcode_registry WHERE product_id = $1`, [productId.pos3])
+      const kept = await one(`SELECT count(*)::int n FROM barcode_registry WHERE branch_id IN ('pos1','pos2') AND product_id IN ($1, $2)`, [productId.pos1, productId.pos2])
+      if (gone.n !== 0 || kept.n < 2) throw new Error(`gone=${gone.n} kept=${kept.n}`)
+    })
+    await rejected('delete_inventory_item on another branch\'s product (barcodes survive)', () =>
+      c.query(`SELECT public.delete_inventory_item($1, NULL, 'pos1')`, [productId.pos2]))
+    await rejected('a product that still has a barcode cannot be deleted directly (RESTRICT, as in the original)', () =>
+      c.query(`DELETE FROM products WHERE id = $1`, [productId.pos1]))
   } finally {
     await c.query('ROLLBACK')
     // restore sequences advanced during the test

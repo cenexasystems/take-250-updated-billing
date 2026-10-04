@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertTriangle, Volume2, VolumeX, Package, ChevronRight } from 'lucide-react'
+import { AlertTriangle, Volume2, VolumeX, Barcode, Package, ChevronRight } from 'lucide-react'
 import { useAlarmStore } from '../../store/alarmStore'
 import { alarmSound } from '../../lib/alarmAudio'
 import { useBodyScrollLock } from '../../hooks/useBodyScrollLock'
@@ -144,6 +144,12 @@ export const LowStockAlarmModal: React.FC = () => {
                       <p className="text-[11px] font-semibold text-gray-600">
                         Size / Variant: <span className="font-bold text-gray-900">{item.variantName}</span>
                       </p>
+                    )}
+                    {item.barcode && (
+                      <div className="flex items-center gap-1 text-[10px] text-gray-500 font-mono mt-0.5">
+                        <Barcode className="w-3 h-3 text-gray-400" />
+                        <span>{item.barcode}</span>
+                      </div>
                     )}
                   </div>
                 </div>

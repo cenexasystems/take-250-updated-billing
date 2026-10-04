@@ -7,6 +7,7 @@ export interface LowStockItem {
   variantName?: string
   stock: number
   alertThreshold: number
+  barcode?: string
   category?: string
 }
 

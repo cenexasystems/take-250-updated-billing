@@ -16,6 +16,9 @@ CREATE TABLE public.branches (
   -- branches). The exclusion constraint makes two branches' ranges overlapping impossible.
   invoice_start bigint NOT NULL CHECK (invoice_start BETWEEN 1 AND 99999999),
   invoice_end   bigint NOT NULL CHECK (invoice_end BETWEEN 1 AND 99999999),
+  -- Two-character barcode prefix. Generated barcodes are <prefix><P|V><8 digits> (PBP10000001), so the
+  -- prefix alone tells which branch a barcode belongs to and no two branches can ever generate the same value.
+  barcode_prefix text NOT NULL UNIQUE CHECK (barcode_prefix ~ '^[A-Z][A-Z0-9]$'),
   sort_order    integer NOT NULL DEFAULT 0,
   is_active     boolean NOT NULL DEFAULT true,
   created_at    timestamptz NOT NULL DEFAULT now(),

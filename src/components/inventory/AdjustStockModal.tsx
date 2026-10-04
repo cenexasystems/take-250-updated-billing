@@ -211,6 +211,11 @@ export const AdjustStockModal: React.FC<AdjustStockModalProps> = ({
                         {item.variant_name}
                       </span>
                     )}
+                    {item.barcode && (
+                      <span className="text-[10px] font-mono text-gray-600 bg-white px-1 py-0.2 rounded border border-gray-200">
+                        {item.barcode}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="text-right shrink-0 bg-white px-2 py-1 rounded-lg border border-[#E8D399]/60">

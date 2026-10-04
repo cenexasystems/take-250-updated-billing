@@ -9,6 +9,7 @@ export type ProductVariant = {
   weightValue: number | null // numeric for filtering
   weightUnit: string | null  // "g", "ml", "kg", "L"
   sku: string | null
+  barcode: string | null
   purchasePrice: number | null
   mrp: number | null
   price: number
@@ -27,6 +28,7 @@ export type VariantInput = {
   weightValue?: number | null
   weightUnit?: string | null
   sku?: string | null
+  barcode?: string | null
   purchasePrice?: number | null
   mrp?: number | null
   price: number
@@ -40,7 +42,7 @@ export type VariantInput = {
 }
 
 const VARIANT_COLS =
-  'id, product_id, variant_name, size_label, weight_value, weight_unit, sku, purchase_price, mrp, price, stock, is_default, is_active, sort_order, image_url, group_name'
+  'id, product_id, variant_name, size_label, weight_value, weight_unit, sku, barcode, purchase_price, mrp, price, stock, is_default, is_active, sort_order, image_url, group_name'
 
 function mapVariant(r: Record<string, unknown>): ProductVariant {
   return {
@@ -51,6 +53,7 @@ function mapVariant(r: Record<string, unknown>): ProductVariant {
     weightValue: r.weight_value != null ? Number(r.weight_value) : null,
     weightUnit:  r.weight_unit ? String(r.weight_unit) : null,
     sku:         r.sku ? String(r.sku) : null,
+    barcode:     r.barcode ? String(r.barcode) : null,
     purchasePrice: r.purchase_price != null ? Number(r.purchase_price) : null,
     mrp:         r.mrp != null ? Number(r.mrp) : null,
     price:       Number(r.price ?? 0),
@@ -112,6 +115,7 @@ export async function createVariant(input: VariantInput): Promise<{ data: Produc
       weight_value: input.weightValue ?? null,
       weight_unit:  input.weightUnit ?? null,
       sku:          input.sku ?? null,
+      barcode:      input.barcode ?? null,
       purchase_price: input.purchasePrice ?? null,
       mrp:          input.mrp ?? null,
       price:        input.price,
@@ -142,6 +146,7 @@ export async function updateVariant(
   if (updates.weightValue !== undefined) payload.weight_value = updates.weightValue
   if (updates.weightUnit  !== undefined) payload.weight_unit  = updates.weightUnit
   if (updates.sku           !== undefined) payload.sku            = updates.sku
+  if (updates.barcode       !== undefined) payload.barcode        = updates.barcode
   if (updates.purchasePrice !== undefined) payload.purchase_price = updates.purchasePrice
   if (updates.mrp           !== undefined) payload.mrp            = updates.mrp
   if (updates.price         !== undefined) payload.price          = updates.price

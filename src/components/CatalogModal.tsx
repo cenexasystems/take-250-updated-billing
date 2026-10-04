@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Search, ShoppingBag, Edit2, Trash2 } from 'lucide-react'
-import { useProductStore, useVariantStore, type Product, type PosBranch } from '../store/store'
+import { useProductStore, type Product, type PosBranch } from '../store/store'
 import { supabase } from '../lib/supabase'
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock'
 
@@ -16,8 +16,6 @@ type CategoryOption = { id: string | number; name_en: string; is_active?: boolea
 
 export default function CatalogModal({ isOpen, branch, onClose, onAdd }: CatalogModalProps) {
   const { fetchProducts, products, loading, error } = useProductStore()
-  // The product and variant stores each hold a single branch's catalogue, so SKU matching stays inside the current branch.
-  const variantsMap = useVariantStore((s) => s.variantsMap)
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState('All')
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
@@ -85,12 +83,10 @@ export default function CatalogModal({ isOpen, branch, onClose, onAdd }: Catalog
     if (q) src = src.filter(p =>
       p.name.toLowerCase().includes(q) ||
       (p.nameTa || '').toLowerCase().includes(q) ||
-      p.category.toLowerCase().includes(q) ||
-      (p.sku || '').toLowerCase().includes(q) ||
-      (variantsMap[String(p.id)] || []).some(v => (v.sku || '').toLowerCase().includes(q))
+      p.category.toLowerCase().includes(q)
     )
     return src
-  }, [products, search, activeCategory, variantsMap])
+  }, [products, search, activeCategory])
 
   const startEdit = (p: Product) => {
     setEditingProduct(p)
@@ -194,7 +190,7 @@ export default function CatalogModal({ isOpen, branch, onClose, onAdd }: Catalog
                 <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#374151]" />
                 <input type="text" value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="Search by name, SKU / product code, Tamil name, or category..."
+                  placeholder="Search by product name, Tamil name, or category..."
                   className="w-full pl-10 pr-4 py-3 bg-[#FAFAFA] border border-[#E5E7EB]/60 rounded-xl focus:outline-none focus:border-[#D4AF37] text-[13px] font-bold text-[#111111]" />
               </div>
               <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">

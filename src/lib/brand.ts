@@ -42,6 +42,23 @@ export function getDefaultBarcodeSettings(branch?: string): BarcodeSettingsConfi
   }
 }
 
+/** The ONE shared black-and-gold palette. Every branch references it (see BRANCH_PALETTE in branchTheme.ts),
+ * so a branch can get its own colours later by changing data, not components. */
+export const THEME_PALETTE = {
+  primary: '#0A0A0A',        // black: sidebar, header, dark buttons (white / gold text on top)
+  accent: '#D4AF37',         // gold: highlights, borders, primary-button text on black, focus rings
+  accentDark: '#8A6A0A',     // gold dark enough for TEXT on white / cream (>= 4.5:1)
+  accentBorder: '#E8D399',
+  surface: '#FBFAF6',
+  text: '#111111',
+  onDark: '#FFFFFF',
+  onGold: '#0A0A0A',         // text ON gold is black (white on gold fails contrast)
+} as const
+
+/** Colours the app used before the black-and-gold theme. A saved Store Settings colour equal to one of these
+ * is treated as "never customised" and shows the shared palette instead; any other saved colour still wins. */
+export const LEGACY_THEME_COLORS = ['#7a1220', '#8b1a1a', '#b8860b', '#1f6f5c', '#5a0e17', '#5c0d18']
+
 export const BRAND_SUBTITLE = 'Wedding Card, Wedding Bag and Jute Bag Manufacturing'
 export const BRAND_LOGO = '/yg-logo.png'
 export const BRAND_ICON = '/yg-icon.png'

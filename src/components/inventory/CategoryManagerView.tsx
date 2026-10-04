@@ -258,7 +258,7 @@ export const CategoryManagerView: React.FC = () => {
                     type="checkbox"
                     checked={isActive}
                     onChange={(e) => setIsActive(e.target.checked)}
-                    className="accent-[#7A1220] w-4 h-4 rounded cursor-pointer"
+                    className="accent-[var(--theme-primary)] w-4 h-4 rounded cursor-pointer"
                   />
                   <span className="text-xs font-bold text-gray-800">Active</span>
                 </label>

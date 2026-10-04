@@ -73,7 +73,7 @@ export default function CompactAnalytics({ analytics }: CompactAnalyticsProps) {
                 <XAxis dataKey="month" tick={chartAxis} axisLine={false} tickLine={false} />
                 <YAxis tick={chartAxis} axisLine={false} tickLine={false} width={32} />
                 <Tooltip content={<TooltipCard currency />} />
-                <Line type="monotone" dataKey="revenue" stroke="#2C8A59" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                <Line type="monotone" dataKey="revenue" stroke="#8A6A0A" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -139,7 +139,7 @@ export default function CompactAnalytics({ analytics }: CompactAnalyticsProps) {
                   <XAxis dataKey="day" tick={chartAxis} axisLine={false} tickLine={false} />
                   <YAxis tick={chartAxis} axisLine={false} tickLine={false} width={30} />
                   <Tooltip content={<TooltipCard currency />} labelFormatter={(_value, payload) => String(payload?.[0]?.payload?.date || '')} />
-                  <Bar dataKey="revenue" fill="#2C8A59" radius={[8, 8, 0, 0]} barSize={16} />
+                  <Bar dataKey="revenue" fill="#D4AF37" radius={[8, 8, 0, 0]} barSize={16} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

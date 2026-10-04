@@ -6,6 +6,7 @@ import { Printer, ArrowLeft, MessageCircle } from 'lucide-react'
 import { printThermalReceipt } from '../lib/thermalPrint'
 import { invoicePdfFile, invoicePdfFileFromElement } from '../lib/invoicePdf'
 import CenexaFooter from '../components/common/CenexaFooter'
+import { THEME_PALETTE } from '../lib/brand'
 import { uploadInvoicePdf } from '../lib/storage'
 import { isUuid, normalizeStructuredOrderItem, formatInvoiceNo } from '../lib/retail'
 import { buildProfessionalWhatsAppMessage } from '../lib/whatsappMessage'
@@ -241,7 +242,7 @@ export default function DigitalInvoice() {
           pdfWindow.document.body.innerHTML = `
             <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#FBFAF6;color:#111;">
               <div style="text-align:center;padding:20px;">
-                <div style="width:36px;height:36px;border:3px solid #E8D399;border-top-color:#7A1220;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px auto;"></div>
+                <div style="width:36px;height:36px;border:3px solid #E8D399;border-top-color:${THEME_PALETTE.primary};border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px auto;"></div>
                 <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
                 <h3 style="margin:0 0 6px 0;font-size:17px;font-weight:700;">Generating PDF Invoice...</h3>
                 <p style="margin:0;font-size:13px;color:#666;">Please wait a moment</p>
@@ -430,7 +431,7 @@ export default function DigitalInvoice() {
         <button
           type="button"
           onClick={handleBack}
-          className="flex items-center gap-2 text-[#7A1220] hover:text-[#D4AF37] font-semibold text-sm transition-colors bg-white border border-[#E8D399] px-4 py-2 rounded-full shadow-sm cursor-pointer active:scale-95 touch-manipulation select-none"
+          className="flex items-center gap-2 text-[#7A1220] hover:text-[#8A6A0A] font-semibold text-sm transition-colors bg-white border border-[#E8D399] px-4 py-2 rounded-full shadow-sm cursor-pointer active:scale-95 touch-manipulation select-none"
         >
           <ArrowLeft size={16} /> Back
         </button>
@@ -439,7 +440,7 @@ export default function DigitalInvoice() {
             type="button"
             onClick={downloadPdf}
             disabled={downloadingPdf}
-            className="flex items-center gap-2 bg-[#7A1220] text-[#D4AF37] border border-[#D4AF37] px-4 py-2 rounded-full font-bold text-sm shadow-md hover:bg-[#1A1A1A] transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation select-none"
+            className="flex items-center gap-2 bg-[#7A1220] text-white border border-[#D4AF37] px-4 py-2 rounded-full font-bold text-sm shadow-md hover:bg-[#1A1A1A] transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation select-none"
           >
             <Printer size={16} /> {downloadingPdf ? 'Generating...' : <><span className="hidden sm:inline">PDF Invoice</span><span className="sm:hidden">PDF</span></>}
           </button>

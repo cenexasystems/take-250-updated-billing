@@ -178,7 +178,7 @@ export default function Gallery() {
           <h1 className="text-[2.8rem] sm:text-[3.6rem] font-black text-[#111111] tracking-tight leading-[1.02] mb-4">
             Inside Our Store
           </h1>
-          <p className="text-[14px] sm:text-[16px] font-bold text-[#B48811] mb-4">
+          <p className="text-[14px] sm:text-[16px] font-bold text-[#8A6A0A] mb-4">
             Sevoor, Arani
           </p>
           <p className="text-[15px] text-[#374151] font-medium leading-[1.7] max-w-lg mx-auto">

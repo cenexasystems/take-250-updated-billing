@@ -10,8 +10,8 @@ export default {
         bgMain:    '#FBFAF6', // Warm cream surface
         cardBg:    '#FFFFFF',
         brand: {
-          black:      '#7A1220', // Deep maroon/red — YG Enterprises primary
-          dark:       '#5C0D18', // Darker maroon
+          black:      '#0A0A0A', // Black — shared black-and-gold palette primary
+          dark:       '#1F1F1F', // Graphite (hover / raised surface)
           gold:       '#D4AF37',
           goldHover:  '#C5A059',
           goldLight:  '#FBF6E9',
@@ -19,27 +19,27 @@ export default {
         },
         gold: {
           DEFAULT: '#D4AF37',
-          dark:    '#B48811',
+          dark:    '#8A6A0A',
           light:   '#FBF6E9',
           border:  '#E8D399',
         },
         maroon: {
-          DEFAULT: '#8B1A1A',
-          dark:    '#5C0D18',
-          light:   '#F7E8E8',
+          DEFAULT: '#0A0A0A',
+          dark:    '#1F1F1F',
+          light:   '#F1EDE0',
         },
         // Branch accents for POS 1 / POS 2 — resolved from CSS custom properties so
         // each branch's Store Settings > Appearance color can override them at
         // runtime (see src/index.css :root for defaults, src/App.tsx for the sync).
         posOne: {
-          DEFAULT: 'var(--pos-one, #8B1A1A)',
-          dark:    'var(--pos-one-dark, #5C0D18)',
-          light:   'var(--pos-one-light, #F7E8E8)',
+          DEFAULT: 'var(--pos-one, #343434)',
+          dark:    'var(--pos-one-dark, #1F1F1F)',
+          light:   'var(--pos-one-light, #F1EDE0)',
         },
         posTwo: {
-          DEFAULT: 'var(--pos-two, #B8860B)',
-          dark:    'var(--pos-two-dark, #8A6508)',
-          light:   'var(--pos-two-light, #FBF3DE)',
+          DEFAULT: 'var(--pos-two, #343434)',
+          dark:    'var(--pos-two-dark, #1F1F1F)',
+          light:   'var(--pos-two-light, #F1EDE0)',
         },
         textMain:  '#1A0E0E',
         textMuted: '#6B7280',

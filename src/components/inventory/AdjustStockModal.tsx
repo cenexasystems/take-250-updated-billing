@@ -199,7 +199,7 @@ export const AdjustStockModal: React.FC<AdjustStockModalProps> = ({
             <div className="bg-[#FBFAF6] border border-[#E8D399] rounded-xl p-2 sm:p-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0 flex-1">
-                  <div className="text-[9px] font-black uppercase tracking-wider text-[#B48811] flex items-center gap-1">
+                  <div className="text-[9px] font-black uppercase tracking-wider text-[#8A6A0A] flex items-center gap-1">
                     <Package size={10} /> Target SKU
                   </div>
                   <div className="text-xs sm:text-sm font-black text-black truncate">
@@ -559,7 +559,7 @@ export const AdjustStockModal: React.FC<AdjustStockModalProps> = ({
                       onClick={() => setCorrectedQuantity(preset)}
                       className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
                         correctedQuantity === preset
-                          ? 'bg-[#B48811] text-white border-[#B48811]'
+                          ? 'bg-[#8A6A0A] text-white border-[#8A6A0A]'
                           : 'bg-white text-amber-950 border-amber-200 hover:bg-amber-100'
                       }`}
                     >

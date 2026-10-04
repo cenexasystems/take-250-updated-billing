@@ -120,7 +120,7 @@ export const StockHistoryDrawer: React.FC<StockHistoryDrawerProps> = ({
 
         {/* Item Summary Bar */}
         <div className="bg-[#FBFAF6] border-b border-[#E8D399] p-4 shrink-0">
-          <div className="text-[10px] font-black uppercase tracking-wider text-[#B48811]">
+          <div className="text-[10px] font-black uppercase tracking-wider text-[#8A6A0A]">
             Target SKU
           </div>
           <div className="text-sm font-black text-black">{item.name}</div>

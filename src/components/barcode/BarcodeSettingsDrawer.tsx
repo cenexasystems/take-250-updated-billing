@@ -112,7 +112,7 @@ export const BarcodeSettingsDrawer: React.FC<BarcodeSettingsDrawerProps> = ({
                     name="printerType"
                     checked={settings.printerType === 'label'}
                     onChange={() => handlePrinterChange('label')}
-                    className="accent-[#7A1220] w-4 h-4 cursor-pointer"
+                    className="accent-[var(--theme-primary)] w-4 h-4 cursor-pointer"
                   />
                   Label Printer (Thermal)
                 </label>
@@ -122,7 +122,7 @@ export const BarcodeSettingsDrawer: React.FC<BarcodeSettingsDrawerProps> = ({
                     name="printerType"
                     checked={settings.printerType === 'regular'}
                     onChange={() => handlePrinterChange('regular')}
-                    className="accent-[#7A1220] w-4 h-4 cursor-pointer"
+                    className="accent-[var(--theme-primary)] w-4 h-4 cursor-pointer"
                   />
                   Regular Printer (A4 Sheet)
                 </label>
@@ -151,7 +151,7 @@ export const BarcodeSettingsDrawer: React.FC<BarcodeSettingsDrawerProps> = ({
                         name="labelSize"
                         checked={settings.selectedSizeId === size.id}
                         onChange={() => handleSizeChange(size.id)}
-                        className="accent-[#7A1220] w-4 h-4 cursor-pointer"
+                        className="accent-[var(--theme-primary)] w-4 h-4 cursor-pointer"
                       />
                       <span>{size.name}</span>
                     </div>
@@ -187,7 +187,7 @@ export const BarcodeSettingsDrawer: React.FC<BarcodeSettingsDrawerProps> = ({
                     type="checkbox"
                     checked={settings.showSalePrice}
                     onChange={() => handleFieldToggle('showSalePrice')}
-                    className="accent-[#7A1220] w-4 h-4 rounded cursor-pointer"
+                    className="accent-[var(--theme-primary)] w-4 h-4 rounded cursor-pointer"
                   />
                   Sale Price (₹)
                 </label>
@@ -196,7 +196,7 @@ export const BarcodeSettingsDrawer: React.FC<BarcodeSettingsDrawerProps> = ({
                     type="checkbox"
                     checked={settings.showCompanyName}
                     onChange={() => handleFieldToggle('showCompanyName')}
-                    className="accent-[#7A1220] w-4 h-4 rounded cursor-pointer"
+                    className="accent-[var(--theme-primary)] w-4 h-4 rounded cursor-pointer"
                   />
                   Company Name (YG)
                 </label>
@@ -205,7 +205,7 @@ export const BarcodeSettingsDrawer: React.FC<BarcodeSettingsDrawerProps> = ({
                     type="checkbox"
                     checked={settings.showItemName}
                     onChange={() => handleFieldToggle('showItemName')}
-                    className="accent-[#7A1220] w-4 h-4 rounded cursor-pointer"
+                    className="accent-[var(--theme-primary)] w-4 h-4 rounded cursor-pointer"
                   />
                   Item Name
                 </label>
@@ -214,7 +214,7 @@ export const BarcodeSettingsDrawer: React.FC<BarcodeSettingsDrawerProps> = ({
                     type="checkbox"
                     checked={settings.showDiscount}
                     onChange={() => handleFieldToggle('showDiscount')}
-                    className="accent-[#7A1220] w-4 h-4 rounded cursor-pointer"
+                    className="accent-[var(--theme-primary)] w-4 h-4 rounded cursor-pointer"
                   />
                   Discount / MRP
                 </label>

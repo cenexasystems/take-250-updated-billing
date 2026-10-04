@@ -410,7 +410,7 @@ export const BarcodePrintModal: React.FC<BarcodePrintModalProps> = ({
           {/* Barcode Info Card */}
           <div className="bg-[#FBFAF6] border border-[#E8D399] rounded-xl p-2 sm:p-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
             <div>
-              <span className="text-[10px] font-black uppercase tracking-wider text-[#B48811]">
+              <span className="text-[10px] font-black uppercase tracking-wider text-[#8A6A0A]">
                 Product / SKU
               </span>
               <h3 className="text-base sm:text-lg font-black text-[#7A1220] leading-tight">{productName}</h3>
@@ -563,7 +563,7 @@ export const BarcodePrintModal: React.FC<BarcodePrintModalProps> = ({
               <label className="text-xs font-black uppercase tracking-wider text-gray-600">
                 Sticker Print Preview
               </label>
-              <span className="text-[11px] font-bold text-[#B48811]">
+              <span className="text-[11px] font-bold text-[#8A6A0A]">
                 {quantity || 1} {quantity === '1' ? 'Label' : 'Labels'} • {selectedPreset.widthMm} × {selectedPreset.heightMm} mm ({printerType === 'label' ? 'Roll' : 'A4 Sheet'})
               </span>
             </div>

@@ -757,7 +757,7 @@ export const CreateBarcodeModal: React.FC<CreateBarcodeModalProps> = ({
                       </label>
                       <div
                         onClick={() => setDropdownOpen(true)}
-                        className="w-full h-10 px-3 rounded-xl border border-gray-300 bg-white flex items-center justify-between cursor-pointer focus-within:border-[#7A1220]"
+                        className="w-full h-10 px-3 rounded-xl border border-gray-300 bg-white flex items-center justify-between cursor-pointer focus-within:border-[var(--theme-primary)]"
                       >
                         <input
                           type="text"
@@ -1169,7 +1169,7 @@ export const CreateBarcodeModal: React.FC<CreateBarcodeModalProps> = ({
                             type="checkbox"
                             checked={queue.every((it) => it.selected)}
                             onChange={(e) => handleToggleSelectAll(e.target.checked)}
-                            className="accent-[#7A1220] w-4 h-4 rounded cursor-pointer"
+                            className="accent-[var(--theme-primary)] w-4 h-4 rounded cursor-pointer"
                           />
                         </th>
                         <th className="p-3">Item Name</th>
@@ -1192,7 +1192,7 @@ export const CreateBarcodeModal: React.FC<CreateBarcodeModalProps> = ({
                               onChange={(e) =>
                                 handleUpdateQueueItem(item.id, 'selected', e.target.checked)
                               }
-                              className="accent-[#7A1220] w-4 h-4 rounded cursor-pointer"
+                              className="accent-[var(--theme-primary)] w-4 h-4 rounded cursor-pointer"
                             />
                           </td>
                           <td className="p-3 font-bold text-gray-900">
@@ -1316,7 +1316,7 @@ export const CreateBarcodeModal: React.FC<CreateBarcodeModalProps> = ({
                   type="checkbox"
                   checked={updateStock}
                   onChange={(e) => setUpdateStock(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-300 accent-[#7A1220] cursor-pointer"
+                  className="w-4 h-4 rounded border-gray-300 accent-[var(--theme-primary)] cursor-pointer"
                 />
                 <span className="text-[11px] font-bold text-gray-800 select-none">
                   Update Stock

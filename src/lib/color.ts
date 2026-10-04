@@ -4,7 +4,7 @@ export function normalizeHex(hex: string): string {
   const h = hex.trim().replace(/^#/, '')
   if (/^[0-9a-fA-F]{3}$/.test(h)) return '#' + h.split('').map((c) => c + c).join('').toUpperCase()
   if (/^[0-9a-fA-F]{6}$/.test(h)) return '#' + h.toUpperCase()
-  return '#8B1A1A'
+  return '#0A0A0A'
 }
 
 function hexToRgb(hex: string): [number, number, number] {

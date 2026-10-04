@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf'
 import html2canvas from 'html2canvas'
-import { BRAND_EN } from './brand'
+import { BRAND_EN, THEME_PALETTE } from './brand'
 import { formatCurrency, formatQuantityValue, normalizeStructuredOrderItem, normalizeUnitLabel, formatInvoiceNo } from './retail'
 import { LOGO_BASE64_POS1, LOGO_BASE64_POS2 } from './logoBase64'
 import type { PosBranch } from '../store/store'
@@ -40,14 +40,14 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   const pageWidth = 210
   const left = 16
   const right = 194
-  const primaryColor = '#D4AF37' // Flamingo Pink
+  const primaryColor = THEME_PALETTE.accentDark // gold dark enough for text on white
   const ink = '#18202a'
   const muted = '#68717c'
   let y = 16
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8)
-  doc.setTextColor('#7A1220')
+  doc.setTextColor(THEME_PALETTE.primary)
   doc.text('TAX INVOICE', left, y)
   doc.text(`Invoice: #${formattedNo}`, right, y, { align: 'right' })
   y += 7
@@ -65,7 +65,7 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   }
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(13)
-  doc.setTextColor('#7A1220')
+  doc.setTextColor(THEME_PALETTE.primary)
   doc.text(BRAND_EN, left + 35, y + 10)
   doc.setFontSize(8)
   doc.setTextColor('#555')
@@ -73,7 +73,7 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   const profile = getBranchProfile(data.branch)
   doc.text(profile.address, left + 35, y + 17, { maxWidth: 80 })
   doc.text(`Phone: ${profile.phone}`, left + 35, y + 25)
-  doc.setTextColor('#7A1220')
+  doc.setTextColor(THEME_PALETTE.primary)
   doc.setFont('helvetica', 'bold')
   doc.text(`Date: ${new Date(data.date).toLocaleDateString('en-IN')}`, right - 2, y + 2, { align: 'right' })
   const paymentText = `Payment: ${data.paymentMode || 'POS'}`.replace(/[₹\u20b9]/g, 'Rs. ')
@@ -95,7 +95,7 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   doc.roundedRect(left, y, right - left, customerBoxHeight, 2, 2, 'FD')
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(7)
-  doc.setTextColor('#7A1220')
+  doc.setTextColor(THEME_PALETTE.primary)
   doc.text('BILL TO', left + 5, y + 7)
   doc.setFontSize(10)
   doc.setTextColor(ink)
@@ -110,11 +110,11 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   }
   y += customerBoxHeight + 9
 
-  doc.setFillColor('#7A1220')
+  doc.setFillColor(THEME_PALETTE.primary)
   doc.rect(left, y, right - left, 9, 'F')
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(7)
-  doc.setTextColor('#D4AF37')
+  doc.setTextColor(THEME_PALETTE.onDark)
   doc.text('#', left + 3, y + 6)
   doc.text('ITEM DESCRIPTION', left + 12, y + 6)
   doc.text('QTY', 139, y + 6, { align: 'center' })
@@ -153,14 +153,14 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
 
   y = Math.max(y + 6, 150)
   const rows: Array<[string, string, string, number]> = [['Subtotal', money(data.subtotal), ink, 9]]
-  if ((data.discountAmount || 0) > 0) rows.push([`Coupon${data.couponCode ? ` (${data.couponCode})` : ''}`, `-${money(data.discountAmount || 0)}`, '#D4AF37', 11])
-  if ((data.manualDiscountAmount || 0) > 0) rows.push(['Discount', `-${money(data.manualDiscountAmount || 0)}`, '#D4AF37', 9])
+  if ((data.discountAmount || 0) > 0) rows.push([`Coupon${data.couponCode ? ` (${data.couponCode})` : ''}`, `-${money(data.discountAmount || 0)}`, THEME_PALETTE.accentDark, 11])
+  if ((data.manualDiscountAmount || 0) > 0) rows.push(['Discount', `-${money(data.manualDiscountAmount || 0)}`, THEME_PALETTE.accentDark, 9])
   if ((data.gstAmount || 0) > 0) rows.push(['GST', money(data.gstAmount || 0), ink, 7])
   rows.push(['Delivery', (data.shipping || 0) > 0 ? money(data.shipping) : 'FREE', ink, 9])
   rows.forEach(([label, value, color, fontSize]) => {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(fontSize)
-    doc.setTextColor(color === '#D4AF37' ? '#D4AF37' : '#18202a')
+    doc.setTextColor(color === THEME_PALETTE.accentDark ? THEME_PALETTE.accentDark : '#18202a')
     doc.text(label, 142, y, { align: 'right' })
     doc.text(value, right - 3, y, { align: 'right' })
     y += 7
@@ -170,7 +170,7 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   doc.line(left + 20, y - 3, right - 3, y - 3)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(14)
-  doc.setTextColor('#7A1220')
+  doc.setTextColor(THEME_PALETTE.primary)
   doc.text('TOTAL', 142, y + 6, { align: 'right' })
   doc.text(money(data.total), right - 3, y + 6, { align: 'right' })
 
@@ -180,7 +180,7 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   doc.line(left, y, right, y)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8)
-  doc.setTextColor('#7A1220')
+  doc.setTextColor(THEME_PALETTE.primary)
   doc.text('THANK YOU FOR SHOPPING WITH US', pageWidth / 2, y + 8, { align: 'center' })
   return doc.output('blob')
 }

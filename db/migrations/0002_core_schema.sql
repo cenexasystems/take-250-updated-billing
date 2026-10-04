@@ -350,7 +350,7 @@ CREATE TABLE public.store_settings (
   business_type text DEFAULT ''::text NOT NULL,
   instagram_id text DEFAULT ''::text NOT NULL,
   logo_url text,
-  theme_color text DEFAULT '#8B1A1A'::text NOT NULL,
+  theme_color text DEFAULT '#0A0A0A'::text NOT NULL,
   website_url text DEFAULT 'https://ygenterprises.co.in'::text NOT NULL,
   CONSTRAINT store_settings_pkey PRIMARY KEY (id)
 );

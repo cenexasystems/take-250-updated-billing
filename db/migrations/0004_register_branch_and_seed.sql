@@ -8,7 +8,7 @@ BEGIN;
 CREATE OR REPLACE FUNCTION public.register_branch(
   p_id text, p_name text, p_short_label text,
   p_invoice_block integer DEFAULT NULL,           -- 1..9 = numbers N*10,000,000+1 .. (N+1)*10,000,000-1; NULL = first free block
-  p_theme_color text DEFAULT '#1F6F5C', p_logo_url text DEFAULT '/branch-placeholder.svg',
+  p_theme_color text DEFAULT '#0A0A0A', p_logo_url text DEFAULT '/branch-placeholder.svg',
   p_subtitle text DEFAULT '', p_sort_order integer DEFAULT 0,
   p_barcode_prefix text DEFAULT NULL              -- 2 chars, e.g. 'P4'; NULL = first free 'P2'..'P9'
 ) RETURNS text
@@ -68,12 +68,12 @@ BEGIN
 END;
 $function$;
 
-SELECT public.register_branch('pos1', 'Branch 1', 'Jute & Wedding POS', 1, '#8B1A1A', '/yg-logo-pos1.png',
+SELECT public.register_branch('pos1', 'Branch 1', 'Jute & Wedding POS', 1, '#0A0A0A', '/yg-logo-pos1.png',
   'Wedding Card, Wedding Bag and Jute Bag Manufacturing', 1, 'PB');
-SELECT public.register_branch('pos2', 'Branch 2', 'Fireworks POS', 5, '#B8860B', '/yg-logo-pos2.png',
+SELECT public.register_branch('pos2', 'Branch 2', 'Fireworks POS', 5, '#0A0A0A', '/yg-logo-pos2.png',
   'Fireworks & Crackers', 2, 'P2');
 -- Branch 3: placeholder branding, edit the row (or Store Settings) to replace it.
-SELECT public.register_branch('pos3', 'Branch 3', 'Branch 3', 9, '#1F6F5C', '/branch-placeholder.svg',
+SELECT public.register_branch('pos3', 'Branch 3', 'Branch 3', 9, '#0A0A0A', '/branch-placeholder.svg',
   'Replace this tagline', 3, 'P3');
 
 UPDATE public.store_settings SET business_type = 'Wedding Cards, Bags & Jute Bag Manufacturing' WHERE branch_id = 'pos1';

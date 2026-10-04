@@ -10,7 +10,7 @@ CREATE TABLE public.branches (
   name          text NOT NULL UNIQUE,          -- "Branch 1"
   short_label   text NOT NULL,                 -- chip / nav label
   subtitle      text NOT NULL DEFAULT '',      -- tagline on login, headers
-  theme_color   text NOT NULL DEFAULT '#8B1A1A',
+  theme_color   text NOT NULL DEFAULT '#0A0A0A',
   logo_url      text NOT NULL DEFAULT '/branch-placeholder.svg',
   -- Each branch owns a private block of 10,000,000 invoice numbers (8-digit format, so at most 9
   -- branches). The exclusion constraint makes two branches' ranges overlapping impossible.
@@ -47,6 +47,8 @@ CREATE TABLE public.passcodes (
   role          text NOT NULL CHECK (role IN ('admin', 'manager', 'staff')),
   branch_id     text REFERENCES public.branches(id),
   passcode_hash text NOT NULL,
+  -- Bumped whenever this role/branch's passcode changes; JWTs carry it, so old sessions stop working.
+  token_version integer NOT NULL DEFAULT 1,
   updated_at    timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT passcodes_branch_matches_role CHECK (
     (role = 'admin' AND branch_id IS NULL) OR (role <> 'admin' AND branch_id IS NOT NULL)
@@ -56,13 +58,20 @@ CREATE UNIQUE INDEX passcodes_role_branch_unique ON public.passcodes (role, bran
 CREATE UNIQUE INDEX passcodes_single_admin ON public.passcodes (role) WHERE role = 'admin';
 CREATE INDEX passcodes_branch_id_idx ON public.passcodes (branch_id);
 
--- DB-backed login rate limiting (works across serverless instances).
+-- DB-backed rate limiting (works across serverless instances). One table, several buckets:
+--   'login'            passcode login attempts (per IP, plus a global ceiling against distributed guessing)
+--   'passcode_change'  failed "current passcode" checks (per IP and per target role/branch)
+--   'invoice'          public invoice lookups (per IP)
 CREATE TABLE public.login_attempts (
   id           bigserial PRIMARY KEY,
   ip           text NOT NULL,
   success      boolean NOT NULL DEFAULT false,
-  attempted_at timestamptz NOT NULL DEFAULT now()
+  attempted_at timestamptz NOT NULL DEFAULT now(),
+  bucket       text NOT NULL DEFAULT 'login',
+  target       text NOT NULL DEFAULT ''
 );
 CREATE INDEX login_attempts_ip_time_idx ON public.login_attempts (ip, attempted_at DESC);
+CREATE INDEX login_attempts_bucket_time_idx ON public.login_attempts (bucket, attempted_at DESC);
+CREATE INDEX login_attempts_target_time_idx ON public.login_attempts (bucket, target, attempted_at DESC);
 
 COMMIT;

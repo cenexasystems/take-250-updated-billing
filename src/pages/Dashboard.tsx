@@ -66,8 +66,6 @@ import { ExpensesView } from '../components/expenses/ExpensesView'
 import CenexaFooter from '../components/common/CenexaFooter'
 import { expenseService, type ExpenseRecord } from '../services/expenseService'
 import { useNavigationStore } from '../store/navigationStore'
-import { useHardwareBarcodeScanner } from '../hooks/useHardwareBarcodeScanner'
-import { BarcodeRedirectDialog } from '../components/pos/BarcodeRedirectDialog'
 import { exportAnalyticsToCSV, exportAnalyticsToPDF } from '../services/analyticsExport'
 import { BRAND_EN, BRAND_LOGO, BRAND_ICON } from '../lib/brand'
 import { branchShortLabel } from '../lib/branchTheme'
@@ -104,11 +102,11 @@ type DashboardCoupon = {
   min_order_value: number
 }
 export type TabKey = 'overview' | 'whatsapp' | 'pos_analytics' | 'billing' | 'advance_orders' | 'inventory' | 'expenses' | 'products' | 'categories' | 'coupons' | 'users' | 'history'
-  | 'branch_hub' | 'business_overview' | 'cross_branch_sales' | 'consolidated_stock' | 'staff_memberships' | 'business_reports' | 'barcode_hub'
+  | 'branch_hub' | 'business_overview' | 'cross_branch_sales' | 'consolidated_stock' | 'staff_memberships' | 'business_reports'
   | 'attendance' | 'store_settings'
 const GLOBAL_TABS: TabKey[] = ['business_overview', 'staff_memberships']
 // Pages removed from the admin panel — old links / bookmarks fall back to a live page
-const ADMIN_REMOVED_TABS: TabKey[] = ['branch_hub', 'categories', 'attendance', 'barcode_hub', 'cross_branch_sales', 'consolidated_stock', 'business_reports']
+const ADMIN_REMOVED_TABS: TabKey[] = ['branch_hub', 'categories', 'attendance', 'cross_branch_sales', 'consolidated_stock', 'business_reports']
 type PosAnalyticsTab = 'revenue' | 'today' | 'products' | 'categories' | 'coupons'
 type ProfileUser = { id: string; email: string; name: string; mobile: string; role: string; created_at: string }
 
@@ -146,7 +144,7 @@ const emptyForm = {
   name: '', nameTa: '', category: '', categoryId: null as string | number | null,
   remedy: [] as string[], price: 0, offerPrice: '' as string | number,
   purchasePrice: '' as string | number, mrp: '' as string | number,
-  sku: '', barcode: '',
+  sku: '',
   unitType: 'unit' as UnitType, unitLabel: 'piece', baseQuantity: 1,
   stockQuantity: 100, stockUnit: 'piece', allowDecimalQuantity: false,
   predefinedOptionsText: '', isActive: true, sortOrder: 0, stock: 100,
@@ -213,27 +211,11 @@ export default function Dashboard() {
     return 'billing'
   })
   const { setCurrentTab } = useNavigationStore()
-  const [cartItemToInject, setCartItemToInject] = useState<string | null>(null)
 
   // Sync tab with navigation store
   useEffect(() => {
     setCurrentTab(tab)
   }, [tab, setCurrentTab])
-
-  // Global hardware scanner listener
-  useHardwareBarcodeScanner({
-    isBillingActive: tab === 'billing',
-    onScanDirect: (barcode) => {
-      setCartItemToInject(barcode)
-    },
-  })
-
-  const handleNavigateToBillingFromDialog = (barcode: string) => {
-    setTab('billing')
-    setCurrentTab('billing')
-    navigate('/dashboard', { replace: true })
-    setCartItemToInject(barcode)
-  }
 
   const [posAnalyticsTab, setPosAnalyticsTab] = useState<PosAnalyticsTab>('revenue')
   const [exportingPdf, setExportingPdf] = useState(false)
@@ -262,7 +244,7 @@ export default function Dashboard() {
   useEffect(() => {
     void refetchVariants(branch)
   }, [branch, refetchVariants])
-  const [variantForm, setVariantForm] = useState({ name: '', sizeLabel: '', price: '', purchasePrice: '', mrp: '', sku: '', barcode: '', stock: '50', weightValue: '', weightUnit: '', isDefault: false })
+  const [variantForm, setVariantForm] = useState({ name: '', sizeLabel: '', price: '', purchasePrice: '', mrp: '', sku: '', stock: '50', weightValue: '', weightUnit: '', isDefault: false })
   const [editingVariantId, setEditingVariantId] = useState<string | null>(null)
   const [variantNotice, setVariantNotice] = useState('')
   const [variantLoading, setVariantLoading] = useState(false)
@@ -354,7 +336,7 @@ export default function Dashboard() {
       }
     }
     if (tabKey === 'inventory') {
-      // Reset silenced state and trigger alarm for inventory/barcode view
+      // Reset silenced state and trigger alarm for inventory view
       useAlarmStore.getState().resetSilencedState()
       const lowItems = useAlarmStore.getState().lowStockItems
       if (lowItems.length > 0) {
@@ -1395,7 +1377,6 @@ export default function Dashboard() {
         purchase_price: prodForm.purchasePrice === '' ? null : toNumber(prodForm.purchasePrice, 0),
         mrp: prodForm.mrp === '' ? null : toNumber(prodForm.mrp, 0),
         sku: prodForm.sku || null,
-        barcode: prodForm.barcode || null,
         unit_type: unitType, unit_label: prodForm.unitLabel,
         base_quantity: toNumber(prodForm.baseQuantity, 1),
         stock_quantity: toNumber(prodForm.stockQuantity, 0),
@@ -1428,7 +1409,7 @@ export default function Dashboard() {
       categoryId: p.categoryId ?? null, remedy: p.remedy || [],
       price: p.price, offerPrice: p.offerPrice || '',
       purchasePrice: p.purchasePrice || '', mrp: p.mrp || '',
-      sku: p.sku || '', barcode: p.barcode || '',
+      sku: p.sku || '',
       unitType: p.unitType,
       unitLabel: p.unitLabel, baseQuantity: p.baseQuantity,
       stockQuantity: p.stockQuantity || p.stock, stockUnit: p.stockUnit,
@@ -1441,7 +1422,7 @@ export default function Dashboard() {
     } as typeof prodForm)
     setVariantNotice('')
     setEditingVariantId(null)
-    setVariantForm({ name: '', sizeLabel: '', price: '', purchasePrice: '', mrp: '', sku: '', barcode: '', stock: '50', weightValue: '', weightUnit: '', isDefault: false })
+    setVariantForm({ name: '', sizeLabel: '', price: '', purchasePrice: '', mrp: '', sku: '', stock: '50', weightValue: '', weightUnit: '', isDefault: false })
     setTab('products')
   }
 
@@ -1478,7 +1459,6 @@ export default function Dashboard() {
         purchasePrice: variantForm.purchasePrice ? Number(variantForm.purchasePrice) : null,
         mrp:         variantForm.mrp ? Number(variantForm.mrp) : null,
         sku:         variantForm.sku.trim() || null,
-        barcode:     variantForm.barcode.trim() || null,
         weightValue: variantForm.weightValue ? Number(variantForm.weightValue) : null,
         weightUnit:  variantForm.weightUnit.trim() || null,
         isDefault:   variantForm.isDefault,
@@ -1498,7 +1478,7 @@ export default function Dashboard() {
           await supabase.from('products').update({ has_variants: true }).eq('id', editingProd.id).eq('branch', branch)
         }
       }
-      setVariantForm({ name: '', sizeLabel: '', price: '', purchasePrice: '', mrp: '', sku: '', barcode: '', stock: '50', weightValue: '', weightUnit: '', isDefault: false })
+      setVariantForm({ name: '', sizeLabel: '', price: '', purchasePrice: '', mrp: '', sku: '', stock: '50', weightValue: '', weightUnit: '', isDefault: false })
       setEditingVariantId(null)
       await refetchVariants(branch)
     } catch (err) { setVariantNotice(toErr(err, 'Error saving variant')) }
@@ -1524,7 +1504,7 @@ export default function Dashboard() {
     setVariantForm({
       name: v.variantName, sizeLabel: v.sizeLabel || '', price: String(v.price),
       purchasePrice: String(v.purchasePrice || ''), mrp: String(v.mrp || ''),
-      sku: v.sku || '', barcode: v.barcode || '',
+      sku: v.sku || '',
       stock: String(v.stock), weightValue: String(v.weightValue || ''), weightUnit: v.weightUnit || '', isDefault: !!v.isDefault
     })
     setVariantNotice('')
@@ -3238,15 +3218,11 @@ export default function Dashboard() {
         {/* ── BILLING PANEL ── */}
         {tab === 'billing' && (
           <div className="-m-4 sm:-m-6 lg:-m-8">
-            <Pos
-              isEmbedded
-              externalScannedCode={cartItemToInject}
-              onCodeProcessed={() => setCartItemToInject(null)}
-            />
+            <Pos isEmbedded />
           </div>
         )}
 
-        {/* ── INVENTORY & BARCODES TAB ── */}
+        {/* ── INVENTORY TAB ── */}
         {tab === 'inventory' && (
           <div className="p-2 sm:p-4">
             <InventoryTable />
@@ -3848,11 +3824,6 @@ export default function Dashboard() {
                       placeholder="e.g. MP-100G" value={prodForm.sku} onChange={e => setProdForm(f => ({...f, sku: e.target.value}))} />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-black uppercase text-[#6B7280] tracking-wider mb-1">{l('Barcode', 'பார்கோடு')}</label>
-                    <input className="w-full px-4 py-2.5 bg-[#FAFAFA] border border-[#F3F4F6] focus:border-[#D4AF37] rounded-xl text-[13px] font-bold outline-none transition-colors"
-                      placeholder="e.g. 8998765432100" value={prodForm.barcode} onChange={e => setProdForm(f => ({...f, barcode: e.target.value}))} />
-                  </div>
-                  <div>
                     <label className="block text-[11px] font-black uppercase text-[#6B7280] tracking-wider mb-1">{l('Stock', 'இருப்பு')} *</label>
                     <input required type="number" min="0"
                       className="w-full px-4 py-2.5 bg-[#FAFAFA] border border-[#F3F4F6] focus:border-[#D4AF37] rounded-xl text-[13px] font-bold outline-none transition-colors"
@@ -4139,13 +4110,6 @@ export default function Dashboard() {
                           onChange={e => setVariantForm(f => ({...f, sku: e.target.value}))} />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-black uppercase tracking-wider text-[#6B7280] mb-1">{l('Barcode', 'பார்கோடு')}</label>
-                        <input className="w-full px-4 py-2.5 bg-white rounded-xl border border-[#D1D5DB] text-[13px] font-bold outline-none focus:border-[#D4AF37] transition-colors shadow-sm"
-                          placeholder="890..."
-                          value={variantForm.barcode}
-                          onChange={e => setVariantForm(f => ({...f, barcode: e.target.value}))} />
-                      </div>
-                      <div>
                         <label className="block text-[11px] font-black uppercase tracking-wider text-[#6B7280] mb-1">{l('Stock *', 'இருப்பு *')}</label>
                         <input required type="number" min="0"
                           className="w-full px-4 py-2.5 bg-white rounded-xl border border-[#D1D5DB] text-[13px] font-bold outline-none focus:border-[#D4AF37] transition-colors shadow-sm"
@@ -4191,7 +4155,7 @@ export default function Dashboard() {
                       </button>
                       {editingVariantId && (
                         <button type="button"
-                          onClick={() => { setEditingVariantId(null); setVariantForm({ name: '', sizeLabel: '', price: '', purchasePrice: '', mrp: '', sku: '', barcode: '', stock: '50', weightValue: '', weightUnit: '', isDefault: false }); setVariantNotice('') }}
+                          onClick={() => { setEditingVariantId(null); setVariantForm({ name: '', sizeLabel: '', price: '', purchasePrice: '', mrp: '', sku: '', stock: '50', weightValue: '', weightUnit: '', isDefault: false }); setVariantNotice('') }}
                           className="px-6 py-3 bg-white border border-[#D1D5DB] text-[#111111] font-bold text-[13px] rounded-xl hover:bg-[#F3F4F6] transition-colors shadow-sm">
                           {l('Cancel', 'ரத்து')}
                         </button>
@@ -4759,8 +4723,6 @@ export default function Dashboard() {
         )
       })()}
 
-      {/* Global Barcode Navigation Dialog */}
-      <BarcodeRedirectDialog onNavigateToBilling={handleNavigateToBillingFromDialog} />
     </div>
   )
 }

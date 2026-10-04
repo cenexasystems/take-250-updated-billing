@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Branch logo placeholder">
+  <rect width="256" height="256" rx="40" fill="#1F6F5C"/>
+  <path d="M64 108l64-40 64 40v8H64z" fill="#fff" opacity=".95"/>
+  <rect x="76" y="124" width="104" height="64" fill="#fff" opacity=".95"/>
+  <rect x="112" y="148" width="32" height="40" fill="#1F6F5C"/>
+</svg>

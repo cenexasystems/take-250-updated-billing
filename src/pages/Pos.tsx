@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { Link, useNavigate } from 'react-router-dom'
@@ -13,9 +13,6 @@ import {
 import { isSupabaseConfigured, supabase } from '../lib/supabase'
 import { useProductStore, useVariantStore, useAdminAuthStore, resolveBranch, type Product } from '../store/store'
 import { branchShortLabel } from '../lib/branchTheme'
-import { useNavigationStore } from '../store/navigationStore'
-import { barcodeService } from '../services/barcodeService'
-import { normalizeBarcode } from '../lib/barcode'
 import { Invoice } from '../components/Invoice'
 import CatalogModal from '../components/CatalogModal'
 import CenexaFooter from '../components/common/CenexaFooter'
@@ -37,7 +34,6 @@ import { buildProfessionalWhatsAppMessage, buildAdvanceDepositWhatsAppMessage, p
 import { formatPhoneForDisplay, normalizePhone, toWhatsAppUrl } from '../lib/phone'
 import { useLangStore } from '../store/langStore'
 import { fetchVariantsByProduct, type ProductVariant } from '../services/variantService'
-import { BarcodeScannerInput, type ScannedItemPayload } from '../components/pos/BarcodeScannerInput'
 import { AddUnregisteredItemModal } from '../components/pos/AddUnregisteredItemModal'
 import { getOrCreateUnregisteredProduct } from '../services/productService'
 
@@ -104,7 +100,7 @@ const makePosItem = (p: Product, qty?: number): PosItem => {
     selectedUnit: packLabel,
     basePrice,
     lineTotal: calculateLineTotal(q, p.unitType, p.baseQuantity, basePrice),
-    source: isUnregistered ? 'manual' : (p.barcode ? 'catalogue' : 'catalogue'),
+    source: isUnregistered ? 'manual' : 'catalogue',
     stock: isUnregistered ? 999999 : p.stock,
     stockQuantity: isUnregistered ? 999999 : p.stockQuantity,
   }
@@ -132,8 +128,6 @@ const CAT_COLOR: Record<string, string> = {
 // ══════════════════════════════════════════════════════════════════════════
 type PosProps = {
   isEmbedded?: boolean
-  externalScannedCode?: string | null
-  onCodeProcessed?: () => void
 }
 
 export default function Pos(props: PosProps = {}) {
@@ -381,106 +375,6 @@ export default function Pos(props: PosProps = {}) {
     setAvailableVariants([])
     setMobilePanelView('catalogue')
   }
-
-  // Barcode scanner item handler (Consecutive scan increments cart quantity)
-  const handleScannedItem = (scanned: ScannedItemPayload) => {
-    setError('')
-    const targetId = scanned.variant_id ? scanned.variant_id : scanned.product_id
-
-    setItems(cur => {
-      const ex = cur.find(i => (scanned.variant_id ? i.variantId === scanned.variant_id : i.id === scanned.product_id))
-      if (!ex) {
-        const item = makePosItem({
-          id: targetId,
-          name: scanned.product_name,
-          nameTa: scanned.name_ta || undefined,
-          tamilName: scanned.name_ta || undefined,
-          category: scanned.category || 'Apparel',
-          remedy: [],
-          price: scanned.price,
-          offerPrice: scanned.offer_price || null,
-          stock: scanned.stock,
-          stockQuantity: scanned.stock,
-          hasVariants: false,
-          unitType: 'unit',
-          unitLabel: scanned.variant_name || 'piece',
-          baseQuantity: 1,
-          stockUnit: 'piece',
-          allowDecimalQuantity: false,
-          predefinedOptions: [],
-          isActive: true,
-          sortOrder: 0,
-          unit: '1pc',
-          rating: 5,
-          description: '',
-          benefits: '',
-          image: scanned.image_url || '/product-placeholder.svg',
-          imageUrl: scanned.image_url || '/product-placeholder.svg',
-          barcode: scanned.barcode,
-        }, 1)
-        item.variantId = scanned.variant_id || undefined
-        item.variantName = scanned.variant_name || undefined
-        item.parentProductId = String(scanned.product_id)
-        return [...cur, item]
-      }
-
-      // Existing item: increment quantity by 1
-      return cur.map(i => {
-        if ((scanned.variant_id && i.variantId === scanned.variant_id) || (!scanned.variant_id && i.id === scanned.product_id)) {
-          return recalc(i, i.qty + 1)
-        }
-        return i
-      })
-    })
-  }
-
-  const externalCodeFromStore = useNavigationStore((s) => s.externalScannedCode)
-  const setExternalScannedCode = useNavigationStore((s) => s.setExternalScannedCode)
-
-  const processIncomingCode = useCallback(async (codeToProcess: string) => {
-    const clean = normalizeBarcode(codeToProcess)
-    if (!clean) return
-    try {
-      const record = await barcodeService.lookupBarcode(clean, branch)
-      if (!record || !record.product) {
-        setError(`Barcode "${clean}" not recognized in catalog`)
-        return
-      }
-      const prod = record.product
-      const varnt = record.variant
-      const effectiveStock = varnt ? (Number(varnt.stock) || 0) : 999
-      const price = varnt?.price ? Number(varnt.price) : Number(prod.price)
-
-      const payload: ScannedItemPayload = {
-        product_id: record.product_id,
-        variant_id: record.variant_id || null,
-        product_name: prod.name,
-        name_ta: prod.name_ta,
-        variant_name: varnt?.variant_name,
-        price: price,
-        offer_price: prod.offer_price ? Number(prod.offer_price) : undefined,
-        stock: effectiveStock,
-        barcode: clean,
-        image_url: prod.image_url,
-        category: prod.category,
-      }
-      handleScannedItem(payload)
-    } catch (err) {
-      console.error('Failed to process incoming barcode:', err)
-      setError('Failed to scan barcode')
-    }
-  }, [branch, handleScannedItem])
-
-  useEffect(() => {
-    const code = props.externalScannedCode || externalCodeFromStore
-    if (code) {
-      void processIncomingCode(code)
-      setExternalScannedCode(null)
-      props.onCodeProcessed?.()
-    }
-  }, [props.externalScannedCode, externalCodeFromStore, processIncomingCode, setExternalScannedCode, props])
-
-
 
   const handleAddUnregisteredItem = async (input: {
     name: string
@@ -1340,18 +1234,13 @@ export default function Pos(props: PosProps = {}) {
 
           {/* Order Items Card */}
           <div className="bg-white rounded-2xl border border-[#E8D399] shadow-sm flex-1 flex flex-col min-h-[400px]">
-            {/* Card Header & Barcode Scanner */}
+            {/* Card Header */}
             <div className="flex flex-col gap-3 p-4 md:p-5 border-b border-[#E8D399]">
               <div className="flex items-center justify-between">
                 <h3 className="text-[18px] md:text-[14px] font-black text-[#7A1220] flex items-center gap-2">
                   <Receipt size={16} className="text-[#D4AF37]" />
                   Order Items ({items.length})
                 </h3>
-              </div>
-
-              {/* Barcode Scanner Bar */}
-              <div className="w-full">
-                <BarcodeScannerInput branch={branch} onItemScanned={handleScannedItem} />
               </div>
 
               <div className="flex flex-wrap items-center gap-2 pt-1">

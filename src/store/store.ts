@@ -58,7 +58,6 @@ export interface Product {
 
   // POS inventory fields
   sku?: string
-  barcode?: string
   brand?: string
   purchasePrice?: number
   mrp?: number
@@ -267,7 +266,6 @@ const mapDbProduct = (input: unknown, categoriesById: Record<string, string> = {
 
     // POS inventory mapping
     sku: readString(p.sku),
-    barcode: readString(p.barcode),
     brand: readString(p.brand),
     purchasePrice: toNumber(p.purchase_price, 0),
     mrp: toNumber(p.mrp, 0),
@@ -420,6 +418,16 @@ export const useProductStore = create<ProductState>((set, get) => ({
   },
 }))
 
+/** Drops every branch-scoped cache (catalog, variants, low-stock list). Called on logout and
+ * whenever the active branch changes so no data from the previous branch can be shown. */
+export function resetBranchScopedStores() {
+  productFetchRequestId++
+  variantFetchRequestId++
+  useProductStore.setState({ products: [], loading: false, error: null, lastFetch: 0, lastFetchScope: null })
+  useVariantStore.setState({ variantsMap: {}, fetched: false, fetchedScope: null })
+  useAlarmStore.getState().setLowStockItems([])
+}
+
 // --- Cart Store ---
 export const useCartStore = create<CartState>()(
   persist(
@@ -553,6 +561,8 @@ export const useVariantStore = create<VariantStoreState>()((set, get) => ({
     const scope = branch || 'all'
     if (get().fetched && get().fetchedScope === scope) return
     const requestId = ++variantFetchRequestId
+    // Switching branch drops the previous branch's variants immediately (never shown under the new branch).
+    if (get().fetchedScope !== scope) set({ variantsMap: {}, fetched: false, fetchedScope: scope })
     const { data } = await fetchAllVariants(branch)
     if (requestId !== variantFetchRequestId) return
     const map: Record<string, ProductVariant[]> = {}
@@ -565,7 +575,7 @@ export const useVariantStore = create<VariantStoreState>()((set, get) => ({
   refetchVariants: async (branch) => {
     const scope = branch || 'all'
     const requestId = ++variantFetchRequestId
-    set({ fetched: false, fetchedScope: scope })
+    set(get().fetchedScope !== scope ? { variantsMap: {}, fetched: false, fetchedScope: scope } : { fetched: false, fetchedScope: scope })
     const { data } = await fetchAllVariants(branch)
     if (requestId !== variantFetchRequestId) return
     const map: Record<string, ProductVariant[]> = {}
@@ -736,6 +746,7 @@ export const useAdminAuthStore = create<AdminAuthState>()(
       logout: () => {
         alarmSound.stopAlert()
         useAlarmStore.getState().resetSilencedState()
+        resetBranchScopedStores()
         set({ isLoggedIn: false, role: null, adminId: null, branch: null, activeBranch: null })
       },
       setActiveBranch: (branch: ActiveBranch) => {
@@ -745,6 +756,7 @@ export const useAdminAuthStore = create<AdminAuthState>()(
           if (staffBranch) set({ activeBranch: staffBranch })
           return
         }
+        if (branch !== get().activeBranch) resetBranchScopedStores()
         set({ activeBranch: branch })
       },
     }),

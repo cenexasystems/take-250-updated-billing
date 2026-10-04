@@ -23,7 +23,7 @@ export default defineConfig({
       manifest: {
         name: 'YG ENTERPRISES Retail POS',
         short_name: 'YG',
-        description: 'YG ENTERPRISES retail billing, barcode inventory, catalog, order, receipt, and invoice administration.',
+        description: 'YG ENTERPRISES retail billing, inventory, catalog, order, receipt, and invoice administration.',
         theme_color: '#7A1220',
         background_color: '#7A1220',
         display: 'standalone',
@@ -112,7 +112,6 @@ export default defineConfig({
           if (id.includes('recharts') || id.includes('d3-') || id.includes('react-smooth') || id.includes('victory-')) return 'charts'
           if (id.includes('react-router')) return 'router'
           if (id.includes('lucide-react')) return 'icons'
-          if (id.includes('jsbarcode') || id.includes('@zxing')) return 'barcode'
           if (id.includes('workbox') || id.includes('vite-plugin-pwa')) return 'pwa'
           return 'vendor'
         },

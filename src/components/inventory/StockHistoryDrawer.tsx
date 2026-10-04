@@ -77,7 +77,6 @@ export const StockHistoryDrawer: React.FC<StockHistoryDrawerProps> = ({
 
   const getBadgeStyle = (type: string) => {
     switch (type) {
-      case 'INITIAL_BARCODE_STOCK':
       case 'RESTOCK':
         return 'bg-emerald-100 text-emerald-800 border-emerald-300'
       case 'SALE':
@@ -131,7 +130,7 @@ export const StockHistoryDrawer: React.FC<StockHistoryDrawerProps> = ({
           )}
           <div className="mt-2 flex items-center justify-between text-xs font-semibold text-gray-700">
             <span>Live Stock: <strong className="text-black text-sm">{item.stock} Units</strong></span>
-            {item.barcode && <span>Barcode: <strong className="font-mono text-black">{item.barcode}</strong></span>}
+            {item.sku && <span>SKU: <strong className="font-mono text-black">{item.sku}</strong></span>}
           </div>
         </div>
 

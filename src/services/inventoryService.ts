@@ -10,7 +10,6 @@ export interface InventoryStockItem {
   name_ta?: string
   variant_name?: string
   sku?: string
-  barcode?: string
   stock: number
   price: number
   offer_price?: number
@@ -29,12 +28,10 @@ export interface InventoryMovement {
   id: number
   product_id: number
   variant_id?: string | null
-  barcode_id?: string | null
-  movement_type: 'INITIAL_BARCODE_STOCK' | 'RESTOCK' | 'SALE' | 'RETURN' | 'DAMAGE' | 'CORRECTION' | 'VOID'
+  movement_type: 'RESTOCK' | 'SALE' | 'RETURN' | 'DAMAGE' | 'CORRECTION' | 'VOID'
   quantity_delta: number
   quantity_before: number
   quantity_after: number
-  unit_cost?: number | null
   reference_type?: string | null
   reference_id?: string | null
   note?: string
@@ -92,7 +89,7 @@ export const inventoryService = {
     // 1. Fetch products
     const { data: products, error: prodErr } = await supabase
       .from('products')
-      .select('id, name, name_ta, price, offer_price, purchase_price, stock_quantity, low_stock_alert, unit, unit_type, category, category_id, image_url, barcode, sku, is_active, updated_at')
+      .select('id, name, name_ta, price, offer_price, purchase_price, stock_quantity, low_stock_alert, unit, unit_type, category, category_id, image_url, sku, is_active, updated_at')
       .eq('branch', branch)
       .order('name', { ascending: true })
 
@@ -104,7 +101,7 @@ export const inventoryService = {
     // 2. Fetch variants
     const { data: variants, error: varErr } = await supabase
       .from('product_variants')
-      .select('id, product_id, variant_name, price, purchase_price, stock, barcode, sku, is_active, updated_at')
+      .select('id, product_id, variant_name, price, purchase_price, stock, sku, is_active, updated_at')
       .eq('branch', branch)
       .order('sort_order', { ascending: true })
 
@@ -146,7 +143,6 @@ export const inventoryService = {
             name_ta: p.name_ta,
             variant_name: v.variant_name,
             sku: v.sku || p.sku,
-            barcode: v.barcode,
             stock: Number(v.stock) || 0,
             low_stock_threshold: threshold,
             price: Number(v.price) || Number(p.price) || 0,
@@ -172,7 +168,6 @@ export const inventoryService = {
           name_ta: p.name_ta,
           variant_name: undefined,
           sku: p.sku,
-          barcode: p.barcode,
           stock: Number(p.stock_quantity) || 0,
           low_stock_threshold: threshold,
           price: Number(p.price) || 0,
@@ -258,8 +253,8 @@ export const inventoryService = {
     let query = supabase
       .from('inventory_movements')
       .select(`
-        id, product_id, variant_id, barcode_id, movement_type, quantity_delta, quantity_before, quantity_after,
-        unit_cost, reference_type, reference_id, note, created_by_name, created_at,
+        id, product_id, variant_id, movement_type, quantity_delta, quantity_before, quantity_after,
+        reference_type, reference_id, note, created_by_name, created_at,
         product:products (id, name, name_ta, image_url),
         variant:product_variants (id, variant_name, sku)
       `, { count: 'exact' })
@@ -337,9 +332,7 @@ export const inventoryService = {
 
     for (const m of movements) {
       const delta = Number(m.quantity_delta) || 0
-      if (m.movement_type === 'INITIAL_BARCODE_STOCK') {
-        incomingStock += delta
-      } else if (m.movement_type === 'RESTOCK') {
+      if (m.movement_type === 'RESTOCK') {
         if (delta > 0) {
           incomingStock += delta
         }

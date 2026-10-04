@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Tag, IndianRupee, AlertCircle, Barcode, Check } from 'lucide-react'
+import { X, Tag, IndianRupee, AlertCircle, Check } from 'lucide-react'
 import { updateItemPrice } from '../../services/productService'
 import type { InventoryStockItem } from '../../services/inventoryService'
 import { useAdminAuthStore, resolveBranch } from '../../store/store'
@@ -102,7 +102,7 @@ export const QuickPriceModal: React.FC<Props> = ({ isOpen, item, onClose, onSucc
             <div>
               <h3 className="font-bold text-sm text-[#111111]">Quick Edit Price</h3>
               <p className="text-[11px] text-gray-500 font-medium">
-                Barcode is linked — changing price updates live POS instantly
+                Changing the price updates live POS instantly
               </p>
             </div>
           </div>
@@ -126,12 +126,6 @@ export const QuickPriceModal: React.FC<Props> = ({ isOpen, item, onClose, onSucc
             </div>
             {item.variant_name && (
               <p className="text-gray-600 font-medium">Variant: <span className="font-bold text-gray-900">{item.variant_name}</span></p>
-            )}
-            {item.barcode && (
-              <div className="flex items-center gap-1.5 text-gray-500 text-[11px] pt-1 border-t border-gray-200/60 font-mono">
-                <Barcode className="w-3.5 h-3.5 text-gray-400" />
-                <span>Barcode: <strong className="text-gray-800">{item.barcode}</strong></span>
-              </div>
             )}
           </div>
         </div>

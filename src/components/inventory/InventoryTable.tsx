@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react'
 import {
   Search,
   SlidersHorizontal,
-  Printer,
   History,
   AlertTriangle,
   Package,
@@ -16,8 +15,6 @@ import {
   Trash2,
 } from 'lucide-react'
 import { inventoryService, type InventoryStockItem } from '../../services/inventoryService'
-import { CreateBarcodeModal } from '../barcode/CreateBarcodeModal'
-import { BarcodePrintModal } from '../barcode/BarcodePrintModal'
 import { AdjustStockModal } from './AdjustStockModal'
 import { StockHistoryDrawer } from './StockHistoryDrawer'
 import { QuickPriceModal } from './QuickPriceModal'
@@ -35,7 +32,7 @@ export const InventoryTable: React.FC = () => {
   const role = useAdminAuthStore((state) => state.role)
   const branch = useAdminAuthStore((state) => resolveBranch(state.activeBranch))
   const [activeTab, setActiveTab] = useState<InventoryTab>('stock')
-  const { products: storeProducts, fetchProducts } = useProductStore()
+  const { fetchProducts } = useProductStore()
   const [items, setItems] = useState<InventoryStockItem[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -45,10 +42,6 @@ export const InventoryTable: React.FC = () => {
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Modals state
-  const [showReceiveModal, setShowReceiveModal] = useState(false)
-  const [selectedForReceive, setSelectedForReceive] = useState<{ productId: number; variantId?: string | null } | null>(null)
-
-  const [printModalItem, setPrintModalItem] = useState<InventoryStockItem | null>(null)
   const [adjustModalItem, setAdjustModalItem] = useState<InventoryStockItem | null>(null)
   const [historyDrawerItem, setHistoryDrawerItem] = useState<InventoryStockItem | null>(null)
   const [priceModalItem, setPriceModalItem] = useState<InventoryStockItem | null>(null)
@@ -70,7 +63,6 @@ export const InventoryTable: React.FC = () => {
           variantName: i.variant_name || undefined,
           stock: i.stock,
           alertThreshold: i.low_stock_threshold || 5,
-          barcode: i.barcode || undefined,
           category: i.category || undefined,
         }))
 
@@ -118,7 +110,6 @@ export const InventoryTable: React.FC = () => {
       !q ||
       item.name.toLowerCase().includes(q) ||
       (item.variant_name && item.variant_name.toLowerCase().includes(q)) ||
-      (item.barcode && item.barcode.toLowerCase().includes(q)) ||
       (item.sku && item.sku.toLowerCase().includes(q)) ||
       (item.category && item.category.toLowerCase().includes(q))
 
@@ -139,57 +130,6 @@ export const InventoryTable: React.FC = () => {
   const lowStockCount = items.filter((i) => i.stock > 0 && i.stock <= (i.low_stock_threshold || 5)).length
   const inStockCount = items.filter((i) => i.stock > (i.low_stock_threshold || 5)).length
   const totalValuation = items.reduce((sum, i) => sum + i.stock * i.price, 0)
-
-  interface ProductOptionType {
-    id: number
-    name: string
-    price: number
-    cost_price?: number
-    barcode?: string
-    stock_quantity?: number
-    category?: string
-    has_variants?: boolean
-  }
-
-  // Combined product options for Barcode Generator intake
-  const distinctProducts: ProductOptionType[] = Array.from(
-    new Map<number, ProductOptionType>([
-      ...storeProducts
-        .filter((p) => p.isActive !== false && p.category?.trim().toLowerCase() !== 'unregistered')
-        .map(
-          (p): [number, ProductOptionType] => [
-            Number(p.id),
-            {
-              id: Number(p.id),
-              name: p.name,
-              price: p.price,
-              cost_price: p.purchasePrice || 0,
-              barcode: p.barcode,
-              stock_quantity: p.stockQuantity ?? p.stock ?? 0,
-              category: p.category,
-              has_variants: p.hasVariants,
-            },
-          ]
-        ),
-      ...items
-        .filter((i) => i.category?.trim().toLowerCase() !== 'unregistered')
-        .map(
-          (i): [number, ProductOptionType] => [
-            i.product_id,
-            {
-              id: i.product_id,
-              name: i.name,
-              price: i.price,
-              cost_price: 0,
-              barcode: i.barcode || undefined,
-              stock_quantity: i.stock,
-              category: i.category || undefined,
-              has_variants: !!i.variant_id,
-            },
-          ]
-        ),
-    ]).values()
-  )
 
   return (
     <div className="space-y-6">
@@ -245,18 +185,6 @@ export const InventoryTable: React.FC = () => {
           </button>
         </div>
 
-        {/* Global Add Barcode CTA (admin & staff) */}
-        <button
-            type="button"
-            onClick={() => {
-              setSelectedForReceive(null)
-              setShowReceiveModal(true)
-            }}
-            className="w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-[#7A1220] border border-[#D4AF37] text-[#D4AF37] text-xs font-black hover:bg-[#1A1A1A] transition-all shadow-md flex items-center gap-2 cursor-pointer shrink-0 whitespace-nowrap"
-            title="Generate & print barcodes for items"
-          >
-            <Printer size={15} /> Add Barcode
-          </button>
       </div>
 
       {/* TAB 1: STOCK MANAGEMENT VIEW */}
@@ -333,7 +261,7 @@ export const InventoryTable: React.FC = () => {
               <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search SKU name, variant, barcode, category..."
+                placeholder="Search name, SKU, variant, category..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-300 bg-[#FBFAF6] text-xs font-bold text-gray-900 outline-none focus:border-[#7A1220] focus:bg-white"
@@ -416,7 +344,7 @@ export const InventoryTable: React.FC = () => {
                     <thead className="bg-[#FBFAF6] border-b border-gray-200 text-xs font-bold text-gray-700 select-none">
                       <tr>
                         <th className="py-3.5 px-4 text-left min-w-[220px] whitespace-nowrap">Product &amp; Variant SKU</th>
-                        <th className="py-3.5 px-4 text-left w-[140px] whitespace-nowrap">Barcode</th>
+                        <th className="py-3.5 px-4 text-left w-[140px] whitespace-nowrap">SKU</th>
                         <th className="py-3.5 px-4 text-left w-[130px] whitespace-nowrap">Category</th>
                         <th className="py-3.5 px-4 text-center w-[130px] whitespace-nowrap">Stock Level</th>
                         <th className="py-3.5 px-4 text-right w-[130px] whitespace-nowrap">Selling Price</th>
@@ -442,14 +370,14 @@ export const InventoryTable: React.FC = () => {
                             )}
                           </td>
 
-                          {/* Barcode */}
+                          {/* SKU */}
                           <td className="py-3.5 px-4 text-left align-middle whitespace-nowrap">
-                            {item.barcode ? (
+                            {item.sku ? (
                               <span className="inline-block font-mono text-xs font-bold text-gray-800 bg-gray-100 px-2 py-1 rounded-md">
-                                {item.barcode}
+                                {item.sku}
                               </span>
                             ) : (
-                              <span className="text-gray-400 italic text-[11px]">No Barcode</span>
+                              <span className="text-gray-400 italic text-[11px]">No SKU</span>
                             )}
                           </td>
 
@@ -514,22 +442,6 @@ export const InventoryTable: React.FC = () => {
                                 <History size={14} />
                               </button>
 
-                              {/* Print Barcode (reserves identical spacing when item has no barcode) */}
-                              <button
-                                type="button"
-                                disabled={!item.barcode}
-                                onClick={() => item.barcode && setPrintModalItem(item)}
-                                className={`p-1.5 rounded-lg border transition-colors shrink-0 ${
-                                  item.barcode
-                                    ? 'bg-[#7A1220] text-[#D4AF37] border-[#D4AF37] hover:bg-[#1A1A1A] cursor-pointer'
-                                    : 'invisible pointer-events-none border-transparent'
-                                }`}
-                                title={item.barcode ? 'Print Barcode Labels' : undefined}
-                                aria-hidden={!item.barcode}
-                              >
-                                <Printer size={14} />
-                              </button>
-
                               {/* Edit in Catalog */}
                               <button
                                 type="button"
@@ -589,32 +501,6 @@ export const InventoryTable: React.FC = () => {
         <div className="animate-in fade-in duration-150">
           <InventoryAnalyticsView />
         </div>
-      )}
-
-      {/* Modal: Vyapar Barcode Generator Workspace */}
-      {showReceiveModal && (
-        <CreateBarcodeModal
-          isOpen={showReceiveModal}
-          onClose={() => setShowReceiveModal(false)}
-          products={distinctProducts}
-          preselectedProductId={selectedForReceive?.productId}
-          preselectedVariantId={selectedForReceive?.variantId}
-          onSuccess={loadData}
-        />
-      )}
-
-      {/* Modal: Print Barcode Labels */}
-      {printModalItem && (
-        <BarcodePrintModal
-          isOpen={!!printModalItem}
-          onClose={() => setPrintModalItem(null)}
-          productName={printModalItem.name}
-          variantName={printModalItem.variant_name}
-          barcodeValue={printModalItem.barcode || ''}
-          price={printModalItem.price}
-          mrp={printModalItem.offer_price}
-          defaultQuantity={Math.max(1, printModalItem.stock)}
-        />
       )}
 
       {/* Modal: Adjust Stock */}

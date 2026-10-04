@@ -1,7 +1,7 @@
 {
   "name": "YG ENTERPRISES Retail POS",
   "short_name": "YG",
-  "description": "YG ENTERPRISES retail billing, barcode inventory, catalog, order, receipt, and invoice administration.",
+  "description": "YG ENTERPRISES retail billing, inventory, catalog, order, receipt, and invoice administration.",
   "theme_color": "#7A1220",
   "background_color": "#7A1220",
   "display": "standalone",

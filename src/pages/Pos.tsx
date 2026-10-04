@@ -1,3 +1,4 @@
+import { can } from '../lib/permissions'
 import { useEffect, useMemo, useRef, useState, useCallback, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -1188,7 +1189,7 @@ export default function Pos(props: PosProps = {}) {
               <div className="w-1.5 h-5 sm:h-6 bg-[#D4AF37] rounded-full shrink-0"></div>
               POS Billing Panel
             </h2>
-            {role === 'admin' ? (
+            {can(role, 'branch.switch') ? (
               <div className="flex items-center bg-white border border-gray-200 rounded-xl p-0.5 shadow-xs">
                 <button
                   type="button"
@@ -1211,6 +1212,17 @@ export default function Pos(props: PosProps = {}) {
                   }`}
                 >
                   POS 2 (Crackers)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveBranch('pos3')}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                    branch === 'pos3'
+                      ? 'bg-[#111111] text-white shadow-xs'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  {branchShortLabel('pos3')}
                 </button>
               </div>
             ) : (
@@ -1425,7 +1437,7 @@ export default function Pos(props: PosProps = {}) {
                               {item.name}
                             </h4>
                             {item.variantName && (
-                              <span className="inline-block mt-0.5 text-[10.5px] font-semibold text-[#B48811] bg-[#FBFAF6] border border-[#E8D399]/60 px-1.5 py-0.5 rounded">
+                              <span className="inline-block mt-0.5 text-[10.5px] font-semibold text-[#8A6A0A] bg-[#FBFAF6] border border-[#E8D399]/60 px-1.5 py-0.5 rounded">
                                 {item.variantName}
                               </span>
                             )}
@@ -1443,7 +1455,7 @@ export default function Pos(props: PosProps = {}) {
                             <span className="font-bold text-[#111111]">
                               ₹{Number(item.basePrice || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                             </span>
-                            <Edit2 size={11} className="text-[#B48811]" />
+                            <Edit2 size={11} className="text-[#8A6A0A]" />
                           </button>
                         </div>
                       </div>
@@ -1511,7 +1523,7 @@ export default function Pos(props: PosProps = {}) {
                         </div>
                       )}
                       {item.source !== 'manual' && (
-                        <span className="hidden sm:inline-flex px-2 py-0.5 rounded border border-[#D4AF37]/30 text-[#B48811] text-[9px] font-black tracking-wider uppercase shrink-0 bg-[#D4AF37]/10">
+                        <span className="hidden sm:inline-flex px-2 py-0.5 rounded border border-[#D4AF37]/30 text-[#8A6A0A] text-[9px] font-black tracking-wider uppercase shrink-0 bg-[#D4AF37]/10">
                           CATALOG
                         </span>
                       )}
@@ -1525,10 +1537,10 @@ export default function Pos(props: PosProps = {}) {
                         className="group flex items-center justify-end gap-1.5 px-2.5 py-1.5 rounded-lg border border-transparent hover:border-[#D4AF37]/50 hover:bg-[#D4AF37]/10 transition-all text-right cursor-pointer"
                         title="Click to edit price"
                       >
-                        <span className="text-[13px] font-black text-[#111111] group-hover:text-[#B48811] tracking-tight">
+                        <span className="text-[13px] font-black text-[#111111] group-hover:text-[#8A6A0A] tracking-tight">
                           ₹{Number(item.basePrice || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                         </span>
-                        <Edit2 size={12} className="text-gray-400 group-hover:text-[#B48811] transition-colors shrink-0" />
+                        <Edit2 size={12} className="text-gray-400 group-hover:text-[#8A6A0A] transition-colors shrink-0" />
                       </button>
                     </div>
 
@@ -1569,7 +1581,7 @@ export default function Pos(props: PosProps = {}) {
                 <Receipt size={16} className="text-[#D4AF37]" />
                 Current Order
               </h3>
-              <span className={`px-2 py-1 rounded-full border text-[9px] font-black tracking-wider uppercase flex items-center gap-1.5 ${ordermode === 'offline' ? 'border-[#7A1220] text-[#7A1220] bg-gray-100' : 'border-[#D4AF37] text-[#B48811] bg-amber-50'}`}>
+              <span className={`px-2 py-1 rounded-full border text-[9px] font-black tracking-wider uppercase flex items-center gap-1.5 ${ordermode === 'offline' ? 'border-[#7A1220] text-[#7A1220] bg-gray-100' : 'border-[#D4AF37] text-[#8A6A0A] bg-amber-50'}`}>
                 <div className={`w-1.5 h-1.5 rounded-full ${ordermode === 'offline' ? 'bg-[#7A1220]' : 'bg-[#D4AF37]'}`}></div>
                 {ordermode} (POS)
               </span>
@@ -2084,7 +2096,7 @@ export default function Pos(props: PosProps = {}) {
           <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-amber-50/50 to-white">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-[#D4AF37]/10 flex items-center justify-center text-[#B48811]">
+                <div className="w-8 h-8 rounded-lg bg-[#D4AF37]/10 flex items-center justify-center text-[#8A6A0A]">
                   <Edit2 size={16} />
                 </div>
                 <div>
@@ -2137,7 +2149,7 @@ export default function Pos(props: PosProps = {}) {
 
               <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200/60 text-xs text-amber-900 space-y-1">
                 <p className="font-bold flex items-center gap-1.5 text-amber-800">
-                  <AlertCircle size={14} className="shrink-0 text-[#B48811]" />
+                  <AlertCircle size={14} className="shrink-0 text-[#8A6A0A]" />
                   Do you want to update this price in inventory also?
                 </p>
                 <p className="text-[11px] text-amber-700/90 pl-5 leading-relaxed">

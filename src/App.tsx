@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuthStore, useProductStore, useVariantStore, useAdminAuthStore, useSettingsStore, resolveBranch } from './store/store'
 import { BRAND_EN } from './lib/brand'
+import { hasAdminPowers } from './lib/permissions'
 import { clearLocalOrders } from './lib/ordersFallback'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { LowStockAlarmModal } from './components/dashboard/LowStockAlarmModal'
@@ -61,7 +62,7 @@ function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
 function AdminGuard({ children }: { children: React.ReactNode }) {
   const { isLoggedIn, role } = useAdminAuthStore()
   const location = useLocation()
-  if (!isLoggedIn || (role !== 'admin' && role !== 'staff')) {
+  if (!isLoggedIn || (role !== 'admin' && role !== 'manager' && role !== 'staff')) {
     return <Navigate to="/admin-login" state={{ from: location }} replace />
   }
   return <>{children}</>
@@ -74,6 +75,19 @@ function AdminOnlyGuard({ children }: { children: React.ReactNode }) {
     return <Navigate to="/admin-login" state={{ from: location }} replace />
   }
   if (role !== 'admin') {
+    return <Navigate to="/dashboard" replace />
+  }
+  return <>{children}</>
+}
+
+/** Admin or Manager (the original admin powers); Staff go back to the dashboard. */
+function AdminOrManagerGuard({ children }: { children: React.ReactNode }) {
+  const { isLoggedIn, role } = useAdminAuthStore()
+  const location = useLocation()
+  if (!isLoggedIn) {
+    return <Navigate to="/admin-login" state={{ from: location }} replace />
+  }
+  if (!hasAdminPowers(role)) {
     return <Navigate to="/dashboard" replace />
   }
   return <>{children}</>
@@ -99,12 +113,17 @@ function AppShell() {
   const settingsByBranch = useSettingsStore((state) => state.settingsByBranch)
 
   const isLoginRoute = location.pathname === '/admin-login' || location.pathname === '/login'
-  const hasStaffOrAdminAccess = Boolean(isLoggedIn && (role === 'admin' || role === 'staff') && !isLoginRoute)
+  const hasStaffOrAdminAccess = Boolean(isLoggedIn && (role === 'admin' || role === 'manager' || role === 'staff') && !isLoginRoute)
   // Alarm only for the branch being worked in (all branches in the admin's global view)
-  useLowStockMonitor(hasStaffOrAdminAccess, role, activeBranch === 'pos1' || activeBranch === 'pos2' ? activeBranch : null)
+  useLowStockMonitor(hasStaffOrAdminAccess, role, activeBranch && activeBranch !== 'all' ? activeBranch : null)
 
   useEffect(() => {
     document.title = BRAND_EN
+  }, [])
+
+  // The session is an httpOnly cookie: confirm it is still valid (and which portal it opens) when the app loads.
+  useEffect(() => {
+    void useAdminAuthStore.getState().restoreSession()
   }, [])
 
   // Load both branches' Appearance colors once so the picked color themes
@@ -203,7 +222,22 @@ function AppShell() {
             <Route path="/advance-orders" element={<Dashboard />} />
           </Route>
 
-          {/* Admin-Only Dedicated Routes */}
+          {/* Admin + Manager Dedicated Routes (Manager is branch-locked) */}
+          <Route
+            element={
+              <AdminOrManagerGuard>
+                <Suspense fallback={<LoadingSpinner />}>
+                  <Dashboard />
+                </Suspense>
+              </AdminOrManagerGuard>
+            }
+          >
+            <Route path="/whatsapp-center" element={<Dashboard />} />
+            <Route path="/expenses" element={<Dashboard />} />
+            <Route path="/dashboard/expenses" element={<Dashboard />} />
+          </Route>
+
+          {/* Admin-Only Dedicated Routes: Analytics Dashboard */}
           <Route
             element={
               <AdminOnlyGuard>
@@ -213,10 +247,7 @@ function AppShell() {
               </AdminOnlyGuard>
             }
           >
-            <Route path="/whatsapp-center" element={<Dashboard />} />
             <Route path="/pos-analytics" element={<Dashboard />} />
-            <Route path="/expenses" element={<Dashboard />} />
-            <Route path="/dashboard/expenses" element={<Dashboard />} />
           </Route>
           <Route
             path="/pos"

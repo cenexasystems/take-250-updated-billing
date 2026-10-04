@@ -15,7 +15,7 @@ const PRESET_COLORS = [
   '#3B183B', '#2E1065', '#4A2E12', '#18181B',
 ]
 
-type SettingsTarget = 'pos1' | 'pos2' | 'admin'
+type SettingsTarget = 'pos1' | 'pos2' | 'pos3' | 'admin'
 
 type FormState = {
   name: string
@@ -32,19 +32,19 @@ type FormState = {
 
 const emptyForm: FormState = {
   name: '', ownerName: '', businessType: '', phoneNumber: '', shopContactNumber: '',
-  email: '', address: '', instagramId: '', themeColor: '#8B1A1A', logoUrl: '',
+  email: '', address: '', instagramId: '', themeColor: '#0A0A0A', logoUrl: '',
 }
 
 export default function StoreSettingsView() {
   const { role, activeBranch, branch: staffBranch } = useAdminAuthStore()
   const defaultBranch = resolveBranch(activeBranch)
 
-  // Staff is locked to their branch; admin defaults to activeBranch or pos1
+  // Staff and manager are locked to their branch; admin defaults to activeBranch or pos1
   const [target, setTarget] = useState<SettingsTarget>(
-    role === 'staff' ? (staffBranch || 'pos1') : (activeBranch === 'pos2' ? 'pos2' : 'pos1')
+    role !== 'admin' ? (staffBranch || 'pos1') : defaultBranch
   )
 
-  const effectiveBranch: PosBranch = target === 'pos2' ? 'pos2' : 'pos1'
+  const effectiveBranch: PosBranch = target === 'admin' ? 'pos1' : target
   const accent = posAccent(effectiveBranch)
   const { settingsByBranch, fetchSettings } = useSettingsStore()
   const [form, setForm] = useState<FormState>(emptyForm)
@@ -82,7 +82,7 @@ export default function StoreSettingsView() {
       email: currentBranchSettings.email,
       address: currentBranchSettings.address,
       instagramId: currentBranchSettings.instagramId,
-      themeColor: currentBranchSettings.themeColor || (target === 'pos2' ? '#B8860B' : '#8B1A1A'),
+      themeColor: currentBranchSettings.themeColor || '#0A0A0A',
       logoUrl: currentBranchSettings.logoUrl || '',
     })
   }, [target, settingsByBranch])
@@ -222,6 +222,18 @@ export default function StoreSettingsView() {
           >
             <span className="w-2 h-2 rounded-full bg-amber-500" />
             POS 2 — Fireworks &amp; Crackers
+          </button>
+          <button
+            type="button"
+            onClick={() => { setTarget('pos3'); setMessage(null) }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+              target === 'pos3'
+                ? 'bg-[#111111] text-white shadow-xs'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-white'
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            {branchShortLabel('pos3')}
           </button>
           <button
             type="button"

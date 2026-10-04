@@ -7,7 +7,7 @@ import { formatCurrency } from '../../lib/retail'
 import { BRAND_EN } from '../../lib/brand'
 import type { TabKey } from '../../pages/Dashboard'
 
-const BRANCHES: PosBranch[] = ['pos1', 'pos2']
+const BRANCHES: PosBranch[] = ['pos1', 'pos2', 'pos3']
 
 type BranchStock = {
   valuation: number
@@ -24,7 +24,7 @@ interface ConsolidatedStockProps {
 
 export default function ConsolidatedStock({ onNavigate }: ConsolidatedStockProps) {
   const [loading, setLoading] = useState(true)
-  const [data, setData] = useState<Record<PosBranch, BranchStock>>({ pos1: empty(), pos2: empty() })
+  const [data, setData] = useState<Record<PosBranch, BranchStock>>({ pos1: empty(), pos2: empty(), pos3: empty() })
 
   const load = useCallback(async () => {
     if (!isSupabaseConfigured) { setLoading(false); return }

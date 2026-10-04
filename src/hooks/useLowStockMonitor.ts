@@ -1,13 +1,14 @@
 import { useEffect, useRef } from 'react'
 import { isSupabaseConfigured, supabase } from '../lib/supabase'
 import { useAlarmStore, type LowStockItem } from '../store/alarmStore'
+import type { PosBranch } from '../store/store'
 import { alarmSound } from '../lib/alarmAudio'
 
 /**
  * @param branch  Only products/variants of this branch raise the alarm ('pos1' | 'pos2').
  *                 Pass null for the admin's all-branches view.
  */
-export function useLowStockMonitor(enabled: boolean = true, role?: string | null, branch?: 'pos1' | 'pos2' | null) {
+export function useLowStockMonitor(enabled: boolean = true, role?: string | null, branch?: PosBranch | null) {
   const setLowStockItems = useAlarmStore((state) => state.setLowStockItems)
   const isCheckingRef = useRef(false)
   const enabledRef = useRef(enabled)

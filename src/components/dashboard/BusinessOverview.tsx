@@ -7,7 +7,7 @@ import { formatCurrency } from '../../lib/retail'
 import { BRAND_EN } from '../../lib/brand'
 import type { TabKey } from '../../pages/Dashboard'
 
-const BRANCHES: PosBranch[] = ['pos1', 'pos2']
+const BRANCHES: PosBranch[] = ['pos1', 'pos2', 'pos3']
 
 type BranchStats = {
   todaySales: number
@@ -25,7 +25,7 @@ interface BusinessOverviewProps {
 
 export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) {
   const [loading, setLoading] = useState(true)
-  const [stats, setStats] = useState<Record<PosBranch, BranchStats>>({ pos1: emptyStats(), pos2: emptyStats() })
+  const [stats, setStats] = useState<Record<PosBranch, BranchStats>>({ pos1: emptyStats(), pos2: emptyStats(), pos3: emptyStats() })
 
   const load = useCallback(async () => {
     if (!isSupabaseConfigured) { setLoading(false); return }
@@ -101,7 +101,7 @@ export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) 
         <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
           <div className="flex items-center justify-between mb-2">
             <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Total Invoices Issued</p>
-            <Receipt size={15} className="text-[#B48811]" />
+            <Receipt size={15} className="text-[#8A6A0A]" />
           </div>
           <p className="text-xl font-black text-[#1A0E0E]">{combinedBills}</p>
           <p className="text-[10px] text-gray-400 font-bold mt-1">Completed POS checkout orders today</p>

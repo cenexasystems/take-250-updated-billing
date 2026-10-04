@@ -1,3 +1,4 @@
+import { can } from '../../lib/permissions'
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Search,
@@ -544,7 +545,7 @@ export const InventoryTable: React.FC = () => {
                               </button>
 
                               {/* Delete Product / Variant (Admin Only) */}
-                              {role === 'admin' && (
+                              {can(role, 'inventory.delete') && (
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteItem(item)}

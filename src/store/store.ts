@@ -17,7 +17,7 @@ import {
 
 import { useAlarmStore } from './alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
-import { fetchCredentialOverrides } from '../services/credentialService'
+import { api } from '../lib/apiClient'
 
 export type { ProductVariant }
 
@@ -615,7 +615,7 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
       // branch. Unscoped reads (public storefront, which has no branch context)
       // intentionally resolve to POS 1 — the original shop — instead of grabbing
       // an arbitrary row, which made .single() fail once row #2 existed.
-      const queryBranch: PosBranch = branch === 'pos2' ? 'pos2' : 'pos1'
+      const queryBranch: PosBranch = branch ?? 'pos1'
       const { data, error } = await supabase
         .from('store_settings')
         .select('*')
@@ -641,7 +641,7 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
           businessType: data.business_type || '',
           instagramId: data.instagram_id || '',
           logoUrl: data.logo_url || null,
-          themeColor: data.theme_color || (queryBranch === 'pos2' ? '#B8860B' : '#8B1A1A'),
+          themeColor: data.theme_color || '#0A0A0A',
           gstEnabled: data.gst_enabled
         }
         set((state) => ({
@@ -662,7 +662,7 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
       businessType: '',
       instagramId: '',
       logoUrl: null,
-      themeColor: branch === 'pos2' ? '#B8860B' : '#8B1A1A',
+      themeColor: '#0A0A0A',
       gstEnabled: false
     }
     set((state) => ({
@@ -674,13 +674,29 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
 }))
 
 // --- Admin Auth Store ---
-export type AdminRole = 'admin' | 'staff' | null
-export type PosBranch = 'pos1' | 'pos2'
+export type AdminRole = 'admin' | 'manager' | 'staff' | null
+export type PosBranch = 'pos1' | 'pos2' | 'pos3'
 export type ActiveBranch = PosBranch | 'all' | null
+
+/** Branch rows as served by /api/auth/me (name, labels and colours are data, so a new branch needs no code). */
+export interface BranchInfo {
+  id: string
+  name: string
+  short_label: string
+  subtitle: string
+  theme_color: string
+  logo_url: string
+  barcode_prefix: string
+  sort_order: number
+}
+export const useBranchStore = create<{ branches: BranchInfo[]; setBranches: (b: BranchInfo[]) => void }>()((set) => ({
+  branches: [],
+  setBranches: (branches) => set({ branches }),
+}))
 
 /** Normalizes the dashboard's active-branch selection to a concrete branch for
  * branch-scoped queries (defaults to POS 1 when viewing the global 'all' aggregate). */
-export const resolveBranch = (activeBranch: ActiveBranch): PosBranch => (activeBranch === 'pos2' ? 'pos2' : 'pos1')
+export const resolveBranch = (activeBranch: ActiveBranch): PosBranch => (activeBranch === 'pos2' || activeBranch === 'pos3' ? activeBranch : 'pos1')
 
 interface AdminAuthState {
   isLoggedIn: boolean
@@ -690,8 +706,13 @@ interface AdminAuthState {
   branch: PosBranch | null
   /** What the dashboard is currently showing: a specific branch, or 'all' (admin global view). */
   activeBranch: ActiveBranch
-  login: (portalId: string, password: string, branchAttempt?: PosBranch) => Promise<AdminRole | false>
+  /** Passcode-only sign in. Throws ApiClientError (message is safe to show) when the passcode is wrong or throttled. */
+  login: (passcode: string) => Promise<AdminRole>
   logout: () => void
+  /** Re-checks the server session (httpOnly cookie) on page load; clears the local session if it is gone. */
+  restoreSession: () => Promise<void>
+  /** Local-only sign out (the server already says the session is invalid). */
+  expireSession: () => void
   setActiveBranch: (branch: ActiveBranch) => void
 }
 
@@ -703,58 +724,46 @@ export const useAdminAuthStore = create<AdminAuthState>()(
       adminId: null,
       branch: null,
       activeBranch: null,
-      login: async (portalId: string, password: string, branchAttempt?: PosBranch) => {
-        const trimmedId = String(portalId || '').trim()
-        const trimmedPass = String(password || '').trim()
-
-        // DB-stored password overrides (set via Dashboard > Staff & Memberships),
-        // take precedence over the .env defaults below when present.
-        const overrides = await fetchCredentialOverrides()
-
-        // 1. Check Admin Credentials (support VITE_ADMIN_ID or VITE_PORTAL_ID fallback)
-        const adminId = String(import.meta.env.VITE_ADMIN_ID || import.meta.env.VITE_PORTAL_ID || 'admin').trim()
-        const adminPass = overrides.admin || String(import.meta.env.VITE_ADMIN_PASSWORD || import.meta.env.VITE_PORTAL_PASSWORD || 'admin123').trim()
-
-        if (trimmedId === adminId && trimmedPass === adminPass) {
-          useAlarmStore.getState().resetSilencedState()
-          set({ isLoggedIn: true, role: 'admin', adminId: trimmedId, branch: null, activeBranch: 'all' })
-          return 'admin'
-        }
-
-        // 2. Check POS 1 Staff Credentials (falls back to legacy VITE_STAFF_ID/PASSWORD)
-        const pos1Id = String(import.meta.env.VITE_POS1_STAFF_ID || import.meta.env.VITE_STAFF_ID || 'staff1').trim()
-        const pos1Pass = overrides.pos1_staff || String(import.meta.env.VITE_POS1_STAFF_PASSWORD || import.meta.env.VITE_STAFF_PASSWORD || 'staff123').trim()
-
-        if (trimmedId === pos1Id && trimmedPass === pos1Pass) {
-          if (branchAttempt && branchAttempt !== 'pos1') return false
-          useAlarmStore.getState().resetSilencedState()
-          set({ isLoggedIn: true, role: 'staff', adminId: trimmedId, branch: 'pos1', activeBranch: 'pos1' })
-          return 'staff'
-        }
-
-        // 3. Check POS 2 Staff Credentials
-        const pos2Id = String(import.meta.env.VITE_POS2_STAFF_ID || 'staff2').trim()
-        const pos2Pass = overrides.pos2_staff || String(import.meta.env.VITE_POS2_STAFF_PASSWORD || 'staff123').trim()
-
-        if (pos2Id && trimmedId === pos2Id && trimmedPass === pos2Pass) {
-          if (branchAttempt && branchAttempt !== 'pos2') return false
-          useAlarmStore.getState().resetSilencedState()
-          set({ isLoggedIn: true, role: 'staff', adminId: trimmedId, branch: 'pos2', activeBranch: 'pos2' })
-          return 'staff'
-        }
-
-        return false
+      login: async (passcode: string) => {
+        const res = await api<{ role: Exclude<AdminRole, null>; branch: PosBranch | null }>('POST', '/api/auth/login', { body: { passcode } })
+        resetBranchScopedStores()
+        useAlarmStore.getState().resetSilencedState()
+        set({ isLoggedIn: true, role: res.role, adminId: res.role, branch: res.branch, activeBranch: res.role === 'admin' ? 'all' : res.branch })
+        try {
+          const me = await api<{ branches: BranchInfo[] }>('GET', '/api/auth/me')
+          useBranchStore.getState().setBranches(me.branches)
+        } catch { /* labels fall back to the built-in ones */ }
+        return res.role
       },
       logout: () => {
+        void api('POST', '/api/auth/logout').catch(() => undefined) // clears the httpOnly cookie
+        get().expireSession()
+      },
+      expireSession: () => {
         alarmSound.stopAlert()
         useAlarmStore.getState().resetSilencedState()
         resetBranchScopedStores()
+        useBranchStore.getState().setBranches([])
         set({ isLoggedIn: false, role: null, adminId: null, branch: null, activeBranch: null })
+      },
+      restoreSession: async () => {
+        if (!get().isLoggedIn) return
+        try {
+          const me = await api<{ role: Exclude<AdminRole, null>; branch: PosBranch | null; branches: BranchInfo[] }>('GET', '/api/auth/me')
+          useBranchStore.getState().setBranches(me.branches)
+          // the server is the source of truth for role and branch
+          if (me.role !== get().role || me.branch !== get().branch) {
+            resetBranchScopedStores()
+            set({ role: me.role, branch: me.branch, adminId: me.role, activeBranch: me.role === 'admin' ? 'all' : me.branch })
+          }
+        } catch {
+          // apiClient already expired the session on a 401; a network error leaves the local session for a retry
+        }
       },
       setActiveBranch: (branch: ActiveBranch) => {
         const { role, branch: staffBranch } = get()
-        // Staff cannot leave their assigned branch or view the global aggregate.
-        if (role === 'staff') {
+        // Staff and managers cannot leave their assigned branch or view the global aggregate; only the admin switches.
+        if (role !== 'admin') {
           if (staffBranch) set({ activeBranch: staffBranch })
           return
         }

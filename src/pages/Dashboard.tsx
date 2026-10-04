@@ -40,7 +40,8 @@ const RMIcon = ({ size = 16, className = '' }: { size?: number; className?: stri
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { isSupabaseConfigured, supabase } from '../lib/supabase'
 import { debounce } from '../lib/debounce'
-import { useAuthStore, useProductStore, useAdminAuthStore, resolveBranch, type Product, type PosBranch } from '../store/store'
+import { useAuthStore, useProductStore, useAdminAuthStore, useBranchStore, resolveBranch, type Product, type PosBranch } from '../store/store'
+import { can, canOpenTab, roleLabel, type TabKey as PermTabKey } from '../lib/permissions'
 import { useAlarmStore } from '../store/alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
 import { uploadProductImage } from '../lib/storage'
@@ -70,7 +71,7 @@ import { useHardwareBarcodeScanner } from '../hooks/useHardwareBarcodeScanner'
 import { BarcodeRedirectDialog } from '../components/pos/BarcodeRedirectDialog'
 import { exportAnalyticsToCSV, exportAnalyticsToPDF } from '../services/analyticsExport'
 import { BRAND_EN, BRAND_LOGO, BRAND_ICON } from '../lib/brand'
-import { branchShortLabel } from '../lib/branchTheme'
+import { branchName, branchShortLabel } from '../lib/branchTheme'
 import { getPeriodRange, toLocalDateKey } from '../lib/dateRanges'
 import { buildCsv, downloadCsvFile } from '../lib/csv'
 import {
@@ -197,6 +198,8 @@ export default function Dashboard() {
   const location = useLocation()
   const navigate = useNavigate()
   const role = useAdminAuthStore(state => state.role)
+  const lockedBranch = useAdminAuthStore(state => state.branch)
+  const branchRows = useBranchStore(state => state.branches)
   const activeBranch = useAdminAuthStore(state => state.activeBranch)
   const setActiveBranch = useAdminAuthStore(state => state.setActiveBranch)
   const branch = resolveBranch(activeBranch)
@@ -327,22 +330,17 @@ export default function Dashboard() {
     : (err && typeof err === 'object' && 'message' in err) ? String((err as {message?:unknown}).message) || fb : fb
 
   useEffect(() => {
-    if (role === 'staff') {
-      const staffAllowedTabs: TabKey[] = ['branch_hub', 'billing', 'inventory', 'advance_orders', 'history']
-      if (!staffAllowedTabs.includes(tab)) {
-        setTab('billing')
-        navigate('/dashboard', { replace: true })
-      }
-    } else if (role === 'admin' && ADMIN_REMOVED_TABS.includes(tab)) {
-      setTab(activeBranch === 'all' ? 'business_overview' : 'billing')
+    // one rule for all three portals: a tab the role may not open (including the tabs the original removed even
+    // for the admin) falls back to the landing page. Source of truth: src/lib/permissions.ts
+    if (role && !canOpenTab(role, tab as PermTabKey)) {
+      setTab(role === 'admin' && activeBranch === 'all' ? 'business_overview' : 'billing')
       navigate('/dashboard', { replace: true })
     }
   }, [role, tab, navigate, activeBranch])
 
   const handleTabClick = (tabKey: TabKey, targetBranch?: PosBranch) => {
-    if (role === 'staff') {
-      const staffAllowedTabs: TabKey[] = ['branch_hub', 'billing', 'inventory', 'advance_orders', 'history']
-      if (!staffAllowedTabs.includes(tabKey)) return
+    if (role === 'staff' || role === 'manager') {
+      if (!canOpenTab(role, tabKey as PermTabKey)) return
     }
     if (role === 'admin') {
       if (GLOBAL_TABS.includes(tabKey)) {
@@ -945,15 +943,7 @@ export default function Dashboard() {
   }
 
   const deleteOrder = async (orderId: string, invoiceNo: string) => {
-    if (role === 'staff') {
-      const pwd = window.prompt(`Enter admin password to delete order ${invoiceNo}:`)
-      if (pwd !== '192267') {
-        alert('Incorrect password. Deletion cancelled.')
-        return
-      }
-    } else {
-      if (!window.confirm(`Are you sure you want to completely delete order ${invoiceNo}? This cannot be undone.`)) return
-    }
+    if (!window.confirm(`Are you sure you want to completely delete order ${invoiceNo}? This cannot be undone.`)) return
     // Clear FK reference and cancel linked advance order in advance_orders
     await cancelAdvanceOrderByCompletedOrderId(orderId)
     const { error } = await supabase.from('orders').delete().eq('id', orderId).eq('branch', branch)
@@ -1661,7 +1651,11 @@ export default function Dashboard() {
     </div>
   )
 
-  const isGlobalView = role === 'admin' && activeBranch === 'all'
+  const isGlobalView = can(role, 'global.view') && activeBranch === 'all'
+  // header badge: "ROLE · Branch name" (admin shows the branch being worked in, or all branches)
+  const roleBadgeText = role === 'admin'
+    ? (activeBranch && activeBranch !== 'all' ? `${roleLabel(role)} · ${branchName(activeBranch)}` : `${roleLabel(role)} · All Branches`)
+    : `${roleLabel(role)} · ${branchName(lockedBranch || 'pos1')}`
   const branchLabel = branchShortLabel(branch)
 
   const globalNavItems: Array<{ id: TabKey; icon: React.ReactNode; label: string }> = [
@@ -1677,7 +1671,7 @@ export default function Dashboard() {
         { id: 'advance_orders', icon: <FileText size={18} />,     label: 'Advance Orders' },
         { id: 'history',        icon: <List size={18} />,         label: 'Order History' },
       ]
-    : [
+    : ([
         { id: 'billing',        icon: <ShoppingCart size={18} />, label: 'Store Dashboard & POS' },
         { id: 'inventory',      icon: <Layers size={18} />,       label: 'Stock & Inventory' },
         { id: 'expenses',       icon: <Receipt size={18} />,      label: 'Expenses Ledger' },
@@ -1686,7 +1680,7 @@ export default function Dashboard() {
         { id: 'pos_analytics',  icon: <BarChart2 size={18} />,    label: 'Analytics Dashboard' },
         { id: 'coupons',        icon: <Box size={18} />,          label: 'Coupons' },
         { id: 'store_settings', icon: <SlidersHorizontal size={18} />, label: 'Store Settings' },
-      ]
+      ] as Array<{ id: TabKey; icon: React.ReactNode; label: string }>).filter((item) => canOpenTab(role, item.id as PermTabKey))
 
   const navItems = isGlobalView ? globalNavItems : branchNavItems
 
@@ -1721,7 +1715,7 @@ export default function Dashboard() {
         {/* Desktop brand header */}
         <div className={`hidden lg:flex items-center relative transition-all duration-300 shrink-0 ${sidebarCollapsed ? 'flex-col items-center pt-4 pb-3 px-2 gap-2' : 'px-4 py-3.5 justify-between border-b border-white/5'}`}>
           <Link to="/pos" title="Go to Billing Panel" className={`flex items-center gap-2.5 min-w-0 transition-all duration-300 ${sidebarCollapsed ? 'justify-center' : 'flex-1'}`}>
-            <div className="flex items-center justify-center shrink-0 w-9 h-9 rounded-xl bg-[#5C0D18] border border-[#D4AF37]/50 shadow-sm hover:scale-105 transition-transform p-0.5 overflow-hidden">
+            <div className="flex items-center justify-center shrink-0 w-9 h-9 rounded-xl bg-[var(--theme-primary-dark)] border border-[#D4AF37]/50 shadow-sm hover:scale-105 transition-transform p-0.5 overflow-hidden">
               <img src={BRAND_ICON} alt={BRAND_EN} className="w-full h-full object-contain" />
             </div>
             {!sidebarCollapsed && (
@@ -1733,8 +1727,8 @@ export default function Dashboard() {
                       {branchLabel}
                     </span>
                   )}
-                  <span className={`text-[8.5px] font-black uppercase tracking-widest px-1.5 py-0.2 rounded w-fit ${role === 'admin' ? 'bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/40' : 'bg-gray-800 text-gray-300 border border-gray-700'}`}>
-                    {role === 'admin' ? 'ADMIN' : 'STAFF'}
+                  <span className={`text-[8.5px] font-black uppercase tracking-widest px-1.5 py-0.2 rounded w-fit ${role !== 'staff' ? 'bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/40' : 'bg-gray-800 text-gray-300 border border-gray-700'}`}>
+                    {roleBadgeText}
                   </span>
                 </div>
               </div>
@@ -1753,7 +1747,7 @@ export default function Dashboard() {
         {/* Mobile mini-header */}
         <div className="flex lg:hidden items-center justify-between px-3 py-2 border-b border-white/10 bg-[#7A1220] shrink-0 gap-2">
           <Link to="/pos" title="Go to Billing Panel" className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#5C0D18] border border-[#D4AF37]/50 shrink-0 shadow-sm hover:scale-105 transition-transform p-0.5 overflow-hidden">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--theme-primary-dark)] border border-[#D4AF37]/50 shrink-0 shadow-sm hover:scale-105 transition-transform p-0.5 overflow-hidden">
               <img src={BRAND_ICON} alt={BRAND_EN} className="w-full h-full object-contain" />
             </div>
             <div className="flex flex-col min-w-0 flex-1 overflow-hidden gap-0.5">
@@ -1766,8 +1760,8 @@ export default function Dashboard() {
                     {branchLabel}
                   </span>
                 )}
-                <span className={`shrink-0 text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded whitespace-nowrap ${role === 'admin' ? 'bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/40' : 'bg-gray-800 text-gray-300 border border-gray-700'}`}>
-                  {role === 'admin' ? 'ADMIN' : 'STAFF'}
+                <span className={`shrink-0 text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded whitespace-nowrap ${role !== 'staff' ? 'bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/40' : 'bg-gray-800 text-gray-300 border border-gray-700'}`}>
+                  {roleBadgeText}
                 </span>
               </div>
             </div>
@@ -1787,11 +1781,11 @@ export default function Dashboard() {
         {/* Operating Branch selector (admin picks a scope) / fixed branch badge (staff) */}
         <div className={`px-3 py-2.5 border-b border-white/10 shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
           <p className="text-[9px] font-black uppercase tracking-widest text-white/50 mb-1.5">Operating Branch</p>
-          {role === 'admin' ? (
+          {can(role, 'branch.switch') ? (
             <select
               value={activeBranch || 'all'}
               onChange={(e) => {
-                const val = e.target.value as 'all' | 'pos1' | 'pos2'
+                const val = e.target.value as 'all' | PosBranch
                 setActiveBranch(val)
                 setTab(val === 'all' ? 'business_overview' : 'billing')
                 navigate('/dashboard', { replace: true })
@@ -1799,8 +1793,9 @@ export default function Dashboard() {
               className="w-full rounded-xl bg-white/10 border border-white/15 text-white text-[11px] font-bold px-2.5 py-2 outline-none focus:border-[#D4AF37] cursor-pointer"
             >
               <option value="all" className="text-black">Global Admin (All Branches)</option>
-              <option value="pos1" className="text-black">{branchShortLabel('pos1')}</option>
-              <option value="pos2" className="text-black">{branchShortLabel('pos2')}</option>
+              {(branchRows.length ? branchRows.map((b) => b.id as PosBranch) : (['pos1', 'pos2', 'pos3'] as PosBranch[])).map((id) => (
+                <option key={id} value={id} className="text-black">{branchShortLabel(id)}</option>
+              ))}
             </select>
           ) : (
             <div className="w-full rounded-xl bg-white/10 border border-white/15 text-[#D4AF37] text-[11px] font-black px-2.5 py-2 flex items-center gap-1.5">
@@ -2468,7 +2463,7 @@ export default function Dashboard() {
                   className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white border border-[#E8D399] text-[#7A1220] font-bold text-xs hover:bg-[#FBFAF6] shadow-xs transition-all cursor-pointer hover:scale-[1.02]"
                   title="Export current analytics view to CSV"
                 >
-                  <Download size={14} className="text-[#B48811]" />
+                  <Download size={14} className="text-[#8A6A0A]" />
                   <span>Export CSV</span>
                 </button>
 
@@ -2521,11 +2516,11 @@ export default function Dashboard() {
                       onClick={() => setPosAnalyticsTab(id as PosAnalyticsTab)}
                       className={`inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs sm:text-[13px] font-black tracking-wide transition-all whitespace-nowrap cursor-pointer shrink-0 ${
                         isActive
-                          ? 'bg-white text-[#B48811] shadow-sm'
+                          ? 'bg-white text-[#8A6A0A] shadow-sm'
                           : 'text-[#6B7280] hover:text-[#111111] hover:bg-white/60'
                       }`}
                     >
-                      <span className={isActive ? 'text-[#B48811]' : 'text-gray-400'}>
+                      <span className={isActive ? 'text-[#8A6A0A]' : 'text-gray-400'}>
                         {icon}
                       </span>
                       <span>{label}</span>
@@ -3212,7 +3207,7 @@ export default function Dashboard() {
                                 <td className="px-4 py-2 text-right">
                                   <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-black ${
                                     coupon.is_active === false
-                                      ? 'bg-gray-100 text-gray-500'
+                                      ? 'bg-gray-100 text-gray-600'
                                       : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                   }`}>
                                     {coupon.is_active === false ? 'Inactive' : 'Active'}
@@ -3600,7 +3595,7 @@ export default function Dashboard() {
                           </button>
                         </div>
                         <div className="flex gap-2 w-full sm:flex-1">
-                        {role === 'admin' ? (
+                        {can(role, 'orders.status') ? (
                           <select value={normalizeStatus(o.status)} onChange={e => void updateOrderStatus(o.id, e.target.value)}
                             className={`min-h-[44px] flex-1 cursor-pointer rounded-xl border px-3 py-2 text-[12px] font-black outline-none ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
                             <option value="pending">{l('Pending', 'நிலுவை')}</option>
@@ -3611,7 +3606,7 @@ export default function Dashboard() {
                             {normalizeStatus(o.status) === 'completed' ? l('Completed', 'முடிந்தது') : l('Pending', 'நிலுவை')}
                           </span>
                         )}
-                        {role === 'admin' && (
+                        {can(role, 'orders.delete') && (
                           <button onClick={() => void deleteOrder(o.id, o.invoice_no)} className="h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl border border-[#E5E7EB]/60 text-[#D4AF37] transition-colors hover:bg-[#D4AF37]/5" title="Delete Order">
                             <Trash2 size={14} className="mx-auto" />
                           </button>
@@ -3671,7 +3666,7 @@ export default function Dashboard() {
                           <td className="whitespace-nowrap px-2 py-3 text-[11px] text-[#374151]">{new Date(o.created_at).toLocaleDateString('en-IN')}</td>
                           <td className="px-2 py-3">
                             <div className="flex items-center justify-center gap-1.5">
-                              {role === 'admin' ? (
+                              {can(role, 'orders.status') ? (
                                 <select value={normalizeStatus(o.status)} onChange={e => void updateOrderStatus(o.id, e.target.value)}
                                   className={`cursor-pointer rounded-lg border px-1.5 py-1 text-[10px] font-black outline-none ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
                                   <option value="pending">{l('Pending', 'நிலுவை')}</option>
@@ -3682,7 +3677,7 @@ export default function Dashboard() {
                                   {normalizeStatus(o.status) === 'completed' ? l('Completed', 'முடிந்தது') : l('Pending', 'நிலுவை')}
                                 </span>
                               )}
-                              {role === 'admin' && (
+                              {can(role, 'orders.delete') && (
                                 <button onClick={() => void deleteOrder(o.id, o.invoice_no)} className="rounded-lg p-1 text-[#D4AF37] transition-colors hover:bg-[#D4AF37]/5" title="Delete Order">
                                   <Trash2 size={13} />
                                 </button>
@@ -4269,7 +4264,7 @@ export default function Dashboard() {
                 className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white border border-[#E8D399] text-[#7A1220] font-bold text-xs hover:bg-[#FBFAF6] shadow-xs transition-all cursor-pointer hover:scale-[1.02]"
                 title="Refresh coupons list"
               >
-                <RefreshCw size={14} className="text-[#B48811]" />
+                <RefreshCw size={14} className="text-[#8A6A0A]" />
                 <span>{l('Refresh', 'புதுப்பி')}</span>
               </button>
             </div>
@@ -4281,7 +4276,7 @@ export default function Dashboard() {
                 <div>
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <p className="text-[11px] font-bold text-[#111111] uppercase tracking-wider">Total Coupons</p>
-                    <div className="w-8 h-8 rounded-full bg-[#FBFAF6] border border-[#E8D399] flex items-center justify-center text-[#B48811] shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-[#FBFAF6] border border-[#E8D399] flex items-center justify-center text-[#8A6A0A] shrink-0">
                       <Tag size={15} />
                     </div>
                   </div>
@@ -4327,7 +4322,7 @@ export default function Dashboard() {
 
             {/* Subtotal notice banner */}
             <div className="rounded-xl border border-[#E8D399]/60 bg-[#FBFAF6] px-4 py-2.5 text-[12px] font-medium text-[#6C665C] flex items-center gap-2.5 shadow-xs">
-              <Info size={16} className="text-[#B48811] shrink-0" />
+              <Info size={16} className="text-[#8A6A0A] shrink-0" />
               <span>{l('Coupon discount applies to product subtotal only — delivery charges are excluded.', 'கூப்பன் தள்ளுபடி பொருட்களின் subtotal-க்கு மட்டும் பொருந்தும்.')}</span>
             </div>
 
@@ -4375,7 +4370,7 @@ export default function Dashboard() {
                       </label>
                       <div className="flex gap-2">
                         <input
-                          className="flex-1 rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-mono font-black uppercase tracking-wider text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[#7A1220] disabled:opacity-60"
+                          className="flex-1 rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-mono font-black uppercase tracking-wider text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[var(--theme-primary)] disabled:opacity-60"
                           placeholder="WELCOME10"
                           value={couponForm.code}
                           disabled={editingCouponId !== null}
@@ -4407,7 +4402,7 @@ export default function Dashboard() {
                           type="number"
                           min="1"
                           max="100"
-                          className="w-full rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-bold text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[#7A1220]"
+                          className="w-full rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-bold text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[var(--theme-primary)]"
                           placeholder="10"
                           value={couponForm.percentage}
                           onChange={e => setCouponForm(f => ({ ...f, percentage: Number(e.target.value) }))}
@@ -4420,7 +4415,7 @@ export default function Dashboard() {
                         <input
                           type="number"
                           min="0"
-                          className="w-full rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-bold text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[#7A1220]"
+                          className="w-full rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-bold text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[var(--theme-primary)]"
                           placeholder="0 = no minimum"
                           value={couponForm.min_order_value}
                           onChange={e => setCouponForm(f => ({ ...f, min_order_value: e.target.value }))}
@@ -4436,7 +4431,7 @@ export default function Dashboard() {
                         </label>
                         <input
                           type="date"
-                          className="w-full rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-bold text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[#7A1220]"
+                          className="w-full rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-bold text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[var(--theme-primary)]"
                           value={couponForm.expiry_date}
                           onChange={e => setCouponForm(f => ({ ...f, expiry_date: e.target.value }))}
                         />
@@ -4448,7 +4443,7 @@ export default function Dashboard() {
                         <input
                           type="number"
                           min="1"
-                          className="w-full rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-bold text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[#7A1220]"
+                          className="w-full rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-bold text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[var(--theme-primary)]"
                           placeholder="Unlimited"
                           value={couponForm.usage_limit}
                           onChange={e => setCouponForm(f => ({ ...f, usage_limit: e.target.value }))}
@@ -4480,7 +4475,7 @@ export default function Dashboard() {
                       {coupons.length}
                     </span>
                   </div>
-                  <span className="px-2.5 py-0.5 rounded-full bg-[#FBFAF6] border border-[#E8D399] text-[#B48811] text-[10px] font-black uppercase tracking-wider">
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#FBFAF6] border border-[#E8D399] text-[#8A6A0A] text-[10px] font-black uppercase tracking-wider">
                     {l('Admin Only', 'அட்மின் மட்டும்')}
                   </span>
                 </div>
@@ -4522,7 +4517,7 @@ export default function Dashboard() {
                               )}
                             </div>
 
-                            <p className="text-[13px] font-black text-[#B48811]">
+                            <p className="text-[13px] font-black text-[#8A6A0A]">
                               {coupon.percentage}% OFF
                               {coupon.min_order_value > 0 && ` • min order ₹${coupon.min_order_value}`}
                             </p>
@@ -4547,7 +4542,7 @@ export default function Dashboard() {
                             </button>
                             <button
                               onClick={() => startEditCoupon(coupon)}
-                              className="w-8 h-8 rounded-lg border border-gray-200 bg-white hover:border-[#D4AF37] hover:bg-[#FBFAF6] text-gray-700 hover:text-[#B48811] flex items-center justify-center transition-all cursor-pointer shadow-xs"
+                              className="w-8 h-8 rounded-lg border border-gray-200 bg-white hover:border-[#D4AF37] hover:bg-[#FBFAF6] text-gray-700 hover:text-[#8A6A0A] flex items-center justify-center transition-all cursor-pointer shadow-xs"
                               title="Edit coupon"
                             >
                               <Edit2 size={13} />

@@ -1,3 +1,4 @@
+import type { PosBranch } from '../../store/store'
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { Users, Calendar, Clock, LogIn, LogOut, Plus, Trash2, CheckCircle2 } from 'lucide-react'
 import { useAdminAuthStore, resolveBranch } from '../../store/store'
@@ -135,7 +136,7 @@ function StaffPunchPanel() {
 }
 
 // ── Admin-side: Today's Attendance / Monthly Report / Staff Management ──
-function TodaysAttendance({ branch }: { branch: 'pos1' | 'pos2' }) {
+function TodaysAttendance({ branch }: { branch: PosBranch }) {
   const accent = posAccent(branch)
   const [date, setDate] = useState(todayStr())
   const [staff, setStaff] = useState<StaffMember[]>([])
@@ -246,7 +247,7 @@ function TodaysAttendance({ branch }: { branch: 'pos1' | 'pos2' }) {
   )
 }
 
-function MonthlyReport({ branch }: { branch: 'pos1' | 'pos2' }) {
+function MonthlyReport({ branch }: { branch: PosBranch }) {
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7))
   const [staff, setStaff] = useState<StaffMember[]>([])
   const [records, setRecords] = useState<AttendanceRecord[]>([])
@@ -303,7 +304,7 @@ function MonthlyReport({ branch }: { branch: 'pos1' | 'pos2' }) {
   )
 }
 
-function StaffManagement({ branch }: { branch: 'pos1' | 'pos2' }) {
+function StaffManagement({ branch }: { branch: PosBranch }) {
   const accent = posAccent(branch)
   const [staff, setStaff] = useState<StaffMember[]>([])
   const [name, setName] = useState('')

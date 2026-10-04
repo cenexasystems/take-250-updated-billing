@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { isSupabaseConfigured, supabase } from '../lib/supabase'
+import { api } from '../lib/apiClient'
 import { useAlarmStore, type LowStockItem } from '../store/alarmStore'
-import type { PosBranch } from '../store/store'
+import { useBranchStore, type PosBranch } from '../store/store'
 import { alarmSound } from '../lib/alarmAudio'
 
 /**
@@ -21,31 +21,18 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
     isCheckingRef.current = true
 
     try {
-      // 1. Fetch non-variant active products (exclude Unregistered)
+      // The branch being watched. The admin's all-branches view checks every branch (one call each, validated by the
+      // server); staff and manager always get their own branch from the session.
       const checkedBranch = branchRef.current
-      let prodQuery = supabase
-        .from('products')
-        .select('id, name, stock_quantity, low_stock_alert, barcode, has_variants, category, category_id')
-        .eq('is_active', true)
-        .eq('has_variants', false)
-      if (checkedBranch) prodQuery = prodQuery.eq('branch', checkedBranch)
-      const { data: prods, error: prodErr } = await prodQuery
-
-      if (prodErr) {
-        console.warn('Low stock product check warning:', prodErr)
-      }
-
-      // 2. Fetch active variants
-      let variantQuery = supabase
-        .from('product_variants')
-        .select('id, variant_name, stock, barcode, product_id, is_active, products(name, category, category_id, is_active)')
-        .eq('is_active', true)
-      if (checkedBranch) variantQuery = variantQuery.eq('branch', checkedBranch)
-      const { data: variants, error: varErr } = await variantQuery
-
-      if (varErr) {
-        console.warn('Low stock variant check warning:', varErr)
-      }
+      const allBranchIds = useBranchStore.getState().branches.map((b) => b.id as PosBranch)
+      const targets: Array<PosBranch | undefined> = checkedBranch
+        ? [checkedBranch]
+        : role === 'admin' ? (allBranchIds.length ? allBranchIds : (['pos1', 'pos2', 'pos3'] as PosBranch[])) : [undefined]
+      const results = await Promise.all(targets.map((b) =>
+        api<{ products: Array<Record<string, any>>; variants: Array<Record<string, any>> }>('GET', '/api/inventory/low-stock', { branchId: b })
+          .catch((err) => { console.warn('Low stock check warning:', err); return { products: [], variants: [] } })))
+      const prods = results.flatMap((r) => r.products)
+      const variants = results.flatMap((r) => r.variants)
 
       const flagged: LowStockItem[] = []
 
@@ -126,28 +113,17 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
     void checkStockLevels(true)
 
     // 15-second interval continuous stock monitor
+    // Polling replaces the old realtime subscription: every 15 s while the tab is visible, and once more the
+    // moment the tab becomes visible again. Each check only reads this branch's stock.
     const interval = setInterval(() => {
-      void checkStockLevels()
+      if (!document.hidden) void checkStockLevels()
     }, 15000)
-
-    if (!isSupabaseConfigured) {
-      return () => clearInterval(interval)
-    }
-
-    // Realtime channel to immediately trigger alarm on stock updates across both Admin and Staff panels
-    const realtimeChannel = supabase
-      .channel('low-stock-realtime-monitor')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
-        void checkStockLevels(true)
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_variants' }, () => {
-        void checkStockLevels(true)
-      })
-      .subscribe()
+    const onVisible = () => { if (!document.hidden) void checkStockLevels(true) }
+    document.addEventListener('visibilitychange', onVisible)
 
     return () => {
       clearInterval(interval)
-      void supabase.removeChannel(realtimeChannel)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [enabled, role, branch])
 

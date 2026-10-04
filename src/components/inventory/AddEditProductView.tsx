@@ -10,7 +10,8 @@ import {
   ArrowLeft,
   Edit2,
 } from 'lucide-react'
-import { supabase } from '../../lib/supabase'
+import { api } from '../../lib/apiClient'
+import { barcodeService } from '../../services/barcodeService'
 import { useProductStore, useAdminAuthStore, resolveBranch, type Product } from '../../store/store'
 import { fetchVariantsByProduct } from '../../services/variantService'
 import { inventoryService, type CategoryRecord } from '../../services/inventoryService'
@@ -300,6 +301,13 @@ export const AddEditProductView: React.FC<{
 
     setLoading(true)
 
+    // Every call below goes to the API for the signed-in branch (an admin's selected branch); who made a stock
+    // movement is recorded by the server from the session, and no branch is ever sent for staff / manager.
+    const writeMovement = (m: { product_id: number | string; variant_id: string | null; movement_type: 'RESTOCK' | 'CORRECTION'; quantity_delta: number; quantity_before: number; quantity_after: number; unit_cost: number | null; reference_type: 'PRODUCT_UPDATE' | 'PRODUCT_CREATION'; note: string }) =>
+      api('POST', '/api/inventory/movements', { body: { ...m, product_id: Number(m.product_id) }, branchId: branch })
+    const registerBarcode = (productId: number | string, variantId: string | null, value: string) =>
+      barcodeService.registerBarcode(Number(productId), value, variantId)
+
     try {
       if (selectedProductId) {
         // UPDATE EXISTING PRODUCT
@@ -307,19 +315,13 @@ export const AddEditProductView: React.FC<{
           const inputStock = Math.max(0, parseInt(stockQuantity) || 0)
 
           // Check previous stock
-          const { data: currentProd } = await supabase
-            .from('products')
-            .select('stock_quantity, stock')
-            .eq('id', selectedProductId)
-            .eq('branch', branch)
-            .single()
+          const currentProd = (await api<{ product: { stock_quantity?: number; stock?: number } }>('GET', `/api/products/${selectedProductId}`, { branchId: branch }).catch(() => null))?.product
 
           const prevStock = currentProd ? (currentProd.stock_quantity ?? currentProd.stock ?? 0) : 0
           const delta = inputStock - prevStock
 
-          const { error: updErr } = await supabase
-            .from('products')
-            .update({
+          await api('PATCH', `/api/products/${selectedProductId}`, {
+            body: {
               name: trimmedName,
               name_ta: nameTa.trim() || '',
               category: categoryName,
@@ -333,14 +335,12 @@ export const AddEditProductView: React.FC<{
               has_variants: false,
               stock_quantity: inputStock,
               stock: inputStock,
-            })
-            .eq('id', selectedProductId)
-            .eq('branch', branch)
-
-          if (updErr) throw updErr
+            },
+            branchId: branch,
+          })
 
           if (delta !== 0) {
-            await supabase.from('inventory_movements').insert({
+            await writeMovement({
               product_id: selectedProductId,
               variant_id: null,
               movement_type: delta > 0 ? 'RESTOCK' : 'CORRECTION',
@@ -350,22 +350,11 @@ export const AddEditProductView: React.FC<{
               unit_cost: costNum || null,
               reference_type: 'PRODUCT_UPDATE',
               note: 'Stock updated in product editor',
-              created_by_name: 'Admin',
-              branch,
             })
           }
 
           if (normalizeBarcode(barcode)) {
-            await supabase.from('barcode_registry').upsert(
-              {
-                barcode_value: normalizeBarcode(barcode),
-                product_id: selectedProductId,
-                variant_id: null,
-                is_active: true,
-                branch,
-              },
-              { onConflict: 'branch,barcode_value' }
-            )
+            await registerBarcode(selectedProductId, null, normalizeBarcode(barcode))
           }
 
           setStatusMessage({
@@ -375,6 +364,7 @@ export const AddEditProductView: React.FC<{
         } else {
           // Multi-variant update
           let totalVariantStock = 0
+          const existingVariants = (await api<{ variants: Array<{ id: string; stock: number }> }>('GET', '/api/variants', { query: { product_id: selectedProductId, include_inactive: 1 }, branchId: branch }).catch(() => ({ variants: [] }))).variants
           for (const v of variantRows) {
             if (!v.variantName.trim()) continue
             const vPrice = Number(v.price) > 0 ? Number(v.price) : priceNum
@@ -384,24 +374,25 @@ export const AddEditProductView: React.FC<{
 
             if (v.id.startsWith('var_')) {
               // Insert new variant
-              const { data: createdVar, error: vErr } = await supabase
-                .from('product_variants')
-                .insert({
-                  product_id: selectedProductId,
-                  variant_name: v.variantName.trim(),
-                  size_label: v.sizeLabel?.trim() || v.variantName.trim(),
-                  price: vPrice,
-                  purchase_price: vCost,
-                  stock: vStock,
-                  barcode: v.customBarcode?.trim() || null,
-                  is_active: true,
-                  branch,
-                })
-                .select()
-                .single()
+              let createdVar: { id: string } | null = null
+              try {
+                createdVar = (await api<{ variant: { id: string } }>('POST', '/api/variants', {
+                  body: {
+                    product_id: Number(selectedProductId),
+                    variant_name: v.variantName.trim(),
+                    size_label: v.sizeLabel?.trim() || v.variantName.trim(),
+                    price: vPrice,
+                    purchase_price: vCost,
+                    stock: vStock,
+                    barcode: v.customBarcode?.trim() || null,
+                    is_active: true,
+                  },
+                  branchId: branch,
+                })).variant
+              } catch { createdVar = null }
 
-              if (!vErr && createdVar && vStock > 0) {
-                await supabase.from('inventory_movements').insert({
+              if (createdVar && vStock > 0) {
+                await writeMovement({
                   product_id: selectedProductId,
                   variant_id: createdVar.id,
                   movement_type: 'RESTOCK',
@@ -411,37 +402,29 @@ export const AddEditProductView: React.FC<{
                   unit_cost: vCost || null,
                   reference_type: 'PRODUCT_UPDATE',
                   note: `Added variant ${v.variantName.trim()} with stock`,
-                  created_by_name: 'Admin',
-                  branch,
                 })
               }
             } else {
               // Update existing variant
-              const { data: curVar } = await supabase
-                .from('product_variants')
-                .select('stock')
-          .eq('id', v.id)
-          .eq('branch', branch)
-                .single()
+              const curVar = existingVariants.find((x) => x.id === v.id)
 
               const prevVarStock = curVar?.stock ?? 0
               const varDelta = vStock - prevVarStock
 
-              await supabase
-                .from('product_variants')
-                .update({
+              await api('PATCH', `/api/variants/${v.id}`, {
+                body: {
                   variant_name: v.variantName.trim(),
                   size_label: v.sizeLabel?.trim() || v.variantName.trim(),
                   price: vPrice,
                   purchase_price: vCost,
                   stock: vStock,
                   barcode: v.customBarcode?.trim() || null,
-                })
-                .eq('id', v.id)
-                .eq('branch', branch)
+                },
+                branchId: branch,
+              }).catch(() => undefined)
 
               if (varDelta !== 0) {
-                await supabase.from('inventory_movements').insert({
+                await writeMovement({
                   product_id: selectedProductId,
                   variant_id: v.id,
                   movement_type: varDelta > 0 ? 'RESTOCK' : 'CORRECTION',
@@ -451,17 +434,14 @@ export const AddEditProductView: React.FC<{
                   unit_cost: vCost || null,
                   reference_type: 'PRODUCT_UPDATE',
                   note: `Stock updated for variant ${v.variantName.trim()}`,
-                  created_by_name: 'Admin',
-                  branch,
                 })
               }
             }
           }
 
           // Update parent product
-          await supabase
-            .from('products')
-            .update({
+          await api('PATCH', `/api/products/${selectedProductId}`, {
+            body: {
               name: trimmedName,
               name_ta: nameTa.trim() || '',
               category: categoryName,
@@ -475,9 +455,9 @@ export const AddEditProductView: React.FC<{
               has_variants: true,
               stock_quantity: totalVariantStock,
               stock: totalVariantStock,
-            })
-            .eq('id', selectedProductId)
-            .eq('branch', branch)
+            },
+            branchId: branch,
+          }).catch(() => undefined)
 
           setStatusMessage({
             type: 'success',
@@ -489,9 +469,8 @@ export const AddEditProductView: React.FC<{
         if (!hasVariants) {
           const inputStock = Math.max(0, parseInt(stockQuantity) || 0)
 
-          const { data: newProd, error: insErr } = await supabase
-            .from('products')
-            .insert({
+          const newProd = (await api<{ product: { id: number; name: string } }>('POST', '/api/products', {
+            body: {
               name: trimmedName,
               name_ta: nameTa.trim() || '',
               category: categoryName,
@@ -506,28 +485,16 @@ export const AddEditProductView: React.FC<{
               stock_quantity: inputStock,
               stock: inputStock,
               is_active: true,
-              branch,
-            })
-            .select('id, name')
-            .single()
-
-          if (insErr || !newProd) throw insErr || new Error('Failed to create product')
+            },
+            branchId: branch,
+          })).product
 
           if (normalizeBarcode(barcode)) {
-            await supabase.from('barcode_registry').upsert(
-              {
-                barcode_value: normalizeBarcode(barcode),
-                product_id: newProd.id,
-                variant_id: null,
-                is_active: true,
-                branch,
-              },
-              { onConflict: 'branch,barcode_value' }
-            )
+            await registerBarcode(newProd.id, null, normalizeBarcode(barcode))
           }
 
           if (inputStock > 0) {
-            await supabase.from('inventory_movements').insert({
+            await writeMovement({
               product_id: newProd.id,
               variant_id: null,
               movement_type: 'RESTOCK',
@@ -537,8 +504,6 @@ export const AddEditProductView: React.FC<{
               unit_cost: costNum || null,
               reference_type: 'PRODUCT_CREATION',
               note: 'Initial received stock on product creation',
-              created_by_name: 'Admin',
-              branch,
             })
           }
 
@@ -556,9 +521,8 @@ export const AddEditProductView: React.FC<{
             }
           })
 
-          const { data: newProd, error: insErr } = await supabase
-            .from('products')
-            .insert({
+          const newProd = (await api<{ product: { id: number; name: string } }>('POST', '/api/products', {
+            body: {
               name: trimmedName,
               name_ta: nameTa.trim() || '',
               category: categoryName,
@@ -573,12 +537,9 @@ export const AddEditProductView: React.FC<{
               stock_quantity: totalVariantStock,
               stock: totalVariantStock,
               is_active: true,
-              branch,
-            })
-            .select('id, name')
-            .single()
-
-          if (insErr || !newProd) throw insErr || new Error('Failed to create product')
+            },
+            branchId: branch,
+          })).product
 
           for (const v of variantRows) {
             if (!v.variantName.trim()) continue
@@ -586,37 +547,29 @@ export const AddEditProductView: React.FC<{
             const vCost = Number(v.costPrice) > 0 ? Number(v.costPrice) : costNum
             const vStock = Math.max(0, Number(v.stock) || 0)
 
-            const { data: createdVar } = await supabase
-              .from('product_variants')
-              .insert({
-                product_id: newProd.id,
-                variant_name: v.variantName.trim(),
-                size_label: v.sizeLabel?.trim() || v.variantName.trim(),
-                price: vPrice,
-                purchase_price: vCost,
-                stock: vStock,
-                barcode: v.customBarcode?.trim() || null,
-                is_active: true,
-                branch,
-              })
-              .select('id')
-              .single()
+            let createdVar: { id: string } | null = null
+            try {
+              createdVar = (await api<{ variant: { id: string } }>('POST', '/api/variants', {
+                body: {
+                  product_id: newProd.id,
+                  variant_name: v.variantName.trim(),
+                  size_label: v.sizeLabel?.trim() || v.variantName.trim(),
+                  price: vPrice,
+                  purchase_price: vCost,
+                  stock: vStock,
+                  barcode: v.customBarcode?.trim() || null,
+                  is_active: true,
+                },
+                branchId: branch,
+              })).variant
+            } catch { createdVar = null }
 
             if (createdVar && normalizeBarcode(v.customBarcode)) {
-              await supabase.from('barcode_registry').upsert(
-                {
-                  barcode_value: normalizeBarcode(v.customBarcode),
-                  product_id: newProd.id,
-                  variant_id: createdVar.id,
-                  is_active: true,
-                  branch,
-                },
-                { onConflict: 'branch,barcode_value' }
-              )
+              await registerBarcode(newProd.id, createdVar.id, normalizeBarcode(v.customBarcode))
             }
 
             if (createdVar && vStock > 0) {
-              await supabase.from('inventory_movements').insert({
+              await writeMovement({
                 product_id: newProd.id,
                 variant_id: createdVar.id,
                 movement_type: 'RESTOCK',
@@ -626,8 +579,6 @@ export const AddEditProductView: React.FC<{
                 unit_cost: vCost || null,
                 reference_type: 'PRODUCT_CREATION',
                 note: `Initial stock for variant ${v.variantName.trim()}`,
-                created_by_name: 'Admin',
-                branch,
               })
             }
           }
@@ -646,15 +597,6 @@ export const AddEditProductView: React.FC<{
       console.error('Save Product Error:', err)
       let msg = err.message || (err instanceof Error ? err.message : 'An error occurred while saving')
       
-      if (msg.includes('products_category_name_unique')) {
-        msg = 'A product with this name already exists in the selected category.'
-      } else if (msg.includes('product_variants_product_name_unique')) {
-        msg = 'A variant with this name already exists for this product.'
-      } else if (msg.includes('barcode_registry_barcode_value_key') || msg.includes('duplicate key value violates unique constraint')) {
-        if (msg.includes('barcode')) {
-          msg = 'This barcode is already registered to another item.'
-        }
-      }
 
       setStatusMessage({ type: 'error', text: msg })
     } finally {

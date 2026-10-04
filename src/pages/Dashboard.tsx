@@ -38,10 +38,10 @@ const RMIcon = ({ size = 16, className = '' }: { size?: number; className?: stri
   </svg>
 )
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { isSupabaseConfigured, supabase } from '../lib/supabase'
+import { api, ApiClientError } from '../lib/apiClient'
 import { debounce } from '../lib/debounce'
-import { useAuthStore, useProductStore, useAdminAuthStore, useBranchStore, resolveBranch, type Product, type PosBranch } from '../store/store'
-import { can, canOpenTab, roleLabel, type TabKey as PermTabKey } from '../lib/permissions'
+import { useProductStore, useAdminAuthStore, useBranchStore, resolveBranch, type Product, type PosBranch } from '../store/store'
+import { can, canOpenTab, hasAdminPowers, roleLabel, type TabKey as PermTabKey } from '../lib/permissions'
 import { useAlarmStore } from '../store/alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
 import { uploadProductImage } from '../lib/storage'
@@ -61,7 +61,7 @@ import BusinessOverview from '../components/dashboard/BusinessOverview'
 import StaffMemberships from '../components/dashboard/StaffMemberships'
 import StoreSettingsView from '../components/dashboard/StoreSettingsView'
 import AdvanceOrders from './AdvanceOrders'
-import { cancelAdvanceOrderByCompletedOrderId, type AdvanceOrder } from '../services/advanceOrderService'
+import { type AdvanceOrder } from '../services/advanceOrderService'
 import { InventoryTable } from '../components/inventory/InventoryTable'
 import { ExpensesView } from '../components/expenses/ExpensesView'
 import CenexaFooter from '../components/common/CenexaFooter'
@@ -111,7 +111,6 @@ const GLOBAL_TABS: TabKey[] = ['business_overview', 'staff_memberships']
 // Pages removed from the admin panel — old links / bookmarks fall back to a live page
 const ADMIN_REMOVED_TABS: TabKey[] = ['branch_hub', 'categories', 'attendance', 'barcode_hub', 'cross_branch_sales', 'consolidated_stock', 'business_reports']
 type PosAnalyticsTab = 'revenue' | 'today' | 'products' | 'categories' | 'coupons'
-type ProfileUser = { id: string; email: string; name: string; mobile: string; role: string; created_at: string }
 
 const normalizeStatus = (v: unknown) => String(v || '').trim().toLowerCase()
 const normalizeOrderType = (v: unknown) => String(v || '').trim().toLowerCase() || 'pos_sale'
@@ -193,7 +192,6 @@ const DEFAULT_OPTIONS_FOR_TYPE: Record<UnitType, string> = {
 }
 
 export default function Dashboard() {
-  const { user } = useAuthStore()
   const { products, fetchProducts } = useProductStore()
   const location = useLocation()
   const navigate = useNavigate()
@@ -316,11 +314,7 @@ export default function Dashboard() {
   const [paymentMethodFilter, setPaymentMethodFilter] = useState<'all' | 'cash' | 'qr' | 'card' | 'split'>('all')
 
   // Users tab
-  const [allUsers, setAllUsers] = useState<ProfileUser[]>([])
-  const [usersLoading, setUsersLoading] = useState(false)
-  const [usersError, setUsersError] = useState('')
   const [userSearch, setUserSearch] = useState('')
-  const [roleUpdating, setRoleUpdating] = useState<string | null>(null)
 
   const isAdmin = true // bypassed for local demo
   const l = (en: string, _ta?: string) => en
@@ -420,58 +414,33 @@ export default function Dashboard() {
 
   // Load dashboard data
   const loadData = useCallback(async () => {
-    if (!isSupabaseConfigured) return
     setLoading(true)
     try {
       const productsPromise = fetchProducts(branch, true)
+      // coupons and expenses belong to the admin / manager portals; staff never request them
+      const powers = hasAdminPowers(useAdminAuthStore.getState().role)
       const [cRes, oRes, couponRes, expList] = await Promise.all([
-        supabase.from('categories').select('id, name_en, name_ta, is_active, sort_order').eq('branch', branch).order('sort_order'),
-        supabase.from('orders')
-          .select('id, invoice_no, customer_name, phone, address, created_at, total, status, order_mode, order_type, user_id, items, coupon_code, discount_amount, manual_discount_amount, delivery_charge, total_gst, gst_amount, payment_mode, payment_method, remarks, reference_number, branch')
-          .eq('branch', branch)
-          .order('created_at', { ascending: false })
-          .limit(1000),
-        supabase.from('coupons')
-          .select('id, code, percentage, is_active, expiry_date, usage_limit, usage_count, min_order_value')
-          .eq('branch', branch)
-          .order('created_at', { ascending: false }),
-        expenseService.getExpenses(branch),
+        api<{ categories: unknown[] }>('GET', '/api/categories', { branchId: branch }),
+        api<{ orders: Array<Record<string, unknown>> }>('GET', '/api/orders', { query: { include_items: 1, limit: 1000 }, branchId: branch }),
+        powers ? api<{ coupons: unknown[] }>('GET', '/api/coupons', { branchId: branch }) : Promise.resolve({ coupons: [] as unknown[] }),
+        powers ? expenseService.getExpenses(branch) : Promise.resolve([] as ExpenseRecord[]),
       ])
-      if (cRes.error) throw cRes.error
-      if (oRes.error) throw oRes.error
-      const mappedOrders = (oRes.data || []).map(r => toDashboardOrder(r as Record<string, unknown>))
-      setCats((cRes.data || []) as Category[])
+      const mappedOrders = oRes.orders.map(r => toDashboardOrder({ ...r, branch: r.branch_id }))
+      setCats(cRes.categories as Category[])
       setOrders(mappedOrders)
       setSearchResults(mappedOrders.filter(o => normalizeOrderType(o.order_type) !== 'online_request').slice(0, 100))
-      setCoupons((couponRes.data || []) as DashboardCoupon[])
+      setCoupons(couponRes.coupons as DashboardCoupon[])
       setExpenses(expList || [])
 
-      const orderIds = mappedOrders.map(o => o.id).filter(Boolean)
-      if (orderIds.length > 0) {
-        let oi: unknown[] | null = null
-        let orderItemsError: unknown = null
-        const orderItemsResult = await supabase
-          .from('order_items').select('order_id,product_name,category,quantity,line_total,is_manual')
-          .in('order_id', orderIds)
-        oi = orderItemsResult.data
-        orderItemsError = orderItemsResult.error
-
-        if (orderItemsError) {
-          const fallbackItemsResult = await supabase
-            .from('order_items').select('order_id,product_name,quantity,line_total')
-            .in('order_id', orderIds)
-          oi = fallbackItemsResult.data
-        }
-
-        setOrderItems((oi || []).map(r => ({
-          order_id: String((r as Record<string,unknown>).order_id || ''),
-          product_name: String((r as Record<string,unknown>).product_name || 'Product'),
-          category: String((r as Record<string,unknown>).category || ''),
-          quantity: toNumber((r as Record<string,unknown>).quantity, 0),
-          line_total: toNumber((r as Record<string,unknown>).line_total, 0),
-          is_manual: Boolean((r as Record<string,unknown>).is_manual),
-        })))
-      }
+      const oi = oRes.orders.flatMap(r => (Array.isArray(r.order_items) ? (r.order_items as unknown[]) : []))
+      setOrderItems(oi.map(r => ({
+        order_id: String((r as Record<string,unknown>).order_id || ''),
+        product_name: String((r as Record<string,unknown>).product_name || 'Product'),
+        category: String((r as Record<string,unknown>).category || ''),
+        quantity: toNumber((r as Record<string,unknown>).quantity, 0),
+        line_total: toNumber((r as Record<string,unknown>).line_total, 0),
+        is_manual: Boolean((r as Record<string,unknown>).is_manual),
+      })))
 
       await productsPromise
     } catch (err) { console.error('Dashboard load error', err) }
@@ -904,51 +873,27 @@ export default function Dashboard() {
 
 
 
-  const loadUsers = useCallback(async () => {
-    if (!isSupabaseConfigured) return
-    setUsersLoading(true); setUsersError('')
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, email, name, mobile, role, created_at')
-      .order('created_at', { ascending: false })
-    if (error) { setUsersError(error.message) }
-    else { setAllUsers((data || []) as ProfileUser[]) }
-    setUsersLoading(false)
-  }, [])
-
   const loadCoupons = useCallback(async () => {
-    if (!isSupabaseConfigured) return
-    const { data } = await supabase
-      .from('coupons')
-      .select('id, code, percentage, is_active, expiry_date, usage_limit, usage_count, min_order_value')
-      .eq('branch', branch)
-      .order('created_at', { ascending: false })
-    setCoupons((data || []) as DashboardCoupon[])
+    if (!hasAdminPowers(useAdminAuthStore.getState().role)) return
+    try {
+      const res = await api<{ coupons: unknown[] }>('GET', '/api/coupons', { branchId: branch })
+      setCoupons((res.coupons || []) as DashboardCoupon[])
+    } catch { /* keep the list that is showing */ }
   }, [branch])
 
-  const toggleUserRole = async (u: ProfileUser) => {
-    const newRole = u.role === 'admin' ? 'customer' : 'admin'
-    setRoleUpdating(u.id)
-    const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', u.id)
-    if (!error) {
-      setAllUsers(prev => prev.map(p => p.id === u.id ? { ...p, role: newRole } : p))
-    }
-    setRoleUpdating(null)
-  }
-
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
-    await supabase.from('orders').update({ status: newStatus }).eq('id', orderId).eq('branch', branch)
+    await api('PATCH', `/api/orders/${orderId}/status`, { body: { status: newStatus }, branchId: branch }).catch(() => undefined)
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o))
     setSearchResults(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o))
   }
 
   const deleteOrder = async (orderId: string, invoiceNo: string) => {
     if (!window.confirm(`Are you sure you want to completely delete order ${invoiceNo}? This cannot be undone.`)) return
-    // Clear FK reference and cancel linked advance order in advance_orders
-    await cancelAdvanceOrderByCompletedOrderId(orderId)
-    const { error } = await supabase.from('orders').delete().eq('id', orderId).eq('branch', branch)
-    if (error) {
-      alert(`Error deleting order: ${error.message}`)
+    // the server also releases / cancels a linked advance order in the same transaction
+    try {
+      await api('DELETE', `/api/orders/${orderId}`, { branchId: branch })
+    } catch (error) {
+      alert(`Error deleting order: ${error instanceof Error ? error.message : 'Request failed'}`)
       return
     }
     // Track deleted ID so re-searches don't bring it back
@@ -1093,24 +1038,21 @@ export default function Dashboard() {
       expiry_date: couponForm.expiry_date || null,
       usage_limit: couponForm.usage_limit ? toNumber(couponForm.usage_limit, 0) : null,
       min_order_value: toNumber(couponForm.min_order_value, 0),
-      branch,
     }
     let error: unknown = null
     if (editingCouponId !== null) {
       // Update existing - don't change code (it's the PK equivalent)
-      const res = await supabase.from('coupons').update({ ...payload }).eq('id', editingCouponId).eq('branch', branch)
-      error = res.error
+      try { await api('PATCH', `/api/coupons/${editingCouponId}`, { body: payload, branchId: branch }) } catch (e) { error = e }
     } else {
       // Insert new coupon - UNIQUE constraint on code catches duplicates
-      const res = await supabase.from('coupons').insert(payload)
-      error = res.error
+      try { await api('POST', '/api/coupons', { body: payload, branchId: branch }) } catch (e) { error = e }
     }
     if (error) {
       const msg = (error as { message?: string }).message || 'Failed to save coupon'
-      if (msg.toLowerCase().includes('row-level security')) {
-        setCouponSaveError('Coupon save was blocked by Supabase RLS. Confirm your user has the admin role.')
+      if (error instanceof ApiClientError && error.status === 403) {
+        setCouponSaveError('Coupon save is not allowed for this portal.')
       } else {
-        setCouponSaveError(msg.includes('unique') || msg.includes('duplicate') ? `Coupon code "${code}" already exists` : msg)
+        setCouponSaveError(msg.includes('unique') || msg.includes('duplicate') || msg.includes('already exists') ? `Coupon code "${code}" already exists` : msg)
       }
     } else {
       setCouponForm({ code: '', percentage: 10, expiry_date: '', usage_limit: '', min_order_value: '' })
@@ -1142,12 +1084,12 @@ export default function Dashboard() {
 
   const deleteCoupon = async (coupon: DashboardCoupon) => {
     if (!window.confirm(`Delete coupon "${coupon.code}"? This cannot be undone.`)) return
-    await supabase.from('coupons').delete().eq('id', coupon.id).eq('branch', branch)
+    await api('DELETE', `/api/coupons/${coupon.id}`, { branchId: branch }).catch(() => undefined)
     await loadCoupons()
   }
 
   const toggleCoupon = async (coupon: DashboardCoupon) => {
-    await supabase.from('coupons').update({ is_active: !coupon.is_active }).eq('id', coupon.id).eq('branch', branch)
+    await api('PATCH', `/api/coupons/${coupon.id}`, { body: { is_active: !coupon.is_active }, branchId: branch }).catch(() => undefined)
     await loadCoupons()
   }
 
@@ -1161,22 +1103,11 @@ export default function Dashboard() {
   useEffect(() => {
     if (!isAdmin) return
     void loadData()
-    if (!isSupabaseConfigured) return
-    const handleChange = () => debouncedLoadRef.current?.()
-    const ch = supabase.channel('dashboard-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, handleChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, handleChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, handleChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, handleChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'coupons' }, handleChange)
-      .subscribe()
-    return () => { void supabase.removeChannel(ch) }
   }, [isAdmin, loadData])
 
   useEffect(() => {
-    if (tab === 'users') void loadUsers()
     if (tab === 'coupons' || tab === 'pos_analytics') void loadCoupons()
-  }, [tab, loadUsers, loadCoupons])
+  }, [tab, loadCoupons])
 
   useEffect(() => {
     if (tab === 'pos_analytics' && posAnalyticsTab === 'coupons') {
@@ -1230,65 +1161,24 @@ export default function Dashboard() {
       const custInput = search.customerName.trim()
       const hasQuery = Boolean(qText || invInput || phoneInput || custInput)
 
-      let q = supabase.from('orders')
-        .select('id, invoice_no, customer_name, phone, address, created_at, total, status, order_mode, order_type, items, coupon_code, discount_amount, manual_discount_amount, delivery_charge, total_gst, gst_amount, payment_mode, payment_method, remarks, reference_number, branch')
-        .neq('order_type', 'online_request')
-        .eq('branch', branch)
-        .order('created_at', { ascending: false })
-        .limit(hasQuery ? 1000 : 500)
-
-      if (qText) {
-        const digitsOnly = qText.replace(/\D/g, '')
-        const nonZeroDigits = digitsOnly.replace(/^0+/, '')
-        const conds = [
-          `invoice_no.ilike.%${qText}%`,
-          `customer_name.ilike.%${qText}%`,
-          `phone.ilike.%${qText}%`
-        ]
-        if (digitsOnly && digitsOnly !== qText) {
-          conds.push(`invoice_no.ilike.%${digitsOnly}%`)
-          if (digitsOnly.length >= 4) conds.push(`phone.ilike.%${digitsOnly}%`)
-        }
-        if (nonZeroDigits && nonZeroDigits !== digitsOnly && nonZeroDigits !== qText) {
-          conds.push(`invoice_no.ilike.%${nonZeroDigits}%`)
-        }
-        q = q.or(conds.join(','))
+      // same filters as before, evaluated by the server for this branch (digit / zero-stripped variants included)
+      const billMode: Record<string, { order_type: string; order_mode?: string }> = {
+        advance: { order_type: 'advance_order' }, manual: { order_type: 'manual_sale' },
+        offline: { order_type: 'pos_sale', order_mode: 'offline' }, online: { order_type: 'pos_sale', order_mode: 'online' },
       }
-
-      if (invInput) {
-        const digitsOnly = invInput.replace(/\D/g, '')
-        const nonZeroDigits = digitsOnly.replace(/^0+/, '')
-        const conds = [`invoice_no.ilike.%${invInput}%`]
-        if (digitsOnly && digitsOnly !== invInput) conds.push(`invoice_no.ilike.%${digitsOnly}%`)
-        if (nonZeroDigits && nonZeroDigits !== digitsOnly && nonZeroDigits !== invInput) conds.push(`invoice_no.ilike.%${nonZeroDigits}%`)
-        q = q.or(conds.join(','))
-      }
-
-      if (phoneInput) {
-        const digitsOnly = phoneInput.replace(/\D/g, '')
-        if (digitsOnly && digitsOnly.length >= 4) {
-          q = q.or(`phone.ilike.%${phoneInput}%,phone.ilike.%${digitsOnly}%`)
-        } else {
-          q = q.ilike('phone', `%${phoneInput}%`)
-        }
-      }
-
-      if (custInput) {
-        q = q.ilike('customer_name', `%${custInput}%`)
-      }
-
-      // Local-day bounds converted to UTC instants (created_at is timestamptz).
-      // Keep date filters active together with invoice/customer/phone searches.
-      if (search.dateFrom) q = q.gte('created_at', new Date(`${search.dateFrom}T00:00:00`).toISOString())
-      if (search.dateTo)   q = q.lte('created_at', new Date(`${search.dateTo}T23:59:59.999`).toISOString())
-
-      if (billTypeFilter === 'advance')    q = q.eq('order_type', 'advance_order')
-      else if (billTypeFilter === 'manual')       q = q.eq('order_type', 'manual_sale')
-      else if (billTypeFilter === 'offline') q = q.eq('order_type', 'pos_sale').eq('order_mode', 'offline')
-      else if (billTypeFilter === 'online')  q = q.eq('order_type', 'pos_sale').eq('order_mode', 'online')
-
-      const { data, error } = await q
-      if (error) throw error
+      const mode = billMode[billTypeFilter as string]
+      const res = await api<{ orders: Array<Record<string, unknown>> }>('GET', '/api/orders', {
+        query: {
+          exclude_order_type: 'online_request',
+          q: qText || undefined, invoice: invInput || undefined, phone: phoneInput || undefined, customer: custInput || undefined,
+          from: search.dateFrom ? new Date(`${search.dateFrom}T00:00:00`).toISOString() : undefined,
+          to: search.dateTo ? new Date(`${search.dateTo}T23:59:59.999`).toISOString() : undefined,
+          order_type: mode?.order_type, order_mode: mode?.order_mode,
+          limit: hasQuery ? 1000 : 500,
+        },
+        branchId: branch,
+      })
+      const data = res.orders.map(r => ({ ...r, branch: r.branch_id }))
 
       let results = (data || []).map(r => toDashboardOrder(r as Record<string, unknown>))
 
@@ -1399,10 +1289,8 @@ export default function Dashboard() {
         image:     prodForm.image || '/product-placeholder.svg',
       }
 
-      const { error } = editingProd
-        ? await supabase.from('products').update(payload).eq('id', editingProd.id).eq('branch', branch)
-        : await supabase.from('products').insert({ ...payload, branch })
-      if (error) throw error
+      if (editingProd) await api('PATCH', `/api/products/${editingProd.id}`, { body: payload, branchId: branch })
+      else await api('POST', '/api/products', { body: payload, branchId: branch })
       setProductNotice(editingProd ? 'Product updated!' : 'Product added!')
       setEditingProd(null); setProdForm(emptyForm)
       await loadData()
@@ -1436,16 +1324,16 @@ export default function Dashboard() {
   }
 
   const handleToggleActive = async (p: Product) => {
-    const { error } = await supabase.from('products').update({ is_active: !p.isActive }).eq('id', p.id).eq('branch', branch)
-    if (error) { setProductNotice(error.message); return }
+    try { await api('PATCH', `/api/products/${p.id}`, { body: { is_active: !p.isActive }, branchId: branch }) }
+    catch (error) { setProductNotice(error instanceof Error ? error.message : 'Request failed'); return }
     setProductNotice(`Product ${p.isActive ? 'deactivated' : 'activated'}`)
     await loadData()
   }
 
   const handleDeleteProd = async (id: string | number) => {
     if (!window.confirm('Permanently deactivate this product?')) return
-    const { error } = await supabase.from('products').update({ is_active: false }).eq('id', id).eq('branch', branch)
-    if (error) { setProductNotice(error.message); return }
+    try { await api('PATCH', `/api/products/${id}`, { body: { is_active: false }, branchId: branch }) }
+    catch (error) { setProductNotice(error instanceof Error ? error.message : 'Request failed'); return }
     setProductNotice('Product deactivated'); await loadData()
   }
 
@@ -1485,7 +1373,7 @@ export default function Dashboard() {
         setVariantNotice('Variant added!')
         // Ensure product has_variants = true
         if (!editingProd.hasVariants) {
-          await supabase.from('products').update({ has_variants: true }).eq('id', editingProd.id).eq('branch', branch)
+          await api('PATCH', `/api/products/${editingProd.id}`, { body: { has_variants: true }, branchId: branch })
         }
       }
       setVariantForm({ name: '', sizeLabel: '', price: '', purchasePrice: '', mrp: '', sku: '', barcode: '', stock: '50', weightValue: '', weightUnit: '', isDefault: false })
@@ -1532,11 +1420,15 @@ export default function Dashboard() {
     e.preventDefault()
     if (!newCat.name_en.trim()) return
     const payload = { ...newCat, name_en: newCat.name_en.trim() }
-    const { error } = editingCategoryId === null
-      ? await supabase.from('categories').insert({ ...payload, is_active: true, branch })
-      : await supabase.from('categories').update(payload).eq('id', editingCategoryId).eq('branch', branch)
-    if (error) {
-      setCategoryNotice({ type: 'error', text: error.message || 'Could not add category.' })
+    try {
+      if (editingCategoryId === null) {
+        const res = await api<{ existing?: boolean }>('POST', '/api/categories', { body: { ...payload, is_active: true }, branchId: branch })
+        if (res.existing) throw new Error(`A category named "${payload.name_en}" already exists.`)
+      } else {
+        await api('PATCH', `/api/categories/${editingCategoryId}`, { body: payload, branchId: branch })
+      }
+    } catch (error) {
+      setCategoryNotice({ type: 'error', text: (error instanceof Error && error.message) || 'Could not add category.' })
       return
     }
     const wasEditing = editingCategoryId !== null
@@ -1548,27 +1440,11 @@ export default function Dashboard() {
 
   const deleteCat = async (c: Category) => {
     if (!window.confirm(`Delete "${c.name_en}"? This cannot be undone.`)) return
-    const { error: linkedProductsError } = await supabase
-      .from('products')
-      .update({ category: 'Uncategorized', category_id: null })
-      .eq('category_id', c.id)
-      .eq('branch', branch)
-    if (linkedProductsError) {
-      setCategoryNotice({ type: 'error', text: linkedProductsError.message || 'Could not unlink products from category.' })
-      return
-    }
-    const { error: legacyProductsError } = await supabase
-      .from('products')
-      .update({ category: 'Uncategorized', category_id: null })
-      .eq('category', c.name_en)
-      .eq('branch', branch)
-    if (legacyProductsError) {
-      setCategoryNotice({ type: 'error', text: legacyProductsError.message || 'Could not sync products.' })
-      return
-    }
-    const { error } = await supabase.from('categories').delete().eq('id', c.id).eq('branch', branch)
-    if (error) {
-      setCategoryNotice({ type: 'error', text: error.message || 'Could not delete category.' })
+    try {
+      // the server first moves this category's products to "Uncategorized", then deletes the category
+      await api('DELETE', `/api/categories/${c.id}`, { branchId: branch })
+    } catch (error) {
+      setCategoryNotice({ type: 'error', text: (error instanceof Error && error.message) || 'Could not delete category.' })
       return
     }
     if (prodForm.categoryId === c.id || prodForm.category === c.name_en) {
@@ -1581,7 +1457,7 @@ export default function Dashboard() {
   const toggleCat = async (c: Category) => {
     // Optimistic update
     setCats(prev => prev.map(cat => cat.id === c.id ? { ...cat, is_active: !c.is_active } : cat))
-    const { error } = await supabase.from('categories').update({ is_active: !c.is_active }).eq('id', c.id).eq('branch', branch)
+    const error = await api('PATCH', `/api/categories/${c.id}`, { body: { is_active: !c.is_active }, branchId: branch }).then(() => null, (e) => e)
     if (error) {
       setCategoryNotice({ type: 'error', text: 'Failed to update category status.' })
       // Revert on error
@@ -1604,8 +1480,8 @@ export default function Dashboard() {
       setCats(normalizedCats.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)))
       
       await Promise.all([
-        supabase.from('categories').update({ sort_order: currentNormalized.sort_order }).eq('id', c.id).eq('branch', branch),
-        supabase.from('categories').update({ sort_order: prevNormalized.sort_order }).eq('id', prevCat.id).eq('branch', branch)
+        api('PATCH', `/api/categories/${c.id}`, { body: { sort_order: currentNormalized.sort_order }, branchId: branch }),
+        api('PATCH', `/api/categories/${prevCat.id}`, { body: { sort_order: prevNormalized.sort_order }, branchId: branch })
       ])
     } else if (dir === 'down' && currentIndex < cats.length - 1) {
       const nextCat = cats[currentIndex + 1]
@@ -1620,8 +1496,8 @@ export default function Dashboard() {
       setCats(normalizedCats.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)))
       
       await Promise.all([
-        supabase.from('categories').update({ sort_order: currentNormalized.sort_order }).eq('id', c.id).eq('branch', branch),
-        supabase.from('categories').update({ sort_order: nextNormalized.sort_order }).eq('id', nextCat.id).eq('branch', branch)
+        api('PATCH', `/api/categories/${c.id}`, { body: { sort_order: currentNormalized.sort_order }, branchId: branch }),
+        api('PATCH', `/api/categories/${nextCat.id}`, { body: { sort_order: nextNormalized.sort_order }, branchId: branch })
       ])
     }
   }
@@ -4568,106 +4444,6 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
-          </div>
-        )}        {tab === 'users' && (
-          <div className="space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-[20px] font-black text-[#111111]">{l('User Management', 'பயனர் மேலாண்மை')}</h2>
-              <button onClick={() => void loadUsers()}
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-[#F3F4F6] rounded-xl text-[13px] font-bold text-[#111111] hover:bg-[#FAFAFA] transition-colors shadow-sm">
-                <RefreshCw size={14} /> Refresh
-              </button>
-            </div>
-
-            {/* Search */}
-            <div className="relative max-w-sm">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6B7280]" />
-              <input
-                className="w-full pl-11 pr-4 py-3 bg-white border border-[#D1D5DB] rounded-xl text-[13px] font-bold text-[#111111] placeholder-[#6B7280] focus:outline-none focus:border-[#D4AF37] transition-colors shadow-sm"
-                placeholder={l('Search by name or email...', 'பெயர் அல்லது மின்னஞ்சலால் தேடுக...')}
-                value={userSearch}
-                onChange={e => setUserSearch(e.target.value)}
-              />
-            </div>
-
-            {usersError && (
-              <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-xl text-[13px] text-red-700 font-bold shadow-sm">
-                <AlertCircle size={15} /> {usersError}
-              </div>
-            )}
-
-            <div className="bg-white rounded-2xl border border-borderLight shadow-sm overflow-hidden">
-              {usersLoading ? (
-                <div className="p-10 text-center text-[13px] font-bold text-[#6B7280]">{l('Loading users...', 'பயனர்கள் ஏற்றுகிறது...')}</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-[14px]">
-                    <thead>
-                      <tr className="bg-[#FAFAFA] border-b border-borderLight uppercase tracking-wider text-[11px] text-[#6B7280]">
-                        <th className="text-left px-6 py-4 font-black">{l('Name', 'பெயர்')}</th>
-                        <th className="text-left px-6 py-4 font-black">{l('Email', 'மின்னஞ்சல்')}</th>
-                        <th className="text-left px-6 py-4 font-black">{l('Mobile', 'மொபைல்')}</th>
-                        <th className="text-left px-6 py-4 font-black">{l('Joined', 'சேர்ந்த தேதி')}</th>
-                        <th className="text-center px-6 py-4 font-black">{l('Role', 'பங்கு')}</th>
-                        <th className="text-center px-6 py-4 font-black">{l('Action', 'நடவடிக்கை')}</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#F3F4F6]">
-                      {allUsers
-                        .filter(u => {
-                          if (!userSearch.trim()) return true
-                          const q = userSearch.toLowerCase()
-                          return u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
-                        })
-                        .map(u => (
-                          <tr key={u.id} className="hover:bg-[#FAFAFA] transition-colors">
-                            <td className="px-6 py-4 font-bold text-[#111111]">{u.name || '-'}</td>
-                            <td className="px-6 py-4 text-[#6B7280]">{u.email || '-'}</td>
-                            <td className="px-6 py-4 text-[#6B7280]">{u.mobile || '-'}</td>
-                            <td className="px-6 py-4 text-[#6B7280] text-[12px]">
-                              {u.created_at ? new Date(u.created_at).toLocaleDateString('en-IN') : '-'}
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider ${
-                                u.role === 'admin'
-                                  ? 'bg-green-100 text-green-700'
-                                  : 'bg-[#F3F4F6] text-[#4B5563]'
-                              }`}>
-                                {u.role === 'admin' ? <ShieldCheck size={12} /> : <ShieldOff size={12} />}
-                                {u.role === 'admin' ? l('Admin', 'நிர்வாகி') : l('Customer', 'வாடிக்கையாளர்')}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              {u.id === user?.id ? (
-                                <span className="text-[12px] text-[#6B7280] font-bold uppercase tracking-wider">{l('You', 'நீங்கள்')}</span>
-                              ) : (
-                                <button
-                                  onClick={() => void toggleUserRole(u)}
-                                  disabled={roleUpdating === u.id}
-                                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-colors disabled:opacity-50 ${
-                                    u.role === 'admin'
-                                      ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'
-                                      : 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'
-                                  }`}
-                                >
-                                  {u.role === 'admin' ? <><ShieldOff size={12} /> Remove Admin</> : <><ShieldCheck size={12} /> {l('Make Admin', 'நிர்வாகி ஆக்கு')}</>}
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                  {allUsers.length === 0 && !usersLoading && (
-                    <p className="p-10 text-center text-[14px] font-bold text-[#6B7280] bg-[#FAFAFA]">{l('No users found.', 'பயனர் இல்லை.')}</p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <p className="text-[12px] text-[#6B7280] font-bold">
-              - {l('Role changes take effect upon next login.', 'பங்கு மாற்றம் அடுத்த முறை உள்நுழைந்தால் நடைமுறைக்கு வரும்.')}
-            </p>
           </div>
         )}
 

@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabase } from '../lib/supabase'
+import { api } from '../lib/apiClient'
 import type { PosBranch } from '../store/store'
 
 export type ProductVariant = {
@@ -41,9 +41,6 @@ export type VariantInput = {
   branch?: PosBranch
 }
 
-const VARIANT_COLS =
-  'id, product_id, variant_name, size_label, weight_value, weight_unit, sku, barcode, purchase_price, mrp, price, stock, is_default, is_active, sort_order, image_url, group_name'
-
 function mapVariant(r: Record<string, unknown>): ProductVariant {
   return {
     id:          String(r.id || ''),
@@ -68,69 +65,54 @@ function mapVariant(r: Record<string, unknown>): ProductVariant {
 
 // ── Read ──────────────────────────────────────────────────────────
 
+const msg = (e: unknown) => (e instanceof Error ? e.message : 'Request failed')
+
 export async function fetchAllVariants(branch?: PosBranch): Promise<{ data: ProductVariant[]; error: string | null }> {
-  if (!isSupabaseConfigured) return { data: [], error: null }
-
-  let query = supabase
-    .from('product_variants')
-    .select(VARIANT_COLS)
-    .eq('is_active', true)
-    .order('sort_order', { ascending: true })
-  if (branch) query = query.eq('branch', branch)
-  const { data, error } = await query
-
-  if (error) return { data: [], error: error.message }
-  return {
-    data: (data || []).map(r => mapVariant(r as Record<string, unknown>)),
-    error: null,
+  try {
+    const res = await api<{ variants: Array<Record<string, unknown>> }>('GET', '/api/variants', { branchId: branch })
+    return { data: res.variants.map(mapVariant), error: null }
+  } catch (e) {
+    return { data: [], error: msg(e) }
   }
 }
 
 export async function fetchVariantsByProduct(productId: string, branch: PosBranch): Promise<ProductVariant[]> {
-  if (!isSupabaseConfigured) return []
-
-  let query = supabase
-    .from('product_variants')
-    .select(VARIANT_COLS)
-    .eq('product_id', productId)
-    .eq('is_active', true)
-    .order('sort_order', { ascending: true })
-  query = query.eq('branch', branch)
-  const { data } = await query
-
-  return (data || []).map(r => mapVariant(r as Record<string, unknown>))
+  try {
+    const res = await api<{ variants: Array<Record<string, unknown>> }>('GET', '/api/variants', { query: { product_id: productId }, branchId: branch })
+    return res.variants.map(mapVariant)
+  } catch {
+    return []
+  }
 }
 
-// ── Write (admin only) ────────────────────────────────────────────
+// ── Write (admin / manager / staff product editor) ────────────────
 
 export async function createVariant(input: VariantInput): Promise<{ data: ProductVariant | null; error: string | null }> {
-  if (!isSupabaseConfigured) return { data: null, error: 'Not configured' }
-
-  const { data, error } = await supabase
-    .from('product_variants')
-    .insert({
-      product_id:   input.productId,
-      variant_name: input.variantName,
-      size_label:   input.sizeLabel ?? null,
-      weight_value: input.weightValue ?? null,
-      weight_unit:  input.weightUnit ?? null,
-      sku:          input.sku ?? null,
-      barcode:      input.barcode ?? null,
-      purchase_price: input.purchasePrice ?? null,
-      mrp:          input.mrp ?? null,
-      price:        input.price,
-      stock:        input.stock ?? 0,
-      is_default:   input.isDefault ?? false,
-      sort_order:   input.sortOrder ?? 0,
-      image_url:    input.imageUrl ?? null,
-      is_active:    true,
-      branch:       input.branch || 'pos1',
+  try {
+    const res = await api<{ variant: Record<string, unknown> }>('POST', '/api/variants', {
+      body: {
+        product_id:   Number(input.productId),
+        variant_name: input.variantName,
+        size_label:   input.sizeLabel ?? null,
+        weight_value: input.weightValue ?? null,
+        weight_unit:  input.weightUnit ?? null,
+        sku:          input.sku ?? null,
+        barcode:      input.barcode ?? null,
+        purchase_price: input.purchasePrice ?? null,
+        mrp:          input.mrp ?? null,
+        price:        input.price,
+        stock:        input.stock ?? 0,
+        is_default:   input.isDefault ?? false,
+        sort_order:   input.sortOrder ?? 0,
+        image_url:    input.imageUrl ?? null,
+        is_active:    true,
+      },
+      branchId: input.branch,
     })
-    .select(VARIANT_COLS)
-    .single()
-
-  if (error) return { data: null, error: error.message }
-  return { data: mapVariant(data as Record<string, unknown>), error: null }
+    return { data: mapVariant(res.variant), error: null }
+  } catch (e) {
+    return { data: null, error: msg(e) }
+  }
 }
 
 export async function updateVariant(
@@ -138,8 +120,6 @@ export async function updateVariant(
   updates: Partial<VariantInput>,
   branch: PosBranch,
 ): Promise<{ error: string | null }> {
-  if (!isSupabaseConfigured) return { error: 'Not configured' }
-
   const payload: Record<string, unknown> = {}
   if (updates.variantName !== undefined) payload.variant_name = updates.variantName
   if (updates.sizeLabel   !== undefined) payload.size_label   = updates.sizeLabel
@@ -154,47 +134,32 @@ export async function updateVariant(
   if (updates.isDefault     !== undefined) payload.is_default     = updates.isDefault
   if (updates.sortOrder     !== undefined) payload.sort_order     = updates.sortOrder
   if (updates.imageUrl      !== undefined) payload.image_url      = updates.imageUrl
-
-  const { error } = await supabase
-    .from('product_variants')
-    .update(payload)
-    .eq('id', id)
-    .eq('branch', branch)
-
-  return { error: error?.message ?? null }
+  try {
+    await api('PATCH', `/api/variants/${id}`, { body: payload, branchId: branch })
+    return { error: null }
+  } catch (e) {
+    return { error: msg(e) }
+  }
 }
 
 export async function deleteVariant(id: string, branch: PosBranch): Promise<{ error: string | null }> {
-  if (!isSupabaseConfigured) return { error: 'Not configured' }
-
-  const { error } = await supabase
-    .from('product_variants')
-    .update({ is_active: false })
-    .eq('id', id)
-    .eq('branch', branch)
-
-  return { error: error?.message ?? null }
+  try {
+    await api('PATCH', `/api/variants/${id}`, { body: { is_active: false }, branchId: branch })
+    return { error: null }
+  } catch (e) {
+    return { error: msg(e) }
+  }
 }
 
 export async function setDefaultVariant(
   variantId: string,
-  productId: string,
+  _productId: string,
   branch: PosBranch,
 ): Promise<{ error: string | null }> {
-  if (!isSupabaseConfigured) return { error: 'Not configured' }
-
-  // Clear current defaults
-  await supabase
-    .from('product_variants')
-    .update({ is_default: false })
-    .eq('product_id', productId)
-    .eq('branch', branch)
-
-  const { error } = await supabase
-    .from('product_variants')
-    .update({ is_default: true })
-    .eq('id', variantId)
-    .eq('branch', branch)
-
-  return { error: error?.message ?? null }
+  try {
+    await api('POST', `/api/variants/${variantId}/default`, { branchId: branch })
+    return { error: null }
+  } catch (e) {
+    return { error: msg(e) }
+  }
 }

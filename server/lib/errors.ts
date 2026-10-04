@@ -13,7 +13,15 @@ export function mapDbError(err: unknown): ApiError | null {
   const e = err as { code?: string; message?: string; constraint?: string }
   if (!e || typeof e.code !== 'string') return null
   switch (e.code) {
-    case '23505': return new ApiError(409, 'That value already exists in this branch.')
+    case '23505': {
+      const c = String(e.constraint || '')
+      if (c === 'products_category_name_unique') return new ApiError(409, 'A product with this name already exists in the selected category.')
+      if (c === 'product_variants_product_name_unique') return new ApiError(409, 'A variant with this name already exists for this product.')
+      if (c.startsWith('barcode_registry') || c.includes('barcode')) return new ApiError(409, 'This barcode is already registered to another item.')
+      if (c === 'categories_branch_name_unique') return new ApiError(409, 'A category with this name already exists.')
+      if (c === 'coupons_branch_code_upper_unique') return new ApiError(409, 'That coupon code already exists.')
+      return new ApiError(409, 'That value already exists in this branch.')
+    }
     case '23503': return new ApiError(409, 'Referenced record not found in this branch, or still in use.')
     case '23514': return new ApiError(400, e.message ? String(e.message).split('\n')[0] : 'Value rejected.')
     case '23502': return new ApiError(400, 'A required field is missing.')

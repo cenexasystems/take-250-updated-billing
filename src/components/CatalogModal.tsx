@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Search, ShoppingBag, Edit2, Trash2 } from 'lucide-react'
 import { useProductStore, type Product, type PosBranch } from '../store/store'
-import { supabase } from '../lib/supabase'
+import { api } from '../lib/apiClient'
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock'
 
 interface CatalogModalProps {
@@ -34,12 +34,8 @@ export default function CatalogModal({ isOpen, branch, onClose, onAdd }: Catalog
     if (!isOpen) return
     let cancelled = false
     const loadCategories = async () => {
-      const { data } = await supabase
-        .from('categories')
-        .select('id, name_en, is_active, sort_order')
-        .eq('branch', branch)
-        .order('sort_order')
-      if (!cancelled) setCategoryOptions((data || []) as CategoryOption[])
+      const res = await api<{ categories: unknown[] }>('GET', '/api/categories', { branchId: branch }).catch(() => ({ categories: [] as unknown[] }))
+      if (!cancelled) setCategoryOptions((res.categories || []) as CategoryOption[])
     }
     void loadCategories()
     return () => { cancelled = true }
@@ -108,13 +104,17 @@ export default function CatalogModal({ isOpen, branch, onClose, onAdd }: Catalog
     const selectedCategory = allCategoryOptions.find(c => c.name_en.trim().toLowerCase() === editForm.category.trim().toLowerCase())
     if (!selectedCategory) { setEditError('Select a valid category'); setEditLoading(false); return }
     const categoryName = selectedCategory.name_en.trim()
-    const { error } = await supabase.from('products').update({
-      name: editForm.name.trim(),
-      category: categoryName,
-      category_id: selectedCategory.id,
-      price: Number(editForm.price),
-    }).eq('id', editingProduct.id).eq('branch', branch)
-    if (error) { setEditError(error.message); setEditLoading(false); return }
+    try {
+      await api('PATCH', `/api/products/${editingProduct.id}`, {
+        body: {
+          name: editForm.name.trim(),
+          category: categoryName,
+          category_id: typeof selectedCategory.id === 'number' ? selectedCategory.id : Number(selectedCategory.id) > 0 ? Number(selectedCategory.id) : null,
+          price: Number(editForm.price),
+        },
+        branchId: branch,
+      })
+    } catch (error) { setEditError(error instanceof Error ? error.message : 'Request failed'); setEditLoading(false); return }
     await fetchProducts(branch, true)
     setEditLoading(false)
     cancelEdit()
@@ -122,7 +122,7 @@ export default function CatalogModal({ isOpen, branch, onClose, onAdd }: Catalog
 
   const handleDelete = async (p: Product) => {
     if (!window.confirm(`Delete "${p.name}"? This will deactivate it.`)) return
-    await supabase.from('products').update({ is_active: false }).eq('id', p.id).eq('branch', branch)
+    await api('PATCH', `/api/products/${p.id}`, { body: { is_active: false }, branchId: branch }).catch(() => undefined)
     await fetchProducts(branch, true)
   }
 

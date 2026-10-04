@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { RefreshCw, TrendingUp, Receipt, Boxes, AlertTriangle, Store } from 'lucide-react'
-import { supabase, isSupabaseConfigured } from '../../lib/supabase'
+import { api } from '../../lib/apiClient'
 import type { PosBranch } from '../../store/store'
 import { posAccent, branchLabel, branchLogo, branchShortLabel } from '../../lib/branchTheme'
 import { formatCurrency } from '../../lib/retail'
@@ -28,16 +28,16 @@ export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) 
   const [stats, setStats] = useState<Record<PosBranch, BranchStats>>({ pos1: emptyStats(), pos2: emptyStats(), pos3: emptyStats() })
 
   const load = useCallback(async () => {
-    if (!isSupabaseConfigured) { setLoading(false); return }
     setLoading(true)
     try {
       const todayStart = new Date()
       todayStart.setHours(0, 0, 0, 0)
 
       const results = await Promise.all(BRANCHES.map(async (branch) => {
-        const [{ data: orders }, { data: products }] = await Promise.all([
-          supabase.from('orders').select('total, created_at, status, order_type').eq('branch', branch).gte('created_at', todayStart.toISOString()).limit(2000),
-          supabase.from('products').select('name, price, stock_quantity, low_stock_alert, is_active').eq('branch', branch).eq('is_active', true),
+        // the admin reads each branch explicitly (this view is admin-only; the server validates every branch id)
+        const [{ orders }, { products }] = await Promise.all([
+          api<{ orders: Array<Record<string, any>> }>('GET', '/api/orders', { query: { from: todayStart.toISOString(), limit: 1000 }, branchId: branch }),
+          api<{ products: Array<Record<string, any>> }>('GET', '/api/products', { branchId: branch }),
         ])
 
         // Same definition as POS Analytics: completed/paid bills, excluding website (online) requests

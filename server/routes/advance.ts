@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { notFound } from '../lib/errors.js'
 import { route } from '../lib/route.js'
-import { updateRow } from '../lib/sql.js'
 
 const money = z.number().finite().min(0)
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -40,9 +39,9 @@ export const advanceRoutes = [
           `SELECT (public.create_advance_order($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)).* `,
           [body.customer_name, body.phone, body.address, body.product_name, body.category, body.description, body.total_amount, body.deposit_amount,
            body.expected_delivery_date, body.remarks, body.payment_method, session!.role, JSON.stringify(body.products), branch])
-        let order = r.rows[0]
-        if (body.reference_number) order = await updateRow(t, 'advance_orders', order.id, branch!, { reference_number: body.reference_number }, [], false)
-        return { order }
+        // reference_number is accepted but not stored: the original database had no such column on advance orders
+        // (its update call failed silently), so an exact copy keeps ignoring it.
+        return { order: r.rows[0] }
       })
     },
   }),
@@ -74,6 +73,16 @@ export const advanceRoutes = [
         `SELECT * FROM public.complete_advance_order_v2($1, $2, $3, $4, $5, $6, $7, $8)`,
         [params.id, body.payment_method, body.final_amount, body.coupon_code ?? null, body.coupon_percentage, body.manual_discount, body.remarks, branch])
       return { result: r.rows[0] }
+    },
+  }),
+  // after a split-payment completion the screen stores the readable "Split (...)" text, as the original did
+  route({
+    method: 'patch', path: '/api/advance-orders/:id/final-method', perm: 'advance.write',
+    body: z.object({ final_payment_method: z.string().trim().min(1).max(200) }).strict(),
+    async handler({ db, branch, body, params }) {
+      const r = await db.query(`UPDATE public.advance_orders SET final_payment_method = $1 WHERE id = $2 AND branch_id = $3 AND status = 'completed'`, [body.final_payment_method, params.id, branch])
+      if (!r.rowCount) throw notFound()
+      return { ok: true }
     },
   }),
   route({

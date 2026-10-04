@@ -1,29 +1,20 @@
-import { supabase } from '../lib/supabase'
+import { api } from '../lib/apiClient'
 import type { PosBranch } from '../store/store'
 
-/**
- * Explicit column list — avoids transferring large unused columns (description,
- * benefits, images) on every fetch while keeping all fields the app actually reads.
- */
-const PRODUCT_COLUMNS = [
-  'id', 'name', 'name_ta', 'tamil_name', 'category', 'category_id',
-  'remedy', 'price', 'offer_price', 'unit_type', 'unit_label',
-  'base_quantity', 'stock_quantity', 'stock_unit', 'allow_decimal_quantity',
-  'predefined_options', 'is_active', 'sort_order', 'unit', 'rating',
-  'description', 'description_ta', 'benefits', 'benefits_ta',
-  'image_url', 'image', 'has_variants', 'barcode', 'sku',
-].join(', ')
+type Result<T> = Promise<{ data: T[] | null; error: { message: string } | null }>
 
-// `branch` omitted returns both branches combined (used by the public storefront,
-// which shows one merged catalog regardless of which POS counter stocked an item).
-export function fetchAllCategories(branch?: PosBranch) {
-  const query = supabase.from('categories').select('id, name_en')
-  return branch ? query.eq('branch', branch) : query
+const asResult = async <T>(run: () => Promise<T[]>): Result<T> => {
+  try { return { data: await run(), error: null } } catch (e) { return { data: null, error: { message: e instanceof Error ? e.message : 'Request failed' } } }
 }
 
-export function fetchAllProducts(branch?: PosBranch) {
-  const query = supabase.from('products').select(PRODUCT_COLUMNS).order('sort_order', { ascending: true })
-  return branch ? query.eq('branch', branch) : query
+// The API serves the caller's branch only. `branch` selects which branch an ADMIN is looking at (staff and manager
+// are locked to theirs by the session, so the argument never reaches the server for them).
+export function fetchAllCategories(branch?: PosBranch): Result<{ id: number; name_en: string }> {
+  return asResult(async () => (await api<{ categories: Array<{ id: number; name_en: string }> }>('GET', '/api/categories', { branchId: branch })).categories)
+}
+
+export function fetchAllProducts(branch?: PosBranch): Result<Record<string, unknown>> {
+  return asResult(async () => (await api<{ products: Array<Record<string, unknown>> }>('GET', '/api/products', { branchId: branch })).products)
 }
 
 export async function updateItemPrice(params: {
@@ -34,36 +25,15 @@ export async function updateItemPrice(params: {
   branch: PosBranch
 }): Promise<void> {
   if (params.newPrice < 0) throw new Error('Price cannot be negative')
-
-  if (params.entityType === 'variant') {
-    const updatePayload: Record<string, unknown> = {
-      price: params.newPrice,
-      updated_at: new Date().toISOString(),
-    }
-    if (params.newCostPrice !== undefined && params.newCostPrice >= 0) {
-      updatePayload.purchase_price = params.newCostPrice
-    }
-    const { error } = await supabase
-      .from('product_variants')
-      .update(updatePayload)
-      .eq('id', params.id)
-      .eq('branch', params.branch)
-    if (error) throw error
-  } else {
-    const updatePayload: Record<string, unknown> = {
-      price: params.newPrice,
-      updated_at: new Date().toISOString(),
-    }
-    if (params.newCostPrice !== undefined && params.newCostPrice >= 0) {
-      updatePayload.purchase_price = params.newCostPrice
-    }
-    const { error } = await supabase
-      .from('products')
-      .update(updatePayload)
-      .eq('id', params.id)
-      .eq('branch', params.branch)
-    if (error) throw error
-  }
+  await api('PATCH', '/api/inventory/price', {
+    body: {
+      entity_type: params.entityType,
+      id: params.entityType === 'product' ? Number(params.id) : String(params.id),
+      new_price: params.newPrice,
+      ...(params.newCostPrice !== undefined && params.newCostPrice >= 0 ? { new_cost_price: params.newCostPrice } : {}),
+    },
+    branchId: params.branch,
+  })
 }
 
 export async function getOrCreateUnregisteredProduct(
@@ -71,89 +41,5 @@ export async function getOrCreateUnregisteredProduct(
   price: number,
   branch: PosBranch
 ): Promise<{ id: number; name: string; price: number; category: string }> {
-  const trimmedName = name.trim()
-
-  // 1. Resolve or create 'Unregistered' category (per branch)
-  let { data: cat } = await supabase
-    .from('categories')
-    .select('id, name_en')
-    .ilike('name_en', 'Unregistered')
-    .eq('branch', branch)
-    .maybeSingle()
-
-  if (!cat) {
-    const { data: newCat, error: catErr } = await supabase
-      .from('categories')
-      .insert({
-        name_en: 'Unregistered',
-        name_ta: 'பதிவுசெய்யப்படாதது',
-        is_active: true,
-        sort_order: 999,
-        branch,
-      })
-      .select('id, name_en')
-      .single()
-
-    if (catErr) throw catErr
-    cat = newCat
-  }
-
-  const categoryId = Number(cat.id)
-
-  // 2. Check if product already exists under Unregistered category (this branch)
-  const { data: existingProd } = await supabase
-    .from('products')
-    .select('id, name, price, category')
-    .ilike('name', trimmedName)
-    .eq('category_id', categoryId)
-    .eq('branch', branch)
-    .maybeSingle()
-
-  if (existingProd) {
-    // Update price if changed so Catalog displays the latest rate
-    if (Number(existingProd.price) !== Number(price)) {
-      await supabase
-        .from('products')
-        .update({ price: Number(price), updated_at: new Date().toISOString() })
-        .eq('id', existingProd.id)
-    }
-    return {
-      id: Number(existingProd.id),
-      name: existingProd.name,
-      price: Number(price),
-      category: 'Unregistered',
-    }
-  }
-
-  // 3. Create ad-hoc product row (stock 0, non-inventory)
-  const { data: newProd, error: prodErr } = await supabase
-    .from('products')
-    .insert({
-      name: trimmedName,
-      category: 'Unregistered',
-      category_id: categoryId,
-      price: Number(price),
-      offer_price: null,
-      stock_quantity: 0,
-      stock: 0,
-      unit_type: 'unit',
-      unit_label: 'piece',
-      unit: 'piece',
-      base_quantity: 1,
-      has_variants: false,
-      is_active: true,
-      sort_order: 999,
-      branch,
-    })
-    .select('id, name, price, category')
-    .single()
-
-  if (prodErr) throw prodErr
-
-  return {
-    id: Number(newProd.id),
-    name: newProd.name,
-    price: Number(newProd.price),
-    category: 'Unregistered',
-  }
+  return api('POST', '/api/pos/unregistered-product', { body: { name: name.trim(), price: Number(price) }, branchId: branch })
 }

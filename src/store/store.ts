@@ -373,17 +373,6 @@ export const useProductStore = create<ProductState>((set, get) => ({
     if (!force && scope === get().lastFetchScope && Date.now() - get().lastFetch < 300000 && get().products.length > 0) return
     const requestId = ++productFetchRequestId
 
-    if (!isSupabaseConfigured) {
-      set({
-        products: [],
-        loading: false,
-        error: 'Supabase is not configured',
-        lastFetch: Date.now(),
-        lastFetchScope: scope,
-      })
-      return
-    }
-
     // Switching branch drops the previous branch's catalog immediately, so it
     // can't be shown (or billed) under the new branch while the fetch is in flight.
     set(scope === get().lastFetchScope
@@ -416,7 +405,7 @@ export const useProductStore = create<ProductState>((set, get) => ({
   refreshProducts: () => {
     const scope = get().lastFetchScope
     if (!scope) return Promise.resolve()
-    return get().fetchProducts(scope === 'pos1' || scope === 'pos2' ? scope : undefined, true)
+    return get().fetchProducts(scope === 'all' ? undefined : (scope as PosBranch), true)
   },
 }))
 
@@ -609,20 +598,18 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
   settingsByBranch: {},
   loading: false,
   fetchSettings: async (branch) => {
+    const { role, branch: lockedBranch, activeBranch } = useAdminAuthStore.getState()
+    // Staff and manager can only ever read their own branch's settings (the server enforces it), so never file
+    // another branch's request under the wrong key; the admin reads whichever branch is asked for.
+    if (role && role !== 'admin' && branch && branch !== lockedBranch) return
+    const queryBranch: PosBranch = branch ?? (role === 'admin' ? resolveBranch(activeBranch) : lockedBranch ?? 'pos1')
     set({ loading: true })
-    if (isSupabaseConfigured) {
-      // store_settings holds one row per POS counter, so every read must name a
-      // branch. Unscoped reads (public storefront, which has no branch context)
-      // intentionally resolve to POS 1 — the original shop — instead of grabbing
-      // an arbitrary row, which made .single() fail once row #2 existed.
-      const queryBranch: PosBranch = branch ?? 'pos1'
-      const { data, error } = await supabase
-        .from('store_settings')
-        .select('*')
-        .eq('branch', queryBranch)
-        .limit(1)
-        .maybeSingle()
-      if (!error && data) {
+    {
+      let data: Record<string, any> | null = null
+      try {
+        data = (await api<{ settings: Record<string, any> }>('GET', '/api/settings', { branchId: queryBranch })).settings
+      } catch { data = null }
+      if (data) {
         // Legacy placeholder identities (CLAD / Chaji / Purple Boutique) seeded by
         // very early migrations are replaced with the YG Enterprises brand
         // constants, so a stale store_settings row can never leak onto an
@@ -646,7 +633,7 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
         }
         set((state) => ({
           settings: resolved,
-          settingsByBranch: branch ? { ...state.settingsByBranch, [branch]: resolved } : state.settingsByBranch,
+          settingsByBranch: { ...state.settingsByBranch, [queryBranch]: resolved },
           loading: false
         }))
         return

@@ -1,11 +1,9 @@
 import './index.css'
 import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { useAuthStore, useProductStore, useVariantStore, useAdminAuthStore, useSettingsStore, resolveBranch } from './store/store'
+import { useProductStore, useVariantStore, useAdminAuthStore, useSettingsStore, useBranchStore, resolveBranch, type PosBranch } from './store/store'
 import { BRAND_EN } from './lib/brand'
 import { hasAdminPowers } from './lib/permissions'
-import { clearLocalOrders } from './lib/ordersFallback'
-import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { LowStockAlarmModal } from './components/dashboard/LowStockAlarmModal'
 import { useLowStockMonitor } from './hooks/useLowStockMonitor'
 import { applyActiveTheme } from './lib/branchTheme'
@@ -40,7 +38,6 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
 const Dashboard = lazyWithRetry(() => import('./pages/Dashboard'))
 const Pos = lazyWithRetry(() => import('./pages/Pos'))
 const DigitalInvoice = lazyWithRetry(() => import('./pages/DigitalInvoice'))
-const Login = lazyWithRetry(() => import('./pages/Login'))
 const AdminLogin = lazyWithRetry(() => import('./pages/AdminLogin'))
 
 function LoadingSpinner() {
@@ -49,14 +46,6 @@ function LoadingSpinner() {
       <span className="h-10 w-10 animate-spin rounded-full border-4 border-[#E5E7EB] border-t-[#D4AF37]" />
     </div>
   )
-}
-
-function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
-  const user = useAuthStore((state) => state.user)
-  const loading = useAuthStore((state) => state.loading)
-
-  if (loading) return <LoadingSpinner />
-  return user ? <Navigate to="/dashboard" replace /> : <>{children}</>
 }
 
 function AdminGuard({ children }: { children: React.ReactNode }) {
@@ -104,15 +93,14 @@ function PosGuard({ children }: { children: React.ReactNode }) {
 
 function AppShell() {
   const location = useLocation()
-  const initialize = useAuthStore((state) => state.initialize)
   const fetchProducts = useProductStore((state) => state.fetchProducts)
-  const refreshProducts = useProductStore((state) => state.refreshProducts)
   const fetchVariants = useVariantStore((state) => state.fetchVariants)
   const { isLoggedIn, role, activeBranch, branch: staffBranch } = useAdminAuthStore()
   const fetchSettings = useSettingsStore((state) => state.fetchSettings)
   const settingsByBranch = useSettingsStore((state) => state.settingsByBranch)
+  const branchRows = useBranchStore((state) => state.branches)
 
-  const isLoginRoute = location.pathname === '/admin-login' || location.pathname === '/login'
+  const isLoginRoute = location.pathname === '/admin-login'
   const hasStaffOrAdminAccess = Boolean(isLoggedIn && (role === 'admin' || role === 'manager' || role === 'staff') && !isLoginRoute)
   // Alarm only for the branch being worked in (all branches in the admin's global view)
   useLowStockMonitor(hasStaffOrAdminAccess, role, activeBranch && activeBranch !== 'all' ? activeBranch : null)
@@ -130,32 +118,16 @@ function AppShell() {
   // that branch's admin UI everywhere (sidebar, Branch Hub, global aggregate
   // pages) rather than just the Store Settings preview card.
   useEffect(() => {
-    void fetchSettings('pos1')
-    void fetchSettings('pos2')
-  }, [fetchSettings])
+    if (!isLoggedIn) return
+    const ids: PosBranch[] = role === 'admin'
+      ? (branchRows.length ? branchRows.map((b) => b.id as PosBranch) : ['pos1', 'pos2', 'pos3'])
+      : staffBranch ? [staffBranch] : []
+    ids.forEach((id) => void fetchSettings(id))
+  }, [fetchSettings, isLoggedIn, role, staffBranch, branchRows])
 
   useEffect(() => {
     applyActiveTheme(activeBranch, role, settingsByBranch, staffBranch)
   }, [activeBranch, role, settingsByBranch, staffBranch])
-
-  useEffect(() => {
-    if (!isSupabaseConfigured) {
-      void initialize()
-      return
-    }
-
-    clearLocalOrders()
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-        void initialize()
-      }
-    })
-
-    void initialize()
-
-    return () => subscription.unsubscribe()
-  }, [initialize])
 
   // The product/variant stores are shared by every page, and every page shows a
   // single POS branch, so they must only ever hold one branch's catalog.
@@ -167,38 +139,11 @@ function AppShell() {
     void fetchVariants(catalogBranch)
   }, [catalogBranch, fetchProducts, fetchVariants])
 
-  useEffect(() => {
-    if (!isSupabaseConfigured) {
-      return
-    }
-
-    const productChannel = supabase
-      .channel('admin-products-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
-        void refreshProducts()
-      })
-      .subscribe()
-
-    return () => {
-      void supabase.removeChannel(productChannel)
-    }
-  }, [refreshProducts])
-
   return (
     <div className="ios-app-shell w-full max-w-[100vw] bg-bgMain print:block print:h-auto print:overflow-visible">
       <main className="h-full print:block print:h-auto print:min-h-0 print:overflow-visible">
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route
-            path="/login"
-            element={
-              <PublicOnlyRoute>
-                <Suspense fallback={<LoadingSpinner />}>
-                  <Login />
-                </Suspense>
-              </PublicOnlyRoute>
-            }
-          />
           <Route
             path="/admin-login"
             element={

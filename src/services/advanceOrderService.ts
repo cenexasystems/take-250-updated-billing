@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabase } from '../lib/supabase'
+import { api, ApiClientError } from '../lib/apiClient'
 import type { PosBranch } from '../store/store'
 
 export type AdvanceStatus = 'pending_deposit' | 'ready_for_delivery' | 'waiting_final_payment' | 'completed' | 'cancelled'
@@ -34,55 +34,6 @@ export type AdvanceOrder = {
 export type AdvanceTimeline = { id: number; advance_order_id: string; event_type: string; label: string; remarks: string; created_at: string }
 export type AdvancePayment = { id: string; advance_order_id: string; payment_type: 'deposit' | 'remaining'; amount: number; payment_method: string; remarks: string; received_at: string }
 
-const STORAGE_ORDERS_KEY = 'yg_enterprises_advance_orders_v1'
-const STORAGE_TIMELINE_KEY = 'yg_enterprises_advance_timeline_v1'
-const STORAGE_PAYMENTS_KEY = 'yg_enterprises_advance_payments_v1'
-
-const loadLocalOrders = (): AdvanceOrder[] => {
-  try {
-    const raw = localStorage.getItem(STORAGE_ORDERS_KEY)
-    return raw ? (JSON.parse(raw) as AdvanceOrder[]) : []
-  } catch {
-    return []
-  }
-}
-
-const saveLocalOrders = (orders: AdvanceOrder[]) => {
-  try {
-    localStorage.setItem(STORAGE_ORDERS_KEY, JSON.stringify(orders))
-  } catch { /* ignore */ }
-}
-
-const loadLocalTimeline = (): AdvanceTimeline[] => {
-  try {
-    const raw = localStorage.getItem(STORAGE_TIMELINE_KEY)
-    return raw ? (JSON.parse(raw) as AdvanceTimeline[]) : []
-  } catch {
-    return []
-  }
-}
-
-const saveLocalTimeline = (timeline: AdvanceTimeline[]) => {
-  try {
-    localStorage.setItem(STORAGE_TIMELINE_KEY, JSON.stringify(timeline))
-  } catch { /* ignore */ }
-}
-
-const loadLocalPayments = (): AdvancePayment[] => {
-  try {
-    const raw = localStorage.getItem(STORAGE_PAYMENTS_KEY)
-    return raw ? (JSON.parse(raw) as AdvancePayment[]) : []
-  } catch {
-    return []
-  }
-}
-
-const saveLocalPayments = (payments: AdvancePayment[]) => {
-  try {
-    localStorage.setItem(STORAGE_PAYMENTS_KEY, JSON.stringify(payments))
-  } catch { /* ignore */ }
-}
-
 const normalizeOrder = (row: Record<string, unknown>): AdvanceOrder => ({
   ...row,
   id: String(row.id || ''),
@@ -108,100 +59,22 @@ const normalizeOrder = (row: Record<string, unknown>): AdvanceOrder => ({
   completed_order_id: row.completed_order_id ? String(row.completed_order_id) : null,
   invoice_number: row.invoice_number ? String(row.invoice_number) : null,
   final_payment_method: row.final_payment_method ? String(row.final_payment_method) : null,
-  branch: row.branch === 'pos2' ? 'pos2' : 'pos1',
+  branch: (['pos1', 'pos2', 'pos3'].includes(String(row.branch_id ?? row.branch)) ? String(row.branch_id ?? row.branch) : 'pos1') as PosBranch,
 })
 
-const rpcRow = (data: unknown) => (Array.isArray(data) ? data[0] : data) as Record<string, unknown>
-
 export async function deleteAdvanceOrder(orderId: string): Promise<void> {
-  let completedOrderId: string | null = null
-  if (isSupabaseConfigured) {
-    const { data: adv } = await supabase.from('advance_orders').select('completed_order_id').eq('id', orderId).maybeSingle()
-    if (adv?.completed_order_id) {
-      completedOrderId = adv.completed_order_id
-    }
-    const { error } = await supabase.from('advance_orders').delete().eq('id', orderId)
-    if (error) throw new Error(error.message)
-    if (completedOrderId) {
-      await supabase.from('orders').delete().eq('id', completedOrderId)
-    }
-  }
-  
-  // Clean up local storage
-  const localOrders = loadLocalOrders()
-  const target = localOrders.find(o => o.id === orderId)
-  if (target?.completed_order_id) {
-    completedOrderId = completedOrderId || target.completed_order_id
-    if (isSupabaseConfigured) {
-      await supabase.from('orders').delete().eq('id', target.completed_order_id)
-    }
-  }
-  const filtered = localOrders.filter(o => o.id !== orderId)
-  saveLocalOrders(filtered)
-  
-  const localTimeline = loadLocalTimeline().filter(t => t.advance_order_id !== orderId)
-  saveLocalTimeline(localTimeline)
-  
-  const localPayments = loadLocalPayments().filter(p => p.advance_order_id !== orderId)
-  saveLocalPayments(localPayments)
-}
-
-export async function cancelAdvanceOrderByCompletedOrderId(completedOrderId: string): Promise<void> {
-  if (isSupabaseConfigured) {
-    await supabase
-      .from('advance_orders')
-      .update({ completed_order_id: null, invoice_number: null, status: 'cancelled' })
-      .eq('completed_order_id', completedOrderId)
-  }
-  const localOrders = loadLocalOrders()
-  const updated = localOrders.map(o => {
-    if (o.completed_order_id === completedOrderId) {
-      return { ...o, completed_order_id: null, invoice_number: null, status: 'cancelled' as AdvanceStatus }
-    }
-    return o
-  })
-  saveLocalOrders(updated)
+  // the server deletes the advance order and, in the same transaction, the bill it produced (this branch only)
+  await api('DELETE', `/api/advance-orders/${orderId}`)
 }
 
 export async function listAdvanceOrders(branch: PosBranch = 'pos1'): Promise<AdvanceOrder[]> {
-  const cached = loadLocalOrders()
-  const local = cached.filter(o => (o.branch || 'pos1') === branch)
-  if (isSupabaseConfigured) {
-    try {
-      let query = supabase.from('advance_orders').select('*').order('created_at', { ascending: false })
-      if (branch) query = query.eq('branch', branch)
-      const { data, error } = await query
-      if (error) {
-        console.error('[listAdvanceOrders] Supabase error:', error.message)
-      } else if (Array.isArray(data)) {
-        const remote = data.map(row => normalizeOrder(row as Record<string, unknown>))
-        const remoteIds = new Set(remote.map(r => r.id))
-        const localOnly = local.filter(l => !remoteIds.has(l.id))
-        const merged = [...remote, ...localOnly].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        saveLocalOrders([...merged, ...cached.filter(o => (o.branch || 'pos1') !== branch)])
-        return merged
-      }
-    } catch (err) { console.error('[listAdvanceOrders] Exception:', err) }
-  }
-  return local
+  const res = await api<{ orders: Array<Record<string, unknown>> }>('GET', '/api/advance-orders', { branchId: branch })
+  return res.orders.map(normalizeOrder)
 }
 
 export async function getAdvanceOrderHistory(orderId: string) {
-  const localTimeline = loadLocalTimeline().filter(t => t.advance_order_id === orderId)
-  const localPayments = loadLocalPayments().filter(p => p.advance_order_id === orderId)
-
-  if (isSupabaseConfigured) {
-    try {
-      const [tRes, pRes] = await Promise.all([
-        supabase.from('advance_order_timeline').select('*').eq('advance_order_id', orderId).order('created_at'),
-        supabase.from('advance_order_payments').select('*').eq('advance_order_id', orderId).order('received_at'),
-      ])
-      const timeline = (tRes.data && tRes.data.length > 0) ? (tRes.data as AdvanceTimeline[]) : localTimeline
-      const payments = (pRes.data && pRes.data.length > 0) ? (pRes.data as AdvancePayment[]) : localPayments
-      return { timeline, payments }
-    } catch { /* fallback */ }
-  }
-  return { timeline: localTimeline, payments: localPayments }
+  const res = await api<{ timeline: AdvanceTimeline[]; payments: AdvancePayment[] }>('GET', `/api/advance-orders/${orderId}/history`)
+  return { timeline: res.timeline, payments: res.payments }
 }
 
 export async function createAdvanceOrder(input: {
@@ -209,230 +82,66 @@ export async function createAdvanceOrder(input: {
   totalAmount: number; depositAmount: number; expectedDeliveryDate: string; remarks: string; referenceNumber: string
   paymentMethod: AdvancePaymentMethod; createdByName: string; products?: Array<Record<string, unknown>>; branch?: PosBranch
 }): Promise<AdvanceOrder> {
-  let createdOrder: AdvanceOrder | null = null
-
-  if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase.rpc('create_advance_order', {
-        p_customer_name: input.customerName, p_phone: input.phone, p_address: input.address, p_product_name: input.productName,
-        p_category: input.category, p_description: input.description, p_total_amount: input.totalAmount,
-        p_deposit_amount: input.depositAmount, p_expected_delivery_date: input.expectedDeliveryDate, p_remarks: input.remarks,
-        p_payment_method: input.paymentMethod, p_created_by_name: input.createdByName, p_products: input.products || [],
-        p_branch: input.branch || 'pos1',
-      })
-      if (error) {
-        console.error('[createAdvanceOrder] Supabase error:', error.message)
-      } else if (data) {
-        createdOrder = normalizeOrder(rpcRow(data))
-        // Patch reference_number (not in RPC params)
-        if (input.referenceNumber.trim()) {
-          await supabase.from('advance_orders').update({ reference_number: input.referenceNumber.trim() }).eq('id', createdOrder.id)
-          createdOrder.reference_number = input.referenceNumber.trim()
-        }
-      }
-    } catch (err) { console.error('[createAdvanceOrder] Exception:', err) }
-  }
-
-  if (!createdOrder) {
-    const now = new Date()
-    const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
-    const seq = String(Math.floor(1000 + Math.random() * 9000))
-    const depositId = `DEP-${ymd}-${seq}`
-    const orderId = crypto.randomUUID ? crypto.randomUUID() : `adv_${Date.now()}_${Math.random().toString(36).slice(2)}`
-
-    createdOrder = {
-      id: orderId,
-      deposit_id: depositId,
-      customer_name: input.customerName.trim(),
-      phone: input.phone.trim(),
-      address: input.address.trim(),
-      product_name: input.productName.trim(),
-      products: input.products || [{ name: input.productName, category: input.category, quantity: 1, base_price: input.totalAmount, line_total: input.totalAmount }],
-      category: input.category.trim(),
-      description: input.description.trim(),
-      total_amount: Number(input.totalAmount),
-      deposit_amount: Number(input.depositAmount),
-      remaining_balance: Number(input.totalAmount) - Number(input.depositAmount),
-      expected_delivery_date: input.expectedDeliveryDate,
-      status: 'pending_deposit',
-      remarks: input.remarks.trim(),
-      reference_number: input.referenceNumber.trim(),
-      created_by_name: input.createdByName,
-      created_at: now.toISOString(),
-      updated_at: now.toISOString(),
-      completed_at: null,
-      completed_order_id: null,
-      invoice_number: null,
-      final_payment_method: null,
-      branch: input.branch || 'pos1',
-    }
-
-    const currentTimeline = loadLocalTimeline()
-    currentTimeline.push(
-      { id: Date.now(), advance_order_id: orderId, event_type: 'created', label: 'Deposit Created', remarks: input.remarks, created_at: now.toISOString() },
-      { id: Date.now() + 1, advance_order_id: orderId, event_type: 'deposit_received', label: 'Deposit Received', remarks: `Received INR ${input.depositAmount} via ${input.paymentMethod.toLowerCase() === 'upi' ? 'QR' : input.paymentMethod.toUpperCase()}`, created_at: now.toISOString() }
-    )
-    saveLocalTimeline(currentTimeline)
-
-    const currentPayments = loadLocalPayments()
-    currentPayments.push({
-      id: orderId + '_dep',
-      advance_order_id: orderId,
-      payment_type: 'deposit',
-      amount: Number(input.depositAmount),
-      payment_method: input.paymentMethod,
-      remarks: input.remarks,
-      received_at: now.toISOString(),
-    })
-    saveLocalPayments(currentPayments)
-  }
-
-  const localOrders = loadLocalOrders()
-  const updated = [createdOrder, ...localOrders.filter(o => o.id !== createdOrder!.id)]
-  saveLocalOrders(updated)
-  return createdOrder
+  const res = await api<{ order: Record<string, unknown> }>('POST', '/api/advance-orders', {
+    body: {
+      customer_name: input.customerName, phone: input.phone, address: input.address, product_name: input.productName,
+      category: input.category, description: input.description, total_amount: input.totalAmount,
+      deposit_amount: input.depositAmount, expected_delivery_date: input.expectedDeliveryDate, remarks: input.remarks,
+      payment_method: input.paymentMethod, products: input.products || [],
+      ...(input.referenceNumber.trim() ? { reference_number: input.referenceNumber.trim() } : {}),
+    },
+    branchId: input.branch,
+  })
+  const created = normalizeOrder(res.order)
+  if (input.referenceNumber.trim()) created.reference_number = input.referenceNumber.trim()
+  return created
 }
 
 export async function updateAdvanceStatus(orderId: string, status: AdvanceStatus, remarks = ''): Promise<AdvanceOrder> {
-  let updatedOrder: AdvanceOrder | null = null
-
-  if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase.rpc('update_advance_order_status', { p_order_id: orderId, p_status: status, p_remarks: remarks })
-      if (error) {
-        console.error('[updateAdvanceStatus] Supabase error:', error.message)
-      } else if (data) {
-        updatedOrder = normalizeOrder(rpcRow(data))
-      }
-    } catch (err) { console.error('[updateAdvanceStatus] Exception:', err) }
-  }
-
-  const localOrders = loadLocalOrders()
-  const existing = localOrders.find(o => o.id === orderId)
-  if (!updatedOrder && existing) {
-    const now = new Date().toISOString()
-    const label = status === 'ready_for_delivery' ? 'Ready for Delivery' : status === 'waiting_final_payment' ? 'Customer Contacted' : status === 'cancelled' ? 'Cancelled' : 'Pending Deposit'
-    updatedOrder = { ...existing, status, remarks: remarks || existing.remarks, updated_at: now }
-
-    const timeline = loadLocalTimeline()
-    timeline.push({ id: Date.now(), advance_order_id: orderId, event_type: status, label, remarks, created_at: now })
-    saveLocalTimeline(timeline)
-  }
-
-  if (updatedOrder) {
-    saveLocalOrders(localOrders.map(o => o.id === orderId ? updatedOrder! : o))
-    return updatedOrder
-  }
-  throw new Error('Order not found')
+  const res = await api<{ order: Record<string, unknown> }>('POST', `/api/advance-orders/${orderId}/status`, { body: { status, remarks } })
+  return normalizeOrder(res.order)
 }
 
 export async function addAdvanceEvent(orderId: string, eventType: string, label: string, remarks = '') {
-  if (isSupabaseConfigured) {
-    try {
-      await supabase.rpc('add_advance_order_event', { p_order_id: orderId, p_event_type: eventType, p_label: label, p_remarks: remarks })
-    } catch { /* fallback */ }
-  }
-  const timeline = loadLocalTimeline()
-  timeline.push({ id: Date.now(), advance_order_id: orderId, event_type: eventType, label, remarks, created_at: new Date().toISOString() })
-  saveLocalTimeline(timeline)
+  await api('POST', `/api/advance-orders/${orderId}/events`, { body: { event_type: eventType, label, remarks } })
 }
 
 export async function completeAdvanceOrder(
-  orderId: string, 
-  paymentMethod: AdvancePaymentMethod, 
+  orderId: string,
+  paymentMethod: AdvancePaymentMethod,
   finalAmount: number,
   couponCode: string | null = null,
   couponPercentage: number = 0,
   manualDiscountAmount: number = 0,
   remarks = ''
 ) {
-  let result: { order_id: string; invoice_no: string; completed_at: string } | null = null
-
-  if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase.rpc('complete_advance_order_v2', { 
-        p_order_id: orderId, 
-        p_payment_method: paymentMethod,
-        p_final_amount: finalAmount,
-        p_coupon_code: couponCode,
-        p_coupon_percentage: couponPercentage,
-        p_manual_discount: manualDiscountAmount,
-        p_remarks: remarks 
-      })
-      if (error) {
-        if (error.message?.includes('already generated') || error.message?.includes('already completed')) {
-          // Self-heal: order was already completed with invoice
-          const { data: existing } = await supabase.from('advance_orders').select('*').eq('id', orderId).maybeSingle()
-          if (existing && (existing.invoice_number || existing.completed_order_id)) {
-            result = {
-              order_id: existing.completed_order_id || existing.id,
-              invoice_no: existing.invoice_number || 'INV-COMPLETED',
-              completed_at: existing.completed_at || new Date().toISOString()
-            }
-          } else {
-            throw new Error('This order has already been completed.')
-          }
-        } else {
-          throw new Error(error.message || JSON.stringify(error))
+  try {
+    const res = await api<{ result: { order_id: string; invoice_no: string; completed_at: string } }>('POST', `/api/advance-orders/${orderId}/complete`, {
+      body: {
+        payment_method: paymentMethod,
+        final_amount: finalAmount,
+        coupon_code: couponCode,
+        coupon_percentage: couponPercentage,
+        manual_discount: manualDiscountAmount,
+        remarks,
+      },
+    })
+    return res.result
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (err instanceof ApiClientError && (message.includes('already generated') || message.includes('already completed'))) {
+      // Self-heal: order was already completed with invoice
+      const existing = (await listAdvanceOrders()).find((o) => o.id === orderId)
+      if (existing && (existing.invoice_number || existing.completed_order_id)) {
+        return {
+          order_id: existing.completed_order_id || existing.id,
+          invoice_no: existing.invoice_number || 'INV-COMPLETED',
+          completed_at: existing.completed_at || new Date().toISOString(),
         }
       }
-      if (data) {
-        const row = Array.isArray(data) ? data[0] : data
-        result = row as { order_id: string; invoice_no: string; completed_at: string }
-      }
-    } catch (err: unknown) {
-      if (!result) {
-        alert(`Supabase Backend Error: ${err instanceof Error ? err.message : String(err)}`)
-        throw err
-      }
+      throw new Error('This order has already been completed.')
     }
+    alert(`Backend Error: ${message}`)
+    throw err
   }
-
-  const localOrders = loadLocalOrders()
-  const order = localOrders.find(o => o.id === orderId)
-  const now = new Date().toISOString()
-
-  if (!result) {
-    const seq = String(Math.floor(10000000 + Math.random() * 89999999))
-    const invoiceNo = `INV${seq}`
-    const completedOrderId = crypto.randomUUID ? crypto.randomUUID() : `ord_${Date.now()}_${Math.random().toString(36).slice(2)}`
-    result = { order_id: completedOrderId, invoice_no: invoiceNo, completed_at: now }
-  }
-
-  if (order) {
-    const updatedOrder: AdvanceOrder = {
-      ...order,
-      status: 'completed',
-      completed_at: result.completed_at,
-      completed_order_id: result.order_id,
-      invoice_number: result.invoice_no,
-      final_payment_method: paymentMethod,
-      remarks: remarks || order.remarks,
-      updated_at: now,
-    }
-    saveLocalOrders(localOrders.map(o => o.id === orderId ? updatedOrder : o))
-
-    const timeline = loadLocalTimeline()
-    timeline.push(
-      { id: Date.now(), advance_order_id: orderId, event_type: 'remaining_payment_received', label: 'Final Payment Received', remarks, created_at: now },
-      { id: Date.now() + 1, advance_order_id: orderId, event_type: 'delivered', label: 'Delivered', remarks, created_at: now },
-      { id: Date.now() + 2, advance_order_id: orderId, event_type: 'revenue_posted', label: `Revenue Posted (INR ${order.total_amount})`, remarks, created_at: now },
-      { id: Date.now() + 3, advance_order_id: orderId, event_type: 'invoice_generated', label: `Invoice Generated (${result.invoice_no})`, remarks, created_at: now }
-    )
-    saveLocalTimeline(timeline)
-
-    const payments = loadLocalPayments()
-    payments.push({
-      id: orderId + '_rem',
-      advance_order_id: orderId,
-      payment_type: 'remaining',
-      amount: order.remaining_balance,
-      payment_method: paymentMethod,
-      remarks,
-      received_at: now,
-    })
-    saveLocalPayments(payments)
-  }
-
-  return result!
 }

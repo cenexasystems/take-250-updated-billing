@@ -13,7 +13,7 @@ export function getPool(): pg.Pool {
     throw new Error('DATABASE_URL is not set')
   }
   // Neon's pooled endpoint multiplexes connections, so keep each serverless instance small.
-  pool = new pg.Pool({ connectionString, max: 3, idleTimeoutMillis: 10_000 })
+  pool = new pg.Pool({ connectionString, max: 3, idleTimeoutMillis: 10_000, keepAlive: true, keepAliveInitialDelayMillis: 10_000 })
   return pool
 }
 

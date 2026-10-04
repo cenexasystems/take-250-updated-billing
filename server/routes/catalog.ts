@@ -111,9 +111,13 @@ export const catalogRoutes = [
   route({
     method: 'delete', path: '/api/categories/:id', perm: 'categories.manage',
     async handler({ db, branch, params }) {
-      const r = await db.query(`DELETE FROM public.categories WHERE id = $1 AND branch_id = $2`, [Number(params.id), branch])
-      if (!r.rowCount) throw notFound()
-      return { ok: true }
+      return db.tx(async (t) => {
+        const c = await t.query(`SELECT name_en FROM public.categories WHERE id = $1 AND branch_id = $2`, [Number(params.id), branch])
+        if (!c.rows[0]) throw notFound()
+        await t.query(`UPDATE public.products SET category = 'Uncategorized', category_id = NULL WHERE branch_id = $2 AND (category_id = $1 OR category = $3)`, [Number(params.id), branch, c.rows[0].name_en])
+        await t.query(`DELETE FROM public.categories WHERE id = $1 AND branch_id = $2`, [Number(params.id), branch])
+        return { ok: true }
+      })
     },
   }),
 

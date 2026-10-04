@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { CalendarDays, CheckCircle2, Clock3, Download, Eye, FileText, MessageCircle, PackageCheck, Printer, RefreshCw, Search, X, Trash2 } from 'lucide-react'
-import { supabase, isSupabaseConfigured } from '../lib/supabase'
+import { api } from '../lib/apiClient'
 import { formatCurrency } from '../lib/retail'
 import { invoicePdfFile } from '../lib/invoicePdf'
 import { printThermalReceipt } from '../lib/thermalPrint'
@@ -97,9 +97,9 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
 
   // Fetch active coupons for the payment modal
   useEffect(() => {
-    if (!isSupabaseConfigured) return
-    supabase.from('coupons').select('code, percentage').eq('branch', branch).eq('is_active', true)
-      .then(({ data }) => { if (data) setAvailableCoupons(data as { code: string; percentage: number }[]) })
+    api<{ coupons: { code: string; percentage: number }[] }>('GET', '/api/coupons/available', { branchId: branch })
+      .then((d) => setAvailableCoupons(d.coupons))
+      .catch(() => undefined)
   }, [branch])
 
   const applyCoupon = () => {
@@ -251,8 +251,8 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
 
       if (paymentForm.method === 'split') {
         try {
-          await supabase.from('orders').update({ payment_mode: finalMethodStr, payment_method: finalMethodStr }).eq('id', result.order_id).eq('branch', branch)
-          await supabase.from('advance_orders').update({ final_payment_method: finalMethodStr }).eq('id', paymentOrder.id).eq('branch', branch)
+          await api('PATCH', `/api/orders/${result.order_id}/finalize`, { body: { payment_mode: finalMethodStr, payment_method: finalMethodStr }, branchId: branch })
+          await api('PATCH', `/api/advance-orders/${paymentOrder.id}/final-method`, { body: { final_payment_method: finalMethodStr }, branchId: branch })
         } catch { /* best effort db update */ }
       }
 

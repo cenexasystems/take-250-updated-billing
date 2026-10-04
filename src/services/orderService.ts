@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabase } from '../lib/supabase'
+import { api } from '../lib/apiClient'
 import type { StructuredOrderItem } from '../lib/retail'
 import type { PosBranch } from '../store/store'
 
@@ -48,15 +48,6 @@ export const createOrderWithStock = async (input: CreateOrderInput): Promise<Cre
   const manualDiscountValue = Number(input.manualDiscountValue || 0)
   const couponCode     = input.couponCode?.trim() || null
   const couponPercentage = Number(input.couponPercentage || 0)
-  const effectiveDiscount = discountAmount + manualDiscountAmount
-
-  if (!isSupabaseConfigured) {
-    throw new Error('Supabase is required to create orders')
-  }
-
-  // Match the RPC signature currently defined in the migration files.
-  let data: unknown = null
-  let error: unknown = null
 
   const totalGst        = Number(input.totalGst || 0)
   const gstEnabled      = Boolean(input.gstEnabled)
@@ -64,124 +55,38 @@ export const createOrderWithStock = async (input: CreateOrderInput): Promise<Cre
   const splitDetails    = input.splitDetails || {}
   const branch          = input.branch || 'pos1'
 
-  const rpcPayload = {
-    p_customer_name:          customerName,
-    p_phone:                  phone,
-    p_address:                address,
-    p_items:                  input.items,
-    p_shipping:               shipping,
-    p_status:                 status,
-    p_order_mode:             orderMode,
-    p_order_type:             orderType,
-    p_delivery_charge:        deliveryCharge,
-    p_discount_amount:        discountAmount,
-    p_manual_discount_amount: manualDiscountAmount,
-    p_manual_discount_type:   manualDiscountType,
-    p_manual_discount_value:  manualDiscountValue,
-    p_coupon_code:            couponCode,
-    p_coupon_percentage:      couponPercentage,
-    p_total_gst:              totalGst,
-    p_gst_enabled:            gstEnabled,
-    p_payment_method:         paymentMethod,
-    p_split_details:          splitDetails,
-    p_branch:                 branch,
-  }
-
-  // 1. Try complete_pos_sale_with_inventory (inventory-aware transaction with atomic stock checks & movements ledger)
-  const inventoryRpcResult = await supabase.rpc('complete_pos_sale_with_inventory', rpcPayload)
-  data = inventoryRpcResult.data
-  error = inventoryRpcResult.error
-
-  // 2. Fallback to create_order_with_stock if migration 0012 is not yet deployed
-  if (inventoryRpcResult.error?.code === 'PGRST202') {
-    const newRpcResult = await supabase.rpc('create_order_with_stock', rpcPayload)
-    data = newRpcResult.data
-    error = newRpcResult.error
-
-    // A legacy order RPC has no branch argument and defaults every bill to
-    // POS 1. Never use it for a POS 2 checkout, or its bill and revenue will
-    // be recorded under the wrong branch.
-    if (newRpcResult.error?.code === 'PGRST202' && branch === 'pos2') {
-      error = new Error('POS 2 checkout requires the branch-isolation database migration. Please update the database before creating this bill.')
-    }
-
-    // 3. Keep the legacy fallback only for POS 1, its original default branch.
-    if (newRpcResult.error?.code === 'PGRST202' && branch === 'pos1') {
-    const legacyResult = await supabase.rpc('create_order_without_stock', {
-      p_address:                address,
-      p_coupon_code:            couponCode,
-      p_coupon_percentage:      couponPercentage,
-      p_customer_name:          customerName,
-      p_delivery_charge:        deliveryCharge,
-      p_discount_amount:        discountAmount,
-      p_items:                  input.items,
-      p_manual_discount_amount: manualDiscountAmount,
-      p_manual_discount_type:   manualDiscountType,
-      p_manual_discount_value:  manualDiscountValue,
-      p_order_mode:             orderMode,
-      p_order_type:             orderType,
-      p_phone:                  phone,
-      p_shipping:               shipping,
-      p_status:                 status,
-    })
-    data = legacyResult.data
-    error = legacyResult.error
-
-    const legacyRow = Array.isArray(data) ? data[0] : data
-    if (!error && legacyRow && typeof legacyRow === 'object') {
-      const legacyOrderId = String((legacyRow as Record<string, unknown>).order_id ?? '')
-      if (legacyOrderId) {
-        const legacySubtotal = input.items.reduce((sum, item) => sum + Number(item.line_total || 0), 0)
-        const legacyTotal = Math.max(
-          0,
-          legacySubtotal + shipping + deliveryCharge + totalGst - effectiveDiscount,
-        )
-        await supabase
-          .from('orders')
-          .update({
-            subtotal: legacySubtotal,
-            shipping,
-            delivery_charge: deliveryCharge,
-            total: legacyTotal,
-            payment_method: paymentMethod,
-            payment_mode: paymentMethod,
-            total_gst: totalGst,
-            gst_amount: totalGst,
-          })
-          .eq('id', legacyOrderId)
-      }
-    }
-  }
-}
-
-
-
-  if (error) {
-    if (typeof error === 'object' && error !== null && 'message' in error) {
-      const err = error as { message: unknown; details?: unknown }
-      const message = String(err.message)
-      if (/invalid api key|invalid value.*apikey|apikey.*invalid/i.test(message)) {
-        throw new Error('Supabase configuration is invalid. Please redeploy with the correct Supabase URL and publishable key.')
-      }
-      throw new Error(message + (err.details ? ` (${String(err.details)})` : ''))
-    }
-    throw new Error(String(error))
-  }
-
-  const row = Array.isArray(data) ? (data as unknown[])[0] : data
-  if (!row || typeof row !== 'object') {
-    throw new Error('Order RPC returned an invalid payload')
-  }
-  const rowObj = row as Record<string, unknown>
-  const orderId = String(rowObj.order_id ?? rowObj.orderId ?? rowObj.id ?? '')
-  const invoiceNo = String(rowObj.invoice_no ?? rowObj.invoiceNo ?? '')
+  // The server calls complete_pos_sale_with_inventory for the session's branch; all billing maths happens in SQL.
+  const row = await api<Record<string, unknown>>('POST', '/api/pos/sale', {
+    body: {
+      customer_name: customerName,
+      phone,
+      address,
+      items: input.items,
+      shipping,
+      status,
+      order_mode: orderMode,
+      order_type: orderType,
+      delivery_charge: deliveryCharge,
+      discount_amount: discountAmount,
+      manual_discount_amount: manualDiscountAmount,
+      manual_discount_type: manualDiscountType,
+      manual_discount_value: manualDiscountValue,
+      coupon_code: couponCode,
+      coupon_percentage: couponPercentage,
+      payment_method: paymentMethod,
+      split_details: splitDetails,
+      total_gst: totalGst,
+      gst_enabled: gstEnabled,
+    },
+    branchId: branch,
+  })
+  const orderId = String(row.order_id ?? row.orderId ?? row.id ?? '')
+  const invoiceNo = String(row.invoice_no ?? row.invoiceNo ?? '')
   if (!orderId || !invoiceNo) {
     throw new Error('Order RPC returned an invalid payload')
   }
 
-  // NOTE: coupon usage_count is already incremented atomically inside the
-  // create_order_with_stock DB function. Do NOT increment it again here.
-
+  // NOTE: coupon usage_count is already incremented atomically inside the sale function. Do NOT increment it again.
   return {
     orderId,
     invoiceNo,

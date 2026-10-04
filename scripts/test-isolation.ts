@@ -6,7 +6,7 @@
  * Proves: same codes/names work in every branch, barcodes (generation, scan lookup, receive-stock) stay inside their branch, stock/invoices never mix, every cross-branch
  * reference is rejected by the database itself, and branch-scoped queries only see their branch.
  */
-import 'dotenv/config'
+import './test-env'
 import type { PoolClient } from 'pg'
 import { getPool } from '../server/lib/db'
 

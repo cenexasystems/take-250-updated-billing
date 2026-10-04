@@ -1,8 +1,6 @@
-import { isSupabaseConfigured, supabase } from '../lib/supabase'
+import { api, ApiClientError } from '../lib/apiClient'
 import { formatCurrency } from '../lib/retail'
 import type { PosBranch } from '../store/store'
-
-const COUPON_COLUMNS = 'id, code, percentage, is_active, expiry_date, usage_limit, usage_count, min_order_value'
 
 export type AppliedCoupon = {
   code: string
@@ -31,20 +29,15 @@ export async function validateCoupon(
 ): Promise<{ data: AppliedCoupon | null; error: string | null }> {
   const code = rawCode.trim().toUpperCase()
 
-  if (!isSupabaseConfigured) {
-    return { data: null, error: 'Coupon validation requires a live connection' }
-  }
-
   try {
-    const { data, error: dbErr } = await supabase
-      .from('coupons')
-      .select(COUPON_COLUMNS)
-      .eq('is_active', true)
-      .eq('branch', branch)
-      .ilike('code', code)
-      .single()
-
-    if (dbErr || !data) return { data: null, error: 'Invalid or expired coupon code' }
+    // the coupon row of THIS branch only (another branch's code is simply invalid here); the amounts below stay as before
+    let data: { code: string; percentage: number; expiry_date: string | null; usage_limit: number | null; usage_count: number; min_order_value: number }
+    try {
+      data = (await api<{ coupon: typeof data }>('GET', '/api/coupons/lookup', { query: { code }, branchId: branch })).coupon
+    } catch (err) {
+      if (err instanceof ApiClientError && err.status === 404) return { data: null, error: 'Invalid or expired coupon code' }
+      throw err
+    }
 
     if (isCouponExpired(data.expiry_date)) {
       return { data: null, error: 'This coupon has expired' }

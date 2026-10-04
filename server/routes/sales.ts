@@ -99,6 +99,14 @@ export const salesRoutes = [
       return { coupon: r.rows[0] }
     },
   }),
+  // POS quick-apply chips: the active coupon codes (+ percentage) of this branch (what the original POS listed for every role)
+  route({
+    method: 'get', path: '/api/coupons/available', perm: 'coupons.lookup',
+    async handler({ db, branch }) {
+      const r = await db.query(`SELECT code, percentage FROM public.coupons WHERE branch_id = $1 AND is_active ORDER BY created_at DESC LIMIT 20`, [branch])
+      return { coupons: r.rows }
+    },
+  }),
   route({
     method: 'get', path: '/api/coupons', perm: 'coupons.read',
     async handler({ db, branch }) {
@@ -134,20 +142,71 @@ export const salesRoutes = [
     method: 'get', path: '/api/orders', perm: 'orders.read',
     query: z.object({
       search: z.string().max(100).optional(), status: statusWord.optional(), order_type: z.string().max(30).optional(),
+      order_mode: z.string().max(30).optional(), exclude_order_type: z.string().max(30).optional(),
+      // history screen filters: same matching the screen used to build itself (digits-only / zero-stripped variants)
+      q: z.string().max(100).optional(), invoice: z.string().max(100).optional(), phone: z.string().max(100).optional(), customer: z.string().max(100).optional(),
       from: date.optional(), to: date.optional(), include_items: z.enum(['1', 'true']).optional(),
       limit: z.coerce.number().int().min(1).max(1000).default(200), offset: z.coerce.number().int().min(0).default(0),
     }).strict(),
     async handler({ db, branch, query }) {
-      const where = `o.branch_id = $1 AND ($2::text IS NULL OR o.invoice_no ILIKE '%' || $2 || '%' OR o.customer_name ILIKE '%' || $2 || '%' OR o.phone ILIKE '%' || $2 || '%')
-        AND ($3::text IS NULL OR lower(o.status) = $3) AND ($4::text IS NULL OR o.order_type = $4)
-        AND ($5::timestamptz IS NULL OR o.created_at >= $5) AND ($6::timestamptz IS NULL OR o.created_at <= $6)`
-      const p = [branch, query.search ?? null, query.status ?? null, query.order_type ?? null, query.from ?? null, query.to ?? null]
+      const p: unknown[] = [branch]
+      const bind = (v: unknown) => { p.push(v); return `$${p.length}` }
+      const like = (col: string, v: string) => `${col} ILIKE '%' || ${bind(v)} || '%'`
+      const conds: string[] = ['o.branch_id = $1']
+      if (query.search) conds.push(`(${like('o.invoice_no', query.search)} OR ${like('o.customer_name', query.search)} OR ${like('o.phone', query.search)})`)
+      if (query.status) conds.push(`lower(o.status) = ${bind(query.status)}`)
+      if (query.order_type) conds.push(`o.order_type = ${bind(query.order_type)}`)
+      if (query.order_mode) conds.push(`o.order_mode = ${bind(query.order_mode)}`)
+      if (query.exclude_order_type) conds.push(`o.order_type <> ${bind(query.exclude_order_type)}`)
+      if (query.from) conds.push(`o.created_at >= ${bind(query.from)}::timestamptz`)
+      if (query.to) conds.push(`o.created_at <= ${bind(query.to)}::timestamptz`)
+      if (query.q) {
+        const q = query.q.trim(); const digits = q.replace(/\D/g, ''); const nz = digits.replace(/^0+/, '')
+        const or = [like('o.invoice_no', q), like('o.customer_name', q), like('o.phone', q)]
+        if (digits && digits !== q) { or.push(like('o.invoice_no', digits)); if (digits.length >= 4) or.push(like('o.phone', digits)) }
+        if (nz && nz !== digits && nz !== q) or.push(like('o.invoice_no', nz))
+        conds.push(`(${or.join(' OR ')})`)
+      }
+      if (query.invoice) {
+        const v = query.invoice.trim(); const digits = v.replace(/\D/g, ''); const nz = digits.replace(/^0+/, '')
+        const or = [like('o.invoice_no', v)]
+        if (digits && digits !== v) or.push(like('o.invoice_no', digits))
+        if (nz && nz !== digits && nz !== v) or.push(like('o.invoice_no', nz))
+        conds.push(`(${or.join(' OR ')})`)
+      }
+      if (query.phone) {
+        const v = query.phone.trim(); const digits = v.replace(/\D/g, '')
+        conds.push(digits && digits.length >= 4 ? `(${like('o.phone', v)} OR ${like('o.phone', digits)})` : like('o.phone', v))
+      }
+      if (query.customer) conds.push(like('o.customer_name', query.customer.trim()))
+      const where = conds.join(' AND ')
       const items = query.include_items
         ? `, COALESCE((SELECT json_agg(i ORDER BY i.id) FROM public.order_items i WHERE i.order_id = o.id AND i.branch_id = o.branch_id), '[]'::json) AS order_items`
         : ''
       const rows = await db.query(`SELECT o.*${items} FROM public.orders o WHERE ${where} ORDER BY o.created_at DESC LIMIT ${query.limit} OFFSET ${query.offset}`, p)
       const total = await db.query(`SELECT count(*)::int AS n FROM public.orders o WHERE ${where}`, p)
       return { orders: rows.rows, total: total.rows[0].n }
+    },
+  }),
+  // The original POS re-saves the bill's totals / payment / remarks / billing date right after the sale function ran.
+  // Same step, same fields, but only on a bill of THIS branch created in the last 30 minutes.
+  route({
+    method: 'patch', path: '/api/orders/:id/finalize', perm: 'pos.sale',
+    body: z.object({
+      subtotal: money, total: money, total_gst: money, gst_amount: money, discount_amount: money, manual_discount_amount: money,
+      delivery_charge: money, payment_mode: z.string().max(200), payment_method: z.string().max(200),
+      remarks: z.string().max(1000), reference_number: z.string().max(100), billing_date: date,
+    }).partial().strict(),
+    async handler({ db, branch, body, params }) {
+      const keys = Object.keys(body).filter((k) => (body as Record<string, unknown>)[k] !== undefined)
+      if (!keys.length) return { ok: true }
+      const sets = keys.map((k, i) => `"${k}" = $${i + 1}`)
+      const vals = keys.map((k) => (body as Record<string, unknown>)[k])
+      const r = await db.query(
+        `UPDATE public.orders SET ${sets.join(', ')}, updated_at = now() WHERE id = $${keys.length + 1} AND branch_id = $${keys.length + 2}
+           AND created_at > now() - interval '30 minutes'`, [...vals, params.id, branch])
+      if (!r.rowCount) throw notFound('Bill not found, or too old to edit')
+      return { ok: true }
     },
   }),
   route({

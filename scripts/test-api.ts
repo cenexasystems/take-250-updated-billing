@@ -6,7 +6,7 @@
  *
  * Section A is generated from the central permission table x every registered route x every role.
  */
-import 'dotenv/config'
+import './test-env'
 import { randomBytes } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import bcrypt from 'bcryptjs'
@@ -470,6 +470,62 @@ async function run() {
       check(Object.keys(s1b.body.stamps).length >= 8 && !JSON.stringify(s1b.body).includes('pos2'), 'poll response carries no other branch identifiers')
       check((await call('GET', '/api/poll/stamps', { cookie: cookies.admin })).status === 400, 'admin poll needs a branch selector')
       check((await call('GET', '/api/poll/stamps', { cookie: cookies.admin, query: { branch_id: 'pos3' } })).status === 200, 'admin poll with a selected branch works')
+    }
+
+    // ================================================================== K2. routes added for the frontend rewiring (4a)
+    {
+      // available coupon chips: this branch's codes only, for every role
+      await client.query(`INSERT INTO coupons (code, percentage, branch_id) VALUES ('ONLY3', 7, 'pos3')`)
+      const av1 = await call('GET', '/api/coupons/available', { cookie: cookies.staff1 })
+      check(av1.status === 200 && av1.body.coupons.some((c: any) => c.code === 'API10' && Number(c.percentage) === 10) && !av1.body.coupons.some((c: any) => ['ONLY2', 'ONLY3'].includes(c.code)), "POS coupon chips show only this branch's active codes (staff)")
+      check((await call('GET', '/api/coupons/available', { cookie: cookies.manager3 })).body.coupons.some((c: any) => c.code === 'ONLY3'), 'manager3 sees its own branch coupon code')
+
+      // finalize: same fields the original POS re-saved, own branch, recent bills only
+      const sale = await call('POST', '/api/pos/sale', { cookie: cookies.staff1, body: { items: [{ product_id: prod.pos1, quantity: 1, unit_price: 100, name: 'Api Product' }] } })
+      const fin = await call('PATCH', `/api/orders/${sale.body.order_id}/finalize`, { cookie: cookies.staff1, body: { subtotal: 100, total: 95, payment_mode: 'Split (Cash 50 + QR 45)', remarks: 'hello', billing_date: '2030-02-03T10:00:00Z' } })
+      const row = await one(`SELECT total::numeric t, payment_mode, remarks FROM orders WHERE id = $1`, [sale.body.order_id])
+      check(fin.status === 200 && Number(row.t) === 95 && row.payment_mode.startsWith('Split') && row.remarks === 'hello', 'finalize re-saves totals / payment / remarks of a fresh bill in its own branch', `status ${fin.status} ${JSON.stringify(fin.body)} sale ${JSON.stringify(sale.body)}`)
+      check((await call('PATCH', `/api/orders/${sale.body.order_id}/finalize`, { cookie: cookies.staff2, body: { total: 1 } })).status === 404, 'staff2 cannot finalize a branch 1 bill')
+      check((await call('PATCH', `/api/orders/${sale.body.order_id}/finalize`, { cookie: cookies.staff1, body: { total: 1, branch_id: 'pos2' } })).status === 400, 'finalize refuses a client branch_id')
+      check((await call('PATCH', `/api/orders/${sale.body.order_id}/finalize`, { cookie: cookies.staff1, body: { invoice_pdf_url: 'x' } })).status === 400, 'finalize only accepts its whitelisted fields')
+      await client.query(`UPDATE orders SET created_at = now() - interval '2 hours' WHERE id = $1`, [sale.body.order_id])
+      check((await call('PATCH', `/api/orders/${sale.body.order_id}/finalize`, { cookie: cookies.staff1, body: { total: 2 } })).status === 404, 'an old bill can no longer be finalized')
+
+      // history filters (digits-only / partial invoice, phone, customer, exclude type)
+      const inv = sale.body.invoice_no as string
+      const part = await call('GET', '/api/orders', { cookie: cookies.manager1, query: { q: inv.slice(-4) } })
+      check(part.body.orders.some((o: any) => o.invoice_no === inv), 'history search by the last digits of an invoice finds the bill')
+      const none = await call('GET', '/api/orders', { cookie: cookies.manager2, query: { q: inv } })
+      check(none.body.orders.length === 0, 'the same search in another branch finds nothing')
+      const typed = await call('GET', '/api/orders', { cookie: cookies.manager1, query: { exclude_order_type: 'pos_sale' } })
+      check(typed.body.orders.every((o: any) => o.order_type !== 'pos_sale'), 'exclude_order_type works')
+      check((await call('GET', '/api/orders', { cookie: cookies.manager1, query: { q: "x'; DROP TABLE orders;--" } })).status === 200 && (await one(`SELECT count(*)::int n FROM orders`)).n > 0, 'a hostile search string is just text (parameterized)')
+
+      // advance order: final payment text is stored for the order's own branch only
+      const adv = await call('POST', '/api/advance-orders', { cookie: cookies.staff1, body: { customer_name: 'A', phone: '9', product_name: 'Card', total_amount: 100, deposit_amount: 20, expected_delivery_date: '2030-01-01', payment_method: 'cash', reference_number: 'REF-1' } })
+      check(adv.status === 201, 'advance order accepts (and ignores) a reference number like the original', adv.body?.error ?? '')
+      const done = await call('POST', `/api/advance-orders/${adv.body.order.id}/complete`, { cookie: cookies.staff1, body: { payment_method: 'cash', final_amount: 80 } })
+      check(done.status === 200 && !!done.body.result.invoice_no, 'staff1 completes the advance order', done.body?.error ?? '')
+      check((await call('PATCH', `/api/advance-orders/${adv.body.order.id}/final-method`, { cookie: cookies.staff2, body: { final_payment_method: 'Split (x)' } })).status === 404, 'staff2 cannot set the final payment text of a branch 1 advance order')
+      check((await call('PATCH', `/api/advance-orders/${adv.body.order.id}/final-method`, { cookie: cookies.staff1, body: { final_payment_method: 'Split (Cash 40 + QR 40)' } })).status === 200, 'staff1 stores the split payment text')
+
+      // categories: deleting one moves its products to "Uncategorized" (what the screen used to do itself)
+      const cc = await call('POST', '/api/categories', { cookie: cookies.manager1, body: { name_en: 'Temp Cat' } })
+      check(cc.status === 201 && !cc.body.existing, 'manager creates a category')
+      check((await call('POST', '/api/categories', { cookie: cookies.staff1, body: { name_en: 'temp cat' } })).body.existing === true, 'creating the same name again returns the existing category')
+      const pp = await call('POST', '/api/products', { cookie: cookies.staff1, body: { name: 'In Temp', category: 'Temp Cat', category_id: cc.body.category.id, price: 5 } })
+      check(pp.status === 201, 'staff creates a product in that category')
+      const dup = await call('POST', '/api/products', { cookie: cookies.staff1, body: { name: 'In Temp', category: 'Temp Cat', category_id: cc.body.category.id, price: 5 } })
+      check(dup.status === 409 && dup.body.error === 'A product with this name already exists in the selected category.', 'duplicate product name gives the original message', dup.body?.error ?? '')
+      check((await call('DELETE', `/api/categories/${cc.body.category.id}`, { cookie: cookies.staff1 })).status === 403, 'staff cannot delete a category')
+      check((await call('DELETE', `/api/categories/${cc.body.category.id}`, { cookie: cookies.manager2 })).status === 404, 'manager2 cannot delete a branch 1 category')
+      check((await call('DELETE', `/api/categories/${cc.body.category.id}`, { cookie: cookies.manager1 })).status === 200, 'manager1 deletes its category')
+      const moved = await one(`SELECT category, category_id FROM products WHERE id = $1`, [pp.body.product.id])
+      check(moved.category === 'Uncategorized' && moved.category_id === null, 'the products of a deleted category become Uncategorized')
+      const dv = await call('POST', '/api/variants', { cookie: cookies.staff1, body: { product_id: prod.pos1, variant_name: 'Large', price: 1 } })
+      check(dv.status === 409 && dv.body.error === 'A variant with this name already exists for this product.', 'duplicate variant name gives the original message', dv.body?.error ?? '')
+      const dc = await call('POST', '/api/coupons', { cookie: cookies.manager1, body: { code: ' api10 ', percentage: 5 } })
+      check(dc.status === 409 && /already exists/.test(dc.body.error), 'duplicate coupon code is reported as already existing', dc.body?.error ?? '')
     }
 
     // ================================================================== L. public invoice lookup (rate limited, generic, one bill)

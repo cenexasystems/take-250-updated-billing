@@ -11,7 +11,8 @@ import {
   Wifi, WifiOff, Layers, X, ChevronDown, Power,
   Edit2, AlertCircle, Check
 } from 'lucide-react'
-import { isSupabaseConfigured, supabase } from '../lib/supabase'
+import { api, ApiClientError } from '../lib/apiClient'
+import { updateItemPrice } from '../services/productService'
 import { useProductStore, useVariantStore, useAdminAuthStore, resolveBranch, type Product } from '../store/store'
 import { branchShortLabel } from '../lib/branchTheme'
 import { useNavigationStore } from '../store/navigationStore'
@@ -209,25 +210,15 @@ export default function Pos(props: PosProps = {}) {
   useEffect(() => {
     void fetchProducts(branch)
     void fetchVariants(branch)
-    if (!isSupabaseConfigured) return
 
-    supabase.from('coupons').select('code').eq('branch', branch).eq('is_active', true).order('created_at', { ascending: false }).limit(20)
-      .then(({ data, error }) => {
-        if (error) console.error('Failed to fetch coupons', error)
-        else if (data) setAvailableCoupons(data)
-      })
-
-    const productChannel = supabase.channel('pos-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => void fetchProducts(branch, true))
-      .subscribe()
+    api<{ coupons: { code: string }[] }>('GET', '/api/coupons/available', { branchId: branch })
+      .then((d) => setAvailableCoupons(d.coupons))
+      .catch((error) => console.error('Failed to fetch coupons', error))
 
     // Load active categories in sort_order (this branch only)
-    supabase.from('categories').select('name_en').eq('is_active', true).eq('branch', branch).order('sort_order')
-      .then(({ data }) => {
-        if (data) setDbCategories(data.map(c => c.name_en as string))
-      })
-
-    return () => { void supabase.removeChannel(productChannel) }
+    api<{ categories: { name_en: string }[] }>('GET', '/api/categories', { query: { active_only: 1 }, branchId: branch })
+      .then((d) => setDbCategories(d.categories.map((c) => c.name_en)))
+      .catch(() => undefined)
   }, [fetchProducts, fetchVariants, branch])
 
   // ── Derived data ──────────────────────────────────────────────────────
@@ -614,31 +605,12 @@ export default function Pos(props: PosProps = {}) {
     if (updateInventory) {
       setPriceEditModal(prev => ({ ...prev, isSubmitting: true, error: '' }))
       try {
-        if (!isSupabaseConfigured) {
-          throw new Error('Database is not configured')
-        }
-
-        // 1. If item has a variant ID, update product_variants table
-        // Branch filter is kept even though ids are globally unique: it guarantees
-        // a POS 2 counter can never write to a POS 1 catalog row.
+        // Variant items update the variant row; others the product row. The server only touches this branch's rows.
         if (item.variantId) {
-          const { error: variantErr } = await supabase
-            .from('product_variants')
-            .update({ price: parsedPrice })
-            .eq('id', item.variantId)
-            .eq('branch', branch)
-          if (variantErr) throw variantErr
+          await updateItemPrice({ entityType: 'variant', id: item.variantId, newPrice: parsedPrice, branch })
         } else {
-          // 2. Otherwise update standard products table
           const realDbId = toProductId(item.parentProductId || item.id)
-          if (realDbId) {
-            const { error: prodErr } = await supabase
-              .from('products')
-              .update({ price: parsedPrice })
-              .eq('id', realDbId)
-              .eq('branch', branch)
-            if (prodErr) throw prodErr
-          }
+          if (realDbId) await updateItemPrice({ entityType: 'product', id: realDbId, newPrice: parsedPrice, branch })
         }
 
         // Refresh product stores so catalog reflects new price
@@ -711,22 +683,12 @@ export default function Pos(props: PosProps = {}) {
     setAppliedCoupon(null)
 
     try {
-      if (!isSupabaseConfigured) {
-        setCouponError('Coupon validation requires a live connection')
-        return
-      }
-
-      const { data, error: dbErr } = await supabase
-        .from('coupons')
-        .select('*')
-        .eq('branch', branch)
-        .eq('is_active', true)
-        .ilike('code', code)
-        .single()
-
-      if (dbErr || !data) {
-        setCouponError('Invalid or expired coupon code')
-        return
+      let data: { code: string; percentage: number; expiry_date: string | null; usage_limit: number | null; usage_count: number; min_order_value: number; discount?: number }
+      try {
+        data = (await api<{ coupon: typeof data }>('GET', '/api/coupons/lookup', { query: { code }, branchId: branch })).coupon
+      } catch (err) {
+        if (err instanceof ApiClientError && err.status === 404) { setCouponError('Invalid or expired coupon code'); return }
+        throw err
       }
 
       if (isCouponExpired(data.expiry_date)) {
@@ -831,8 +793,6 @@ export default function Pos(props: PosProps = {}) {
       if (p1Amt >= total) { setError('Payment 1 amount must be less than the total — use a single payment method instead'); return }
       if (splitP1Type === splitP2Type) { setError('Payment 1 and Payment 2 must use different methods for split payment'); return }
     }
-    // Validate online mode availability
-    if (ordermode === 'online' && !isSupabaseConfigured) { setError('Cannot place online orders while offline'); return }
     setSaving(true); setError('')
     try {
       const labelFor = (t: 'cash' | 'qr' | 'card') => t === 'qr' ? 'QR' : t === 'card' ? 'Card' : 'Cash'
@@ -885,35 +845,36 @@ export default function Pos(props: PosProps = {}) {
       const effectiveBillingDate = billingDate.trim()
         ? new Date(billingDate).toISOString()
         : new Date().toISOString()
-      const { error: updateErr } = await supabase.from('orders').update({
-        subtotal,
-        total,
-        total_gst: totalGst,
-        gst_amount: totalGst,
-        payment_mode: paymentMode,
-        payment_method: paymentMode,
-        discount_amount: couponDiscount,
-        manual_discount_amount: manualDiscountAmount,
-        delivery_charge: Number(shipping || 0),
-        remarks: remarks.trim(),
-        reference_number: referenceNumber.trim(),
-        billing_date: effectiveBillingDate,
-      }).eq('id', created.orderId).eq('branch', branch)
-
-      if (updateErr) {
+      try {
+        await api('PATCH', `/api/orders/${created.orderId}/finalize`, {
+          body: {
+            subtotal,
+            total,
+            total_gst: totalGst,
+            gst_amount: totalGst,
+            payment_mode: paymentMode,
+            payment_method: paymentMode,
+            discount_amount: couponDiscount,
+            manual_discount_amount: manualDiscountAmount,
+            delivery_charge: Number(shipping || 0),
+            remarks: remarks.trim(),
+            reference_number: referenceNumber.trim(),
+            billing_date: effectiveBillingDate,
+          },
+          branchId: branch,
+        })
+      } catch (updateErr) {
         console.warn('Post-order update warning:', updateErr)
       }
 
       // Explicit verification: confirm the order record actually exists in the database
       // before transitioning to the completed bill state or allowing WhatsApp link send
-      const { data: verifiedOrder, error: verifyErr } = await supabase
-        .from('orders')
-        .select('id, invoice_no')
-        .eq('id', created.orderId)
-        .eq('branch', branch)
-        .maybeSingle()
+      let verifiedOrder: { order: { id: string; invoice_no: string } } | null = null
+      try {
+        verifiedOrder = await api<{ order: { id: string; invoice_no: string } }>('GET', `/api/orders/${created.orderId}`, { branchId: branch })
+      } catch { verifiedOrder = null }
 
-      if (verifyErr || !verifiedOrder) {
+      if (!verifiedOrder) {
         throw new Error(`Invoice confirmation failed: could not verify order #${created.invoiceNo} was saved in the database.`)
       }
       const createdInvoice: InvoiceSnap = {
@@ -1007,7 +968,6 @@ export default function Pos(props: PosProps = {}) {
       })
       // Upload PDF and save its URL — total fields already saved immediately after RPC
       const url = await uploadInvoicePdf(file, inv.invoiceNo)
-      await supabase.from('orders').update({ invoice_pdf_url: url }).eq('id', inv.id).eq('branch', branch)
       setInvoice(current => current?.id === inv.id ? { ...current, invoicePdfUrl: url } : current)
     } catch (err) {
       console.warn('Invoice PDF could not be stored:', err)

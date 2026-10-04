@@ -24,11 +24,14 @@ function withQuery(path: string, query?: Query): string {
   return qs ? `${path}?${qs}` : path
 }
 
-export async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, opts: { body?: unknown; query?: Query; raw?: { data: Blob | ArrayBuffer; type: string } } = {}): Promise<T> {
+export async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, opts: { body?: unknown; query?: Query; raw?: { data: Blob | ArrayBuffer; type: string }; branchId?: string | null } = {}): Promise<T> {
   const { role, activeBranch } = useAdminAuthStore.getState()
   const query: Query = { ...(opts.query ?? {}) }
-  if (role === 'admin' && activeBranch && activeBranch !== 'all' && !NO_BRANCH_PREFIXES.some((p) => path.startsWith(p))) {
-    query.branch_id = activeBranch
+  // Only the ADMIN ever names a branch (to select which one to work in). `opts.branchId` lets an admin screen that
+  // works on a specific branch say so; for staff and manager it is ignored, and the server uses the cookie's branch.
+  if (role === 'admin' && !NO_BRANCH_PREFIXES.some((p) => path.startsWith(p))) {
+    const selected = opts.branchId ?? (activeBranch && activeBranch !== 'all' ? activeBranch : null)
+    if (selected) query.branch_id = selected
   }
   const headers: Record<string, string> = {}
   let body: BodyInit | undefined

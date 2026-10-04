@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase'
+import { api, ApiClientError } from '../lib/apiClient'
 import type { PosBranch } from '../store/store'
 
 export interface InventoryStockItem {
@@ -89,32 +89,14 @@ export const inventoryService = {
    * Fetch complete SKU/variant level inventory list.
    */
   async fetchInventoryItems(branch: PosBranch): Promise<InventoryStockItem[]> {
-    // 1. Fetch products
-    const { data: products, error: prodErr } = await supabase
-      .from('products')
-      .select('id, name, name_ta, price, offer_price, purchase_price, stock_quantity, low_stock_alert, unit, unit_type, category, category_id, image_url, barcode, sku, is_active, updated_at')
-      .eq('branch', branch)
-      .order('name', { ascending: true })
-
-    if (prodErr) {
-      console.error('[inventoryService.fetchInventoryItems] Products error:', prodErr)
-      throw prodErr
-    }
-
-    // 2. Fetch variants
-    const { data: variants, error: varErr } = await supabase
-      .from('product_variants')
-      .select('id, product_id, variant_name, price, purchase_price, stock, barcode, sku, is_active, updated_at')
-      .eq('branch', branch)
-      .order('sort_order', { ascending: true })
-
-    if (varErr) {
-      console.error('[inventoryService.fetchInventoryItems] Variants error:', varErr)
-      throw varErr
-    }
+    // 1 + 2. Products and variants of this branch (the server takes the branch from the session)
+    const [{ products }, { variants }] = await Promise.all([
+      api<{ products: any[] }>('GET', '/api/products', { query: { include_inactive: 1 }, branchId: branch }),
+      api<{ variants: any[] }>('GET', '/api/variants', { query: { include_inactive: 1 }, branchId: branch }),
+    ])
 
     const items: InventoryStockItem[] = []
-    const variantsByProduct = new Map<number, typeof variants>()
+    const variantsByProduct = new Map<number, any[]>()
 
     for (const v of variants || []) {
       const list = variantsByProduct.get(v.product_id) || []
@@ -196,17 +178,10 @@ export const inventoryService = {
    * Permanently delete a product or variant and its inventory movement ledger rows.
    */
   async deleteInventoryItem(productId: number, variantId: string | null | undefined, branch: PosBranch): Promise<void> {
-    const { error } = await supabase.rpc('delete_inventory_item', {
-      p_product_id: productId,
-      p_variant_id: variantId || null,
-      p_branch: branch,
-    })
-    if (error) {
-      const message = [error.message, error.details, error.hint].filter(Boolean).join(' — ')
-      if (error.code === 'PGRST202' || message.toLowerCase().includes('schema cache')) {
-        throw new Error('Stock deletion needs the Supabase migration 20261001_0030_hard_delete_inventory_item.sql. Apply it to the connected database, then retry.')
-      }
-      throw new Error(message || 'Failed to delete inventory item')
+    try {
+      await api('DELETE', '/api/inventory/items', { query: { product_id: productId, variant_id: variantId || undefined }, branchId: branch })
+    } catch (err) {
+      throw new Error(err instanceof Error && err.message ? err.message : 'Failed to delete inventory item')
     }
   },
 
@@ -214,32 +189,17 @@ export const inventoryService = {
    * Adjust stock for an item with an audit log reason.
    */
   async adjustStock(payload: StockAdjustmentPayload) {
-    const stockTable = payload.variant_id ? 'product_variants' : 'products'
-    const stockId = payload.variant_id || payload.product_id
-    const { data: scopedItem, error: scopeError } = await supabase
-      .from(stockTable)
-      .select('id')
-      .eq('id', stockId)
-      .eq('branch', payload.branch)
-      .maybeSingle()
-    if (scopeError) throw scopeError
-    if (!scopedItem) throw new Error('Stock item does not belong to the selected POS branch.')
-
-    const { data, error } = await supabase.rpc('adjust_inventory_stock', {
-      p_product_id: payload.product_id,
-      p_variant_id: payload.variant_id || null,
-      p_new_quantity: payload.new_quantity,
-      p_reason: payload.reason,
-      p_note: payload.note || '',
-      p_created_by_name: payload.created_by_name || 'Admin'
+    // the server checks the item belongs to this branch and records who did it (taken from the session)
+    return api('POST', '/api/inventory/adjust', {
+      body: {
+        product_id: payload.product_id,
+        variant_id: payload.variant_id || null,
+        new_quantity: payload.new_quantity,
+        reason: payload.reason,
+        note: payload.note || '',
+      },
+      branchId: payload.branch,
     })
-
-    if (error) {
-      console.error('[inventoryService.adjustStock] Error:', error)
-      throw error
-    }
-
-    return data
   },
 
   /**
@@ -255,58 +215,14 @@ export const inventoryService = {
     limit?: number
     offset?: number
   }): Promise<{ movements: InventoryMovement[]; total: number }> {
-    let query = supabase
-      .from('inventory_movements')
-      .select(`
-        id, product_id, variant_id, barcode_id, movement_type, quantity_delta, quantity_before, quantity_after,
-        unit_cost, reference_type, reference_id, note, created_by_name, created_at,
-        product:products (id, name, name_ta, image_url),
-        variant:product_variants (id, variant_name, sku)
-      `, { count: 'exact' })
-      .order('created_at', { ascending: false })
-
-    query = query.eq('branch', params.branch)
-
-    if (params?.product_id) {
-      query = query.eq('product_id', params.product_id)
-    }
-
-    if (params?.variant_id) {
-      query = query.eq('variant_id', params.variant_id)
-    }
-
-    if (params?.movement_type) {
-      query = query.eq('movement_type', params.movement_type)
-    }
-
-    if (params?.start_date) {
-      query = query.gte('created_at', params.start_date)
-    }
-
-    if (params?.end_date) {
-      query = query.lte('created_at', params.end_date)
-    }
-
-    if (params?.limit) {
-      const from = params.offset || 0
-      const to = from + params.limit - 1
-      query = query.range(from, to)
-    }
-
-    const { data, error, count } = await query
-
-    if (error) {
-      console.error('[inventoryService.fetchMovements] Error:', error)
-      throw error
-    }
-
-    const movements = (data || []).map((m) => ({
-      ...m,
-      product: Array.isArray(m.product) ? m.product[0] : m.product,
-      variant: Array.isArray(m.variant) ? m.variant[0] : m.variant
-    })) as InventoryMovement[]
-
-    return { movements, total: count || 0 }
+    const res = await api<{ movements: InventoryMovement[]; total: number }>('GET', '/api/inventory/movements', {
+      query: {
+        product_id: params.product_id, variant_id: params.variant_id || undefined, movement_type: params.movement_type,
+        from: params.start_date, to: params.end_date, limit: params.limit ?? 1000, offset: params.offset ?? 0,
+      },
+      branchId: params.branch,
+    })
+    return { movements: res.movements, total: res.total }
   },
 
   /**
@@ -369,108 +285,49 @@ export const inventoryService = {
    * Fetch all categories with product counts.
    */
   async fetchCategories(branch: PosBranch): Promise<CategoryRecord[]> {
-    const { data: categories, error: catErr } = await supabase
-      .from('categories')
-      .select('id, name_en, name_ta, is_active, sort_order, created_at, updated_at')
-      .eq('branch', branch)
-      .order('sort_order', { ascending: true })
-
-    if (catErr) {
-      console.error('[inventoryService.fetchCategories] Error:', catErr)
-      throw catErr
-    }
-
-    // Get count of active products per category
-    const { data: products, error: prodErr } = await supabase
-      .from('products')
-      .select('category_id')
-      .eq('branch', branch)
-      .neq('is_active', false)
-
-    const countMap: Record<number, number> = {}
-    if (!prodErr && products) {
-      for (const p of products) {
-        if (p.category_id) {
-          countMap[p.category_id] = (countMap[p.category_id] || 0) + 1
-        }
-      }
-    }
-
-    return (categories || []).map((c) => ({
-      ...c,
-      product_count: countMap[c.id] || 0,
-    }))
+    const res = await api<{ categories: CategoryRecord[] }>('GET', '/api/categories', { branchId: branch })
+    return res.categories
   },
 
   /**
    * Create category.
    */
   async createCategory(payload: { name_en: string; name_ta?: string; sort_order?: number; is_active?: boolean }, branch: PosBranch): Promise<CategoryRecord> {
-    const { data, error } = await supabase
-      .from('categories')
-      .insert({
+    const res = await api<{ category: CategoryRecord; existing?: boolean }>('POST', '/api/categories', {
+      body: {
         name_en: payload.name_en.trim(),
         name_ta: payload.name_ta?.trim() || '',
         sort_order: payload.sort_order ?? 0,
         is_active: payload.is_active !== false,
-        branch,
-      })
-      .select()
-      .single()
-
-    if (error) {
-      console.error('[inventoryService.createCategory] Error:', error)
-      if (error.code === '23505') {
-        throw new Error(`A category named "${payload.name_en.trim()}" already exists.`)
-      }
-      throw error
-    }
-
-    return { ...data, product_count: 0 }
+      },
+      branchId: branch,
+    })
+    if (res.existing) throw new Error(`A category named "${payload.name_en.trim()}" already exists.`)
+    return { ...res.category, product_count: 0 }
   },
 
   /**
    * Update category.
    */
   async updateCategory(id: number, payload: Partial<{ name_en: string; name_ta?: string; sort_order?: number; is_active?: boolean }>, branch: PosBranch): Promise<CategoryRecord> {
-    const updateData: Record<string, unknown> = {}
-    if (payload.name_en !== undefined) updateData.name_en = payload.name_en.trim()
-    if (payload.name_ta !== undefined) updateData.name_ta = payload.name_ta.trim() || ''
-    if (payload.sort_order !== undefined) updateData.sort_order = payload.sort_order
-    if (payload.is_active !== undefined) updateData.is_active = payload.is_active
-
-    const { data, error } = await supabase
-      .from('categories')
-      .update(updateData)
-      .eq('id', id)
-      .eq('branch', branch)
-      .select()
-      .single()
-
-    if (error) {
-      console.error('[inventoryService.updateCategory] Error:', error)
-      if (error.code === '23505') {
-        throw new Error(`A category named "${payload.name_en?.trim()}" already exists.`)
-      }
-      throw error
+    const body: Record<string, unknown> = {}
+    if (payload.name_en !== undefined) body.name_en = payload.name_en.trim()
+    if (payload.name_ta !== undefined) body.name_ta = payload.name_ta.trim() || ''
+    if (payload.sort_order !== undefined) body.sort_order = payload.sort_order
+    if (payload.is_active !== undefined) body.is_active = payload.is_active
+    try {
+      const res = await api<{ category: CategoryRecord }>('PATCH', `/api/categories/${id}`, { body, branchId: branch })
+      return res.category
+    } catch (err) {
+      if (err instanceof ApiClientError && err.status === 409) throw new Error(`A category named "${payload.name_en?.trim()}" already exists.`)
+      throw err
     }
-
-    return data
   },
 
   /**
    * Delete category.
    */
   async deleteCategory(id: number, branch: PosBranch): Promise<void> {
-    const { error } = await supabase
-      .from('categories')
-      .delete()
-      .eq('id', id)
-      .eq('branch', branch)
-
-    if (error) {
-      console.error('[inventoryService.deleteCategory] Error:', error)
-      throw error
-    }
+    await api('DELETE', `/api/categories/${id}`, { branchId: branch })
   }
 }

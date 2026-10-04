@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Store, Phone, MapPin, Palette, RotateCcw, Save, Upload, Trash2, Loader2, Shield } from 'lucide-react'
-import { supabase } from '../../lib/supabase'
+import { api } from '../../lib/apiClient'
+import { uploadBrandingLogo } from '../../lib/storage'
 import { useAdminAuthStore, useSettingsStore, resolveBranch, type PosBranch } from '../../store/store'
 import { posAccent, branchShortLabel, branchLogo, getAdminThemeColor, setAdminThemeColor, applyActiveTheme } from '../../lib/branchTheme'
 import { normalizeHex } from '../../lib/color'
@@ -132,20 +133,9 @@ export default function StoreSettingsView() {
         instagram_id: form.instagramId.trim(),
         theme_color: normalizeHex(form.themeColor),
         logo_url: form.logoUrl || null,
-        updated_at: new Date().toISOString(),
       }
-      const { data: updated, error } = await supabase
-        .from('store_settings')
-        .update(payload)
-        .eq('branch', branchToSave)
-        .select('id')
-      if (error) throw error
-      if (!updated || updated.length === 0) {
-        const { error: insErr } = await supabase
-          .from('store_settings')
-          .insert({ id: branchToSave === 'pos2' ? 2 : 1, branch: branchToSave, ...payload })
-        if (insErr) throw insErr
-      }
+      // the server writes the row of the session's branch (an admin names the branch being edited)
+      await api('PUT', '/api/settings', { body: payload, branchId: branchToSave })
       await fetchSettings(branchToSave)
       // Apply active theme immediately so the UI reflects the change right away
       applyActiveTheme(activeBranch, role, { ...settingsByBranch, [branchToSave]: { ...settingsByBranch[branchToSave]!, themeColor: form.themeColor } }, staffBranch)
@@ -162,11 +152,8 @@ export default function StoreSettingsView() {
     setUploading(true)
     setMessage(null)
     try {
-      const path = `${target}/logo-${Date.now()}.${file.name.split('.').pop() || 'png'}`
-      const { error: upErr } = await supabase.storage.from('branding').upload(path, file, { upsert: true })
-      if (upErr) throw upErr
-      const { data } = supabase.storage.from('branding').getPublicUrl(path)
-      setForm((f) => ({ ...f, logoUrl: data.publicUrl }))
+      const url = await uploadBrandingLogo(file, target)
+      setForm((f) => ({ ...f, logoUrl: url }))
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Logo upload failed' })
     } finally {

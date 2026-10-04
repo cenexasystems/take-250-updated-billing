@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { supabase, isSupabaseConfigured } from '../lib/supabase'
+import { api, ApiClientError } from '../lib/apiClient'
 import { Invoice } from '../components/Invoice'
 import { Printer, ArrowLeft, MessageCircle } from 'lucide-react'
 import { printThermalReceipt } from '../lib/thermalPrint'
@@ -72,11 +72,6 @@ export default function DigitalInvoice() {
 
   useEffect(() => {
     async function loadInvoice() {
-      if (!isSupabaseConfigured) {
-        setError('Database connection not configured')
-        setLoading(false)
-        return
-      }
       try {
         const rawId = decodeURIComponent(id || '').trim()
         if (!rawId) {
@@ -87,67 +82,15 @@ export default function DigitalInvoice() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let row: any = null
 
-        // 1. Try public RPC with candidates in priority order (00000030 tried first)
+        // One public lookup per candidate, in priority order (the server rate-limits per IP, answers a miss with a
+        // generic "not found", and returns exactly one bill: an order, or an advance order).
         for (const candidate of candidates) {
           try {
-            const { data, error: rpcErr } = await supabase.rpc('get_public_invoice_by_number', { p_invoice_no: candidate })
-            if (!rpcErr && data) {
-              const matched = Array.isArray(data) ? data[0] : data
-              if (matched && typeof matched === 'object' && ('id' in matched || 'invoice_no' in matched)) {
-                row = matched
-                break
-              }
-            }
-          } catch {
-            // continue
-          }
-        }
-
-        // 2. Direct table query fallback on orders table (supports unauthenticated anon query)
-        if (!row) {
-          try {
-            const { data: tableData } = await supabase
-              .from('orders')
-              .select('*')
-              .in('invoice_no', candidates)
-              .limit(1)
-
-            if (tableData && tableData[0]) {
-              row = tableData[0]
-            }
-          } catch {
-            // continue
-          }
-        }
-
-        // 3. Fallback to UUID lookup if rawId is a valid UUID (e.g. opened from dashboard)
-        if (!row && isUuid(rawId)) {
-          try {
-            const { data: idData } = await supabase
-              .from('orders')
-              .select('*')
-              .eq('id', rawId)
-              .maybeSingle()
-
-            if (idData) {
-              row = idData
-            }
-          } catch {
-            // continue
-          }
-        }
-
-        // 4. Fallback to advance_orders table if referenced by deposit_id or invoice_number
-        if (!row) {
-          try {
-            const { data: advData } = await supabase
-              .from('advance_orders')
-              .select('*')
-              .or(`invoice_number.in.(${candidates.map(c => `"${c}"`).join(',')}),deposit_id.in.(${candidates.map(c => `"${c}"`).join(',')})`)
-              .limit(1)
-
-            if (advData && advData[0]) {
-              const adv = advData[0]
+            const res = await api<{ kind: 'order' | 'advance'; order: any }>('GET', `/api/public/invoice/${encodeURIComponent(candidate)}`)
+            if (res.kind === 'order') {
+              row = { ...res.order, branch: res.order.branch_id }
+            } else {
+              const adv = res.order
               const advItems = Array.isArray(adv.products) && adv.products.length > 0
                 ? adv.products
                 : [{
@@ -175,10 +118,13 @@ export default function DigitalInvoice() {
                 status: adv.status,
                 payment_mode: adv.final_payment_method || 'Advance Payment',
                 created_at: adv.completed_at || adv.created_at,
+                branch: adv.branch_id,
               }
             }
-          } catch {
-            // continue
+            break
+          } catch (err) {
+            if (err instanceof ApiClientError && err.status === 429) throw new Error('Too many lookups. Please try again in a few minutes.')
+            // not found for this candidate: try the next one
           }
         }
 

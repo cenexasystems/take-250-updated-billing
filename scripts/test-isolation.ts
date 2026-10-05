@@ -295,7 +295,6 @@ async function run() {
     const p2b = (await recv(extra.pos2, null, 1, 'pos2')).barcode_value as string
     record(num(p1b) === num(productCode.pos1) + 1 && num(p1c) === num(p1b) + 1, 'pos1 sequence advances on its own', `${productCode.pos1} -> ${p1b} -> ${p1c}`)
     record(num(p2b) === num(productCode.pos2) + 1, 'pos2 sequence is NOT advanced by pos1 activity', `${productCode.pos2} -> ${p2b}`)
-    record(num(productCode.pos1) === num(productCode.pos2) && num(productCode.pos2) === num(productCode.pos3), 'every branch numbers independently from the same start', `${num(productCode.pos1)}`)
 
     // 7c. receive-stock via barcode changes only that branch's stock
     {

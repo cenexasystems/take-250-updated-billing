@@ -69,9 +69,10 @@ export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) 
 
   useEffect(() => { void load() }, [load])
 
-  const combinedSales = stats.pos1.todaySales + stats.pos2.todaySales
-  const combinedBills = stats.pos1.bills + stats.pos2.bills
-  const combinedStockValue = stats.pos1.stockValue + stats.pos2.stockValue
+  const sumOf = (pick: (x: BranchStats) => number) => BRANCHES.reduce((n, b) => n + pick(stats[b]), 0)
+  const combinedSales = sumOf((x) => x.todaySales)
+  const combinedBills = sumOf((x) => x.bills)
+  const combinedStockValue = sumOf((x) => x.stockValue)
   const alertBranches = BRANCHES.filter((b) => stats[b].lowStock > 0)
 
   return (
@@ -82,7 +83,7 @@ export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) 
             <h2 className="text-xl font-black text-[#1A0E0E]">Business Overview</h2>
             <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black uppercase">Live Aggregation</span>
           </div>
-          <p className="text-xs text-gray-500 font-semibold mt-1">Consolidated real-time operational metrics across {branchShortLabel('pos1')} and {branchShortLabel('pos2')}.</p>
+          <p className="text-xs text-gray-500 font-semibold mt-1">Consolidated real-time operational metrics across {BRANCHES.map((b) => branchShortLabel(b)).join(', ')}.</p>
         </div>
         <button onClick={() => void load()} className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-600 hover:bg-gray-50 cursor-pointer">
           <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
@@ -96,7 +97,7 @@ export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) 
             <TrendingUp size={15} className="text-emerald-600" />
           </div>
           <p className="text-xl font-black text-[#1A0E0E]">{formatCurrency(combinedSales)}</p>
-          <p className="text-[10px] text-emerald-600 font-bold mt-1">Across both active retail branches</p>
+          <p className="text-[10px] text-emerald-600 font-bold mt-1">Across all active retail branches</p>
         </div>
         <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
           <div className="flex items-center justify-between mb-2">
@@ -112,7 +113,7 @@ export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) 
             <Boxes size={15} className="text-violet-600" />
           </div>
           <p className="text-xl font-black text-[#1A0E0E]">{formatCurrency(combinedStockValue)}</p>
-          <p className="text-[10px] text-violet-600 font-bold mt-1">Retail inventory across 2 locations</p>
+          <p className="text-[10px] text-violet-600 font-bold mt-1">Retail inventory across {BRANCHES.length} locations</p>
         </div>
       </div>
 

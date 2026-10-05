@@ -27,7 +27,7 @@ Legend: Y = allowed, N = 403, "own" = locked to the branch in the JWT (never fro
 | 17 | Coupons **manage** (create/edit/delete, Coupons tab) | Y any | Y own | N | `coupons` in admin nav only |
 | 18 | Order history: list / view / print / share | Y any | Y own | Y own | `history` in `staffAllowedTabs` |
 | 19 | Order **status change** | Y any | Y own | N | `role === 'admin' ? <select> : <span>` (`Dashboard.tsx:3603, 3674`) |
-| 20 | Order **delete** | Y any | Y own | N | delete button `role === 'admin'`. The staff branch of `deleteOrder` (prompt for hard-coded `192267`) is unreachable dead code, see Flag 1 |
+| 20 | Order **delete** | Y any | Y own | N | delete button `role === 'admin'`. The staff branch of `deleteOrder` (prompt for hard-coded `<removed>`) is unreachable dead code, see Flag 1 |
 | 21 | Advance orders: create, list, update status, timeline, complete (`complete_advance_order_v2`) | Y any | Y own | Y own | `advance_orders` in `staffAllowedTabs`; `AdvanceOrders.tsx` has no role gate |
 | 22 | **Analytics Dashboard** (`pos_analytics` tab, `/pos-analytics`, `BillingAnalytics`, `analyticsExport`, their data endpoints incl. the order delete inside BillingAnalytics) | Y any | **N** | N | `pos_analytics` admin nav + `/pos-analytics` `AdminOnlyGuard`; `BillingAnalytics` `isAdmin`. Manager exclusion per your rule |
 | 23 | Expenses (categories, entries, summary metrics) | Y any | Y own | N | `/expenses` under `AdminOnlyGuard`; `expenses` only in admin nav |
@@ -47,7 +47,7 @@ Legend: Y = allowed, N = 403, "own" = locked to the branch in the JWT (never fro
 
 ## Flags / ambiguities (need your decision)
 
-1. **Hard-coded `192267`** (`Dashboard.tsx:950`): "staff deletes an order after typing the admin password". The Delete button is only rendered for admin, so staff can never reach it. I propose **no staff delete endpoint** and removing the dependency on that string. Confirm.
+1. **Hard-coded `<removed>`** (`Dashboard.tsx:950`): "staff deletes an order after typing the admin password". The Delete button is only rendered for admin, so staff can never reach it. I propose **no staff delete endpoint** and removing the dependency on that string. Confirm.
 2. **Expenses summary** for Manager: I treat the Expenses ledger (and its summary cards) as NOT "Analytics Dashboard", so Manager gets it. Say if you want it excluded.
 3. **Inventory analytics view / stock-ledger CSV** (row 9): same reasoning, it is not in your Analytics list, so Manager and Staff keep it exactly as in the original.
 4. **Manager and Store Settings / WhatsApp Center**: Admin-equivalent, own branch only. Manager cannot see the Admin's branch selector (it is a fixed badge, like Staff).

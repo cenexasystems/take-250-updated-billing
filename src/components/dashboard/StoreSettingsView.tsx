@@ -56,6 +56,7 @@ export default function StoreSettingsView() {
   useEffect(() => {
     void fetchSettings('pos1')
     void fetchSettings('pos2')
+    void fetchSettings('pos3')
   }, [fetchSettings])
 
   // Sync form when target or settingsByBranch changes

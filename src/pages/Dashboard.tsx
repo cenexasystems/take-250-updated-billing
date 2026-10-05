@@ -205,7 +205,8 @@ export default function Dashboard() {
   const [tab, setTab] = useState<TabKey>(() => {
     const params = new URLSearchParams(location.search)
     const tabParam = params.get('tab') as TabKey | null
-    if (tabParam) return tabParam
+    // a tab this portal may not open is never rendered, not even for one frame (the effect below only re-checks)
+    if (tabParam && canOpenTab(role, tabParam as PermTabKey)) return tabParam
     if (location.pathname === '/whatsapp-center') return 'whatsapp'
     if (location.pathname === '/pos-analytics' && role === 'admin') return 'pos_analytics'
     if (location.pathname === '/advance-orders') return 'advance_orders'

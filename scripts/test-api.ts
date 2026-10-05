@@ -640,7 +640,7 @@ async function run() {
       check(seq[0] === 0 && seq[1] === 0 && seq[2] === 0, 'no slowdown below the free failure count')
       check(seq[3] > 0 && seq[4] > seq[3] && seq[5] > seq[4] && seq[6] >= seq[5], 'the delay grows with every additional failure')
       check(seq[7] === Number(process.env.LOGIN_SLOWDOWN_MAX_MS) && Math.max(...seq) === seq[7], 'the delay is capped (never an unbounded wait)')
-      const failuresBefore = (await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND success = false`)).n
+      const failuresBefore = (await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND success = false AND attempted_at > now() - interval '15 minutes'`)).n
       for (let i = 0; i < 45; i++) await call('POST', '/api/auth/login', { ip: `198.18.${Math.floor(i / 200)}.${(i % 200) + 1}`, body: { passcode: `spray-${i}-aaaaaa` } })
       const failuresNow = (await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND success = false AND attempted_at > now() - interval '15 minutes'`)).n
       check(failuresNow >= failuresBefore + 45 && failuresNow >= 40, 'the spray produced 40+ failures system-wide', `${failuresNow}`)

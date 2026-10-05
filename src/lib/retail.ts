@@ -469,7 +469,7 @@ export const normalizeStructuredOrderItem = (raw: Record<string, unknown>): Stru
     ? roundTo(lineTotalRaw, 2)
     : calculateLineTotal(quantity, unitType, baseQuantity, basePrice)
 
-  // products.id is UUID in Supabase — return as string, not number
+  // products.id may be a UUID or a number — return as string, not number
   const productIdValue = raw.product_id ?? raw.productId ?? raw.id
   const productId: string | null =
     productIdValue !== null && productIdValue !== undefined && String(productIdValue).trim()

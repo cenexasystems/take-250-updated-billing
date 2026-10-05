@@ -35,3 +35,7 @@ fix*.cjs
 gen_logo.cjs
 safe_fix.cjs
 test-*.js
+
+# local runs
+.local-uploads
+e2e-report/*.json

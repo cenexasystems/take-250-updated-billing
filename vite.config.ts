@@ -65,19 +65,13 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,jpeg,jpg,woff,woff2}'],
-        navigateFallbackDenylist: [/^\/api/, /^\/admin/, /supabase/, /^\/assets\//, /\.[a-zA-Z0-9]+$/],
+        navigateFallbackDenylist: [/^\/api/, /^\/admin/, /^\/assets\//, /\.[a-zA-Z0-9]+$/],
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
-            handler: 'NetworkOnly',
-          },
-          {
+            // API answers depend on who is signed in and which branch they are in: never cache them in the browser,
+            // or a slow network could show one user's branch data to the next user of the same device.
             urlPattern: /\/api\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              networkTimeoutSeconds: 3,
-            },
+            handler: 'NetworkOnly',
           },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -107,7 +101,6 @@ export default defineConfig({
       output: {
         manualChunks: (id: string) => {
           if (!id.includes('node_modules')) return
-          if (id.includes('@supabase')) return 'supabase'
           if (id.includes('framer-motion')) return 'motion'
           if (id.includes('recharts') || id.includes('d3-') || id.includes('react-smooth') || id.includes('victory-')) return 'charts'
           if (id.includes('react-router')) return 'router'

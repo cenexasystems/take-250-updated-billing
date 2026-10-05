@@ -1,6 +1,6 @@
 import pg from 'pg'
 
-// bigint ids / counts come back as JS numbers (what the original Supabase client returned); all ids here are far below 2^53.
+// bigint ids / counts come back as JS numbers (what the original client returned); all ids here are far below 2^53.
 pg.types.setTypeParser(20, (v) => Number(v))
 
 // Server-only. DATABASE_URL must never be exposed to the browser (no VITE_ prefix) or written to logs.

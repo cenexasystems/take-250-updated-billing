@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { useProductStore, useVariantStore, useAdminAuthStore, useSettingsStore, useBranchStore, resolveBranch, type PosBranch } from './store/store'
 import { BRAND_EN } from './lib/brand'
 import { hasAdminPowers } from './lib/permissions'
+import { useBranchPolling } from './hooks/useBranchPolling'
 import { LowStockAlarmModal } from './components/dashboard/LowStockAlarmModal'
 import { useLowStockMonitor } from './hooks/useLowStockMonitor'
 import { applyActiveTheme } from './lib/branchTheme'
@@ -95,6 +96,8 @@ function AppShell() {
   const location = useLocation()
   const fetchProducts = useProductStore((state) => state.fetchProducts)
   const fetchVariants = useVariantStore((state) => state.fetchVariants)
+  const refreshProducts = useProductStore((state) => state.refreshProducts)
+  const refetchVariants = useVariantStore((state) => state.refetchVariants)
   const { isLoggedIn, role, activeBranch, branch: staffBranch } = useAdminAuthStore()
   const fetchSettings = useSettingsStore((state) => state.fetchSettings)
   const settingsByBranch = useSettingsStore((state) => state.settingsByBranch)
@@ -138,6 +141,13 @@ function AppShell() {
     void fetchProducts(catalogBranch)
     void fetchVariants(catalogBranch)
   }, [catalogBranch, fetchProducts, fetchVariants])
+
+  // Polling (every ~12 s, paused while the tab is hidden) replaces the realtime products subscription of the original.
+  // It reads the change stamps of the ONE branch on screen; switching branch starts a fresh baseline.
+  useBranchPolling(catalogBranch, ['products', 'product_variants'], (changed) => {
+    if (changed.includes('products')) void refreshProducts()
+    if (changed.includes('product_variants') && catalogBranch) void refetchVariants(catalogBranch)
+  }, { enabled: hasStaffOrAdminAccess })
 
   return (
     <div className="ios-app-shell w-full max-w-[100vw] bg-bgMain print:block print:h-auto print:overflow-visible">

@@ -41,6 +41,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, ApiClientError } from '../lib/apiClient'
 import { debounce } from '../lib/debounce'
 import { useProductStore, useAdminAuthStore, useBranchStore, resolveBranch, type Product, type PosBranch } from '../store/store'
+import { useBranchPolling } from '../hooks/useBranchPolling'
 import { can, canOpenTab, hasAdminPowers, roleLabel, type TabKey as PermTabKey } from '../lib/permissions'
 import { useAlarmStore } from '../store/alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
@@ -1100,10 +1101,18 @@ export default function Dashboard() {
     debouncedLoadRef.current = debounce(() => void loadData(), 350)
   }, [loadData])
 
+  // A branch switch drops the previous branch's rows at once, so they can never show under the new branch.
+  useEffect(() => {
+    setOrders([]); setOrderItems([]); setCoupons([]); setExpenses([]); setCats([]); setSearchResults([])
+  }, [branch])
+
   useEffect(() => {
     if (!isAdmin) return
     void loadData()
   }, [isAdmin, loadData])
+
+  // Polling replaces the dashboard's realtime subscription (orders, items, products, expenses, coupons).
+  useBranchPolling(branch, ['orders', 'advance_orders', 'products', 'expenses', 'coupons', 'categories'], () => debouncedLoadRef.current?.(), { enabled: isAdmin })
 
   useEffect(() => {
     if (tab === 'coupons' || tab === 'pos_analytics') void loadCoupons()

@@ -714,6 +714,7 @@ export const useAdminAuthStore = create<AdminAuthState>()(
       login: async (passcode: string) => {
         const res = await api<{ role: Exclude<AdminRole, null>; branch: PosBranch | null }>('POST', '/api/auth/login', { body: { passcode } })
         resetBranchScopedStores()
+        useSettingsStore.setState({ settings: null, settingsByBranch: {} })
         useAlarmStore.getState().resetSilencedState()
         set({ isLoggedIn: true, role: res.role, adminId: res.role, branch: res.branch, activeBranch: res.role === 'admin' ? 'all' : res.branch })
         try {
@@ -730,6 +731,7 @@ export const useAdminAuthStore = create<AdminAuthState>()(
         alarmSound.stopAlert()
         useAlarmStore.getState().resetSilencedState()
         resetBranchScopedStores()
+        useSettingsStore.setState({ settings: null, settingsByBranch: {} })
         useBranchStore.getState().setBranches([])
         set({ isLoggedIn: false, role: null, adminId: null, branch: null, activeBranch: null })
       },

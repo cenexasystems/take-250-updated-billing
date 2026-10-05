@@ -2,12 +2,8 @@ import { useEffect } from 'react'
 import { Store, Phone, MapPin, ShoppingCart, Boxes, AlertTriangle, FileText } from 'lucide-react'
 import { useAdminAuthStore, useProductStore, useSettingsStore, resolveBranch, type PosBranch } from '../../store/store'
 import { BRAND_EN } from '../../lib/brand'
-import { branchLogo, branchLabel } from '../../lib/branchTheme'
+import { branchLogo, branchLabel, posAccent } from '../../lib/branchTheme'
 import type { TabKey } from '../../pages/Dashboard'
-
-const posAccent = (branch: PosBranch) => branch === 'pos2'
-  ? { bg: 'bg-posTwo', bgLight: 'bg-posTwo-light', text: 'text-posTwo-dark', border: 'border-posTwo' }
-  : { bg: 'bg-posOne', bgLight: 'bg-posOne-light', text: 'text-posOne-dark', border: 'border-posOne' }
 
 interface BranchHubProps {
   onNavigate: (tab: TabKey) => void

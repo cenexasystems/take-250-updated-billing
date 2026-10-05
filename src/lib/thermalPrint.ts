@@ -1,5 +1,5 @@
 import { BRAND_EN } from './brand'
-import { LOGO_BASE64_POS1, LOGO_BASE64_POS2 } from './logoBase64'
+import { printLogoFor } from './branchLogo'
 import { formatCurrency, formatInvoiceNo } from './retail'
 import { formatPhoneForDisplay } from './phone'
 import type { PosBranch } from '../store/store'
@@ -36,8 +36,7 @@ export function printThermalReceipt(data: ThermalReceiptData) {
   try {
     const profile = getBranchProfile(data.branch)
     // Embedded logo prints instantly; a custom logo from Store Settings is used when one is uploaded
-    const customLogo = useSettingsStore.getState().settingsByBranch[data.branch === 'pos2' ? 'pos2' : 'pos1']?.logoUrl
-    const logoSrc = customLogo || (data.branch === 'pos2' ? LOGO_BASE64_POS2 : LOGO_BASE64_POS1)
+    const logoSrc = printLogoFor(data.branch)
     const instagramUrls = profile.instagramUrls
     // Create an isolated print iframe protected from third-party extension observers
     const iframe = document.createElement('iframe')

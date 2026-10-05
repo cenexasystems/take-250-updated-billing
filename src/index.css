@@ -28,6 +28,9 @@
     --pos-two: #343434;
     --pos-two-dark: #1F1F1F;
     --pos-two-light: #F1EDE0;
+    --pos-three: #343434;
+    --pos-three-dark: #1F1F1F;
+    --pos-three-light: #F1EDE0;
   }
 
   /* Dynamic whole-theme color bindings so changing branch appearance colors

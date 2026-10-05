@@ -61,8 +61,12 @@ export const hoverShade = (hex: string) => (luminance(hex) < 0.08 ? mixHex(hex, 
 /** Branch accent surface (active nav item, chips): a step lighter than the primary so it stays visible on it. */
 export const accentSurface = (hex: string) => (luminance(hex) < 0.08 ? mixHex(hex, '#FFFFFF', 0.17) : hex)
 
-export const posAccent = (branch: PosBranch) => branch === 'pos2' || branch === 'pos3'
-  ? { bg: 'bg-posTwo', bgLight: 'bg-posTwo-light', text: 'text-posTwo-dark', border: 'border-posTwo', hex: accentSurface(resolveBranchColor(branch)) }
+/** Accent classes per branch. Each branch has its OWN CSS variables (--pos-one / --pos-two / --pos-three), all of which
+ * default to the shared black-and-gold palette until a branch colour is saved. */
+export const posAccent = (branch: PosBranch) => branch === 'pos3'
+  ? { bg: 'bg-posThree', bgLight: 'bg-posThree-light', text: 'text-posThree-dark', border: 'border-posThree', hex: accentSurface(resolveBranchColor('pos3')) }
+  : branch === 'pos2'
+  ? { bg: 'bg-posTwo', bgLight: 'bg-posTwo-light', text: 'text-posTwo-dark', border: 'border-posTwo', hex: accentSurface(resolveBranchColor('pos2')) }
   : { bg: 'bg-posOne', bgLight: 'bg-posOne-light', text: 'text-posOne-dark', border: 'border-posOne', hex: accentSurface(resolveBranchColor('pos1')) }
 
 export const DEFAULT_BRANCH_COLOR: Record<PosBranch, string> = { pos1: THEME_PALETTE.primary, pos2: THEME_PALETTE.primary, pos3: THEME_PALETTE.primary }
@@ -91,8 +95,9 @@ export function setAdminThemeColor(hex: string): void {
  * picked color actually retheme's that branch's admin UI. */
 export function applyBranchThemeVars(settingsByBranch: Partial<Record<PosBranch, StoreSettings>>) {
   const root = document.documentElement
-  ;(['pos1', 'pos2'] as const).forEach((branch) => {
-    const varPrefix = branch === 'pos2' ? '--pos-two' : '--pos-one'
+  const VAR_PREFIX = { pos1: '--pos-one', pos2: '--pos-two', pos3: '--pos-three' } as const
+  ;(['pos1', 'pos2', 'pos3'] as const).forEach((branch) => {
+    const varPrefix = VAR_PREFIX[branch]
     const color = resolveBranchColor(branch, settingsByBranch[branch]?.themeColor)
     root.style.setProperty(varPrefix, accentSurface(color))
     root.style.setProperty(`${varPrefix}-dark`, hoverShade(color))

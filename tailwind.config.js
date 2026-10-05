@@ -41,6 +41,11 @@ export default {
           dark:    'var(--pos-two-dark, #1F1F1F)',
           light:   'var(--pos-two-light, #F1EDE0)',
         },
+        posThree: {
+          DEFAULT: 'var(--pos-three, #343434)',
+          dark:    'var(--pos-three-dark, #1F1F1F)',
+          light:   'var(--pos-three-light, #F1EDE0)',
+        },
         textMain:  '#1A0E0E',
         textMuted: '#6B7280',
         borderLight: '#E5E7EB', // Neutral clean border

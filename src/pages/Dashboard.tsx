@@ -72,7 +72,7 @@ import { useHardwareBarcodeScanner } from '../hooks/useHardwareBarcodeScanner'
 import { BarcodeRedirectDialog } from '../components/pos/BarcodeRedirectDialog'
 import { exportAnalyticsToCSV, exportAnalyticsToPDF } from '../services/analyticsExport'
 import { BRAND_EN, BRAND_LOGO, BRAND_ICON } from '../lib/brand'
-import { branchName, branchShortLabel } from '../lib/branchTheme'
+import { branchName, branchShortLabel, posAccent } from '../lib/branchTheme'
 import { getPeriodRange, toLocalDateKey } from '../lib/dateRanges'
 import { buildCsv, downloadCsvFile } from '../lib/csv'
 import {
@@ -1232,7 +1232,7 @@ export default function Dashboard() {
         results = results.filter(matchOrder)
       }
 
-      // Fallback: if query returned no results from Supabase, search in pre-loaded orders
+      // Fallback: if the query returned no results, search in pre-loaded orders
       if (hasQuery && results.length === 0 && orders.length > 0) {
         const localMatches = orders.filter(o => {
           if (normalizeOrderType(o.order_type) === 'online_request') return false
@@ -1573,13 +1573,13 @@ export default function Dashboard() {
   const renderBranchShortcuts = () => (isGlobalView && !sidebarCollapsed) ? (
             <div className="my-1 py-1 border-y border-white/10 shrink-0 lg:shrink-0 flex lg:flex-col gap-1">
               <p className="hidden lg:block text-[9px] font-black uppercase tracking-widest text-white/50 px-1 mb-0.5">Enter Branch Workspace</p>
-              {(['pos1', 'pos2'] as const).map(b => (
+              {(branchRows.length ? branchRows.map((x) => x.id as PosBranch) : (['pos1', 'pos2', 'pos3'] as PosBranch[])).map(b => (
                 <button
                   key={b}
                   onClick={() => { setActiveBranch(b); setTab('billing'); navigate('/dashboard', { replace: true }) }}
                   className="shrink-0 flex items-center gap-2 lg:w-full px-3 h-[38px] rounded-xl text-[12.5px] font-bold text-white/80 hover:bg-white/10 hover:text-[#D4AF37] transition-colors cursor-pointer"
                 >
-                  <span className={`h-2 w-2 rounded-full ${b === 'pos1' ? 'bg-posOne' : 'bg-posTwo'}`} />
+                  <span className={`h-2 w-2 rounded-full ${posAccent(b).bg}`} />
                   {branchShortLabel(b)}
                 </button>
               ))}
@@ -1608,7 +1608,7 @@ export default function Dashboard() {
                 <h1 className="text-[15px] font-black text-white break-words tracking-wider">{BRAND_EN}</h1>
                 <div className="flex items-center gap-1 flex-wrap">
                   {!isGlobalView && (
-                    <span className={`text-[8.5px] font-black uppercase tracking-widest px-1.5 py-0.2 rounded w-fit text-white ${branch === 'pos2' ? 'bg-posTwo' : 'bg-posOne'}`}>
+                    <span className={`text-[8.5px] font-black uppercase tracking-widest px-1.5 py-0.2 rounded w-fit text-white ${posAccent(branch).bg}`}>
                       {branchLabel}
                     </span>
                   )}
@@ -1641,7 +1641,7 @@ export default function Dashboard() {
               </span>
               <div className="flex items-center gap-1 flex-wrap">
                 {!isGlobalView && (
-                  <span className={`shrink-0 text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded whitespace-nowrap text-white ${branch === 'pos2' ? 'bg-posTwo' : 'bg-posOne'}`}>
+                  <span className={`shrink-0 text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded whitespace-nowrap text-white ${posAccent(branch).bg}`}>
                     {branchLabel}
                   </span>
                 )}
@@ -1705,7 +1705,7 @@ export default function Dashboard() {
                 'px-1 py-1 lg:py-0',
                 'rounded-xl font-medium text-[10px] lg:text-[12.5px] xl:text-[13px] transition-all overflow-hidden cursor-pointer',
                 tab === item.id
-                  ? (isGlobalView ? 'bg-[#D4AF37] text-[#7A1220]' : branch === 'pos2' ? 'bg-posTwo text-white' : 'bg-posOne text-white') + ' font-black shadow-md'
+                  ? (isGlobalView ? 'bg-[#D4AF37] text-[#7A1220]' : `${posAccent(branch).bg} text-white`) + ' font-black shadow-md'
                   : 'text-white/70 hover:bg-white/10 hover:text-[#D4AF37]',
               ].join(' ')}
             >
@@ -1715,7 +1715,7 @@ export default function Dashboard() {
               <span className={`hidden lg:flex items-center gap-1.5 truncate text-left transition-all duration-200 ${sidebarCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'opacity-100 flex-1'}`}>
                 <span className="truncate">{item.label}</span>
                 {item.id === 'billing' && !isGlobalView && (
-                  <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wide ${tab === item.id ? 'bg-white/25 text-white' : `${branch === 'pos2' ? 'bg-posTwo-light text-posTwo-dark' : 'bg-posOne-light text-posOne-dark'}`}`}>
+                  <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wide ${tab === item.id ? 'bg-white/25 text-white' : `${posAccent(branch).bgLight} ${posAccent(branch).text}`}`}>
                     Sidebar &amp; POS
                   </span>
                 )}

@@ -2,7 +2,7 @@ import { jsPDF } from 'jspdf'
 import html2canvas from 'html2canvas'
 import { BRAND_EN, THEME_PALETTE } from './brand'
 import { formatCurrency, formatQuantityValue, normalizeStructuredOrderItem, normalizeUnitLabel, formatInvoiceNo } from './retail'
-import { LOGO_BASE64_POS1, LOGO_BASE64_POS2 } from './logoBase64'
+import { printLogoFor } from './branchLogo'
 import type { PosBranch } from '../store/store'
 import { getBranchProfile } from './branchProfile'
 import { formatPhoneForDisplay } from './phone'
@@ -57,7 +57,7 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   y += 10
 
   try {
-    doc.addImage(data.branch === 'pos2' ? LOGO_BASE64_POS2 : LOGO_BASE64_POS1, 'PNG', left, y, 30, 30)
+    doc.addImage(printLogoFor(data.branch), 'PNG', left, y, 30, 30)
   } catch {
     doc.setTextColor(primaryColor)
     doc.setFontSize(16)

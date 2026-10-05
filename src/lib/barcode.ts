@@ -49,43 +49,54 @@ export const DEFAULT_BARCODE_SETTINGS: BarcodeSettings = {
   showDiscount: false,
 }
 
-const SETTINGS_KEY = 'yg_barcode_settings'
-const LEGACY_SETTINGS_KEY = 'clad_barcode_settings'
-const CUSTOM_SIZES_KEY = 'yg_custom_label_sizes'
-const LEGACY_CUSTOM_SIZES_KEY = 'clad_custom_label_sizes'
+// Label preferences are per-device display settings kept in localStorage, ALWAYS keyed by branch id:
+//   yg:barcode-settings:<branch_id>   (printer type, label size, what to show)
+//   yg:label-sizes:<branch_id>        (custom label sizes)
+// They are wiped on logout, login and every branch switch (clearBarcodePreferences), so one branch's label setup
+// is never visible under another branch or another person's session.
+const SETTINGS_PREFIX = 'yg:barcode-settings:'
+const CUSTOM_SIZES_PREFIX = 'yg:label-sizes:'
+const LEGACY_KEYS = ['yg_barcode_settings', 'clad_barcode_settings', 'yg_custom_label_sizes', 'clad_custom_label_sizes']
 
-const branchKey = (key: string, branch?: string) => branch ? `${key}_${branch}` : key
+const settingsKey = (branch: string) => `${SETTINGS_PREFIX}${branch}`
+const customSizesKey = (branch: string) => `${CUSTOM_SIZES_PREFIX}${branch}`
+
+export function clearBarcodePreferences(): void {
+  try {
+    const doomed: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (!k) continue
+      if (k.startsWith(SETTINGS_PREFIX) || k.startsWith(CUSTOM_SIZES_PREFIX) || LEGACY_KEYS.some((l) => k === l || k.startsWith(`${l}_`))) doomed.push(k)
+    }
+    doomed.forEach((k) => localStorage.removeItem(k))
+  } catch { /* storage unavailable */ }
+}
 
 export function getStoredBarcodeSettings(branch?: string): BarcodeSettings {
+  if (!branch) return DEFAULT_BARCODE_SETTINGS
   try {
-    const scopedKey = branchKey(SETTINGS_KEY, branch)
-    const raw = localStorage.getItem(scopedKey) || (!branch || branch === 'pos1' ? localStorage.getItem(SETTINGS_KEY) || localStorage.getItem(LEGACY_SETTINGS_KEY) : null)
-    if (raw) {
-      const stored = JSON.parse(raw)
-      return { ...DEFAULT_BARCODE_SETTINGS, ...stored }
-    }
+    const raw = localStorage.getItem(settingsKey(branch))
+    if (raw) return { ...DEFAULT_BARCODE_SETTINGS, ...JSON.parse(raw) }
   } catch (e) {
     console.error('Failed to parse barcode settings:', e)
   }
-
-  // Return branch-specific defaults if no stored settings
-  // Import at top: import { getDefaultBarcodeSettings } from './brand'
-  // For now, return DEFAULT_BARCODE_SETTINGS
   return DEFAULT_BARCODE_SETTINGS
 }
 
 export function saveStoredBarcodeSettings(settings: BarcodeSettings, branch?: string): void {
+  if (!branch) return
   try {
-    localStorage.setItem(branchKey(SETTINGS_KEY, branch), JSON.stringify(settings))
+    localStorage.setItem(settingsKey(branch), JSON.stringify(settings))
   } catch (e) {
     console.error('Failed to save barcode settings:', e)
   }
 }
 
 export function getStoredCustomSizes(branch?: string): LabelSizeConfig[] {
+  if (!branch) return []
   try {
-    const scopedKey = branchKey(CUSTOM_SIZES_KEY, branch)
-    const raw = localStorage.getItem(scopedKey) || (!branch || branch === 'pos1' ? localStorage.getItem(CUSTOM_SIZES_KEY) || localStorage.getItem(LEGACY_CUSTOM_SIZES_KEY) : null)
+    const raw = localStorage.getItem(customSizesKey(branch))
     if (raw) return JSON.parse(raw)
   } catch (e) {
     console.error('Failed to parse custom label sizes:', e)
@@ -96,8 +107,9 @@ export function getStoredCustomSizes(branch?: string): LabelSizeConfig[] {
 export function saveStoredCustomSize(size: LabelSizeConfig, branch?: string): LabelSizeConfig[] {
   const existing = getStoredCustomSizes(branch).filter((s) => s.id !== size.id)
   const updated = [...existing, { ...size, isCustom: true }]
+  if (!branch) return updated
   try {
-    localStorage.setItem(branchKey(CUSTOM_SIZES_KEY, branch), JSON.stringify(updated))
+    localStorage.setItem(customSizesKey(branch), JSON.stringify(updated))
   } catch (e) {
     console.error('Failed to save custom label size:', e)
   }

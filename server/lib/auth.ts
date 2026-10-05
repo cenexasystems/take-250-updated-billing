@@ -10,6 +10,8 @@ export interface Session {
   /** null for the admin (all branches); the locked branch for manager / staff. */
   branch: string | null
   tv: number
+  /** random id of THIS login; bills remember it so only the session that made one can re-save its totals */
+  sid: string
 }
 
 export const COOKIE_NAME = 'yg_session'
@@ -22,7 +24,7 @@ export function jwtSecret(): string {
 }
 
 export function signSession(s: Session): string {
-  return jwt.sign({ role: s.role, branch: s.branch, tv: s.tv }, jwtSecret(), { algorithm: 'HS256', expiresIn: SESSION_TTL_SECONDS })
+  return jwt.sign({ role: s.role, branch: s.branch, tv: s.tv, sid: s.sid }, jwtSecret(), { algorithm: 'HS256', expiresIn: SESSION_TTL_SECONDS })
 }
 
 export function readCookie(req: Request, name: string): string | null {
@@ -65,6 +67,8 @@ export async function authenticate(req: Request, db: Db): Promise<Session | null
   const role = payload.role
   const branch = payload.branch ?? null
   const tv = payload.tv
+  const sid = payload.sid
+  if (typeof sid !== 'string' || sid.length < 8 || sid.length > 64) return null
   if (!ROLES.includes(role) || !Number.isInteger(tv)) return null
   if ((role === 'admin') !== (branch === null)) return null
   const r = await db.query<{ token_version: number }>(
@@ -74,7 +78,7 @@ export async function authenticate(req: Request, db: Db): Promise<Session | null
     [role, branch]
   )
   if (r.rows.length !== 1 || r.rows[0].token_version !== tv) return null
-  return { role, branch, tv }
+  return { role, branch, tv, sid }
 }
 
 export function targetLabel(s: { role: Role; branch: string | null }) {

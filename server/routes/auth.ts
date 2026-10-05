@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { clearSessionCookie, setSessionCookie, signSession, targetLabel, type Role } from '../lib/auth.js'
@@ -39,7 +40,7 @@ export const authRoutes = [
       }
       const row = hit[0]
       await record(db, 'login', ip, true, targetLabel({ role: row.role, branch: row.branch_id }))
-      setSessionCookie(res, signSession({ role: row.role, branch: row.branch_id, tv: row.token_version }))
+      setSessionCookie(res, signSession({ role: row.role, branch: row.branch_id, tv: row.token_version, sid: randomUUID() }))
       return { role: row.role, branch: row.branch_id }
     },
   }),
@@ -124,7 +125,7 @@ export const authRoutes = [
       await record(db, 'passcode_change', ip, true, actor)
 
       // Every older session of the changed role/branch is now invalid. The admin changing their OWN passcode keeps working.
-      if (body.target_role === 'admin') setSessionCookie(res, signSession({ role: 'admin', branch: null, tv: upd.rows[0].token_version }))
+      if (body.target_role === 'admin') setSessionCookie(res, signSession({ role: 'admin', branch: null, tv: upd.rows[0].token_version, sid: session!.sid }))
       return { ok: true, role: body.target_role, target_branch: targetBranch }
     },
   }),

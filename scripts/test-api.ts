@@ -491,6 +491,26 @@ async function run() {
       await client.query(`UPDATE orders SET created_at = now() - interval '2 hours' WHERE id = $1`, [sale.body.order_id])
       check((await call('PATCH', `/api/orders/${sale.body.order_id}/finalize`, { cookie: cookies.staff1, body: { total: 2 } })).status === 404, 'an old bill can no longer be finalized')
 
+      // finalize is limited to: this token's branch + the SAME login session and role that made the bill + under 30 minutes
+      {
+        const mk = await call('POST', '/api/pos/sale', { cookie: cookies.staff1, body: { items: [{ product_id: prod.pos1, quantity: 1, unit_price: 100, name: 'Api Product' }] } })
+        const oid = mk.body.order_id as string
+        const meta = await one(`SELECT created_by_role r, created_by_sid s FROM orders WHERE id = $1`, [oid])
+        check(meta.r === 'staff' && typeof meta.s === 'string' && meta.s.length >= 8, 'a bill remembers the role and login session that made it')
+        const second = cookieOf(await call('POST', '/api/auth/login', { body: { passcode: PASS.staff1 } }))
+        check((await call('PATCH', `/api/orders/${oid}/finalize`, { cookie: second, body: { total: 1 } })).status === 404, 'another login session of the same user cannot finalize this bill')
+        check((await call('PATCH', `/api/orders/${oid}/finalize`, { cookie: cookies.manager1, body: { total: 1 } })).status === 404, 'a manager of the same branch cannot finalize a staff bill')
+        check((await call('PATCH', `/api/orders/${oid}/finalize`, { cookie: cookies.admin, query: { branch_id: 'pos1' }, body: { total: 1 } })).status === 404, 'the admin cannot finalize a bill made by someone else\'s session')
+        check((await call('PATCH', `/api/orders/${oid}/finalize`, { cookie: cookies.staff2, body: { total: 1 } })).status === 404, "another branch's staff cannot finalize it")
+        check(Number((await one(`SELECT total::numeric t FROM orders WHERE id = $1`, [oid])).t) === 100, 'none of those attempts changed the bill')
+        check((await call('PATCH', `/api/orders/${oid}/finalize`, { cookie: cookies.staff1, body: { total: 90, id: 'x' } })).status === 400, 'finalize rejects any field outside its whitelist (id)')
+        check((await call('PATCH', `/api/orders/${oid}/finalize`, { cookie: cookies.staff1, body: { status: 'cancelled' } })).status === 400, 'finalize cannot change the bill status')
+        check((await call('PATCH', `/api/orders/${oid}/finalize`, { cookie: cookies.staff1, body: { total: 90 } })).status === 200, 'the creating session can finalize it')
+        await client.query(`UPDATE orders SET created_at = now() - interval '31 minutes' WHERE id = $1`, [oid])
+        check((await call('PATCH', `/api/orders/${oid}/finalize`, { cookie: cookies.staff1, body: { total: 80 } })).status === 404, 'even the creating session is refused after 30 minutes')
+        check(Number((await one(`SELECT total::numeric t FROM orders WHERE id = $1`, [oid])).t) === 90, 'the old bill kept its last saved total')
+      }
+
       // history filters (digits-only / partial invoice, phone, customer, exclude type)
       const inv = sale.body.invoice_no as string
       const part = await call('GET', '/api/orders', { cookie: cookies.manager1, query: { q: inv.slice(-4) } })

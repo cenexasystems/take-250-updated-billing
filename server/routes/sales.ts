@@ -46,9 +46,10 @@ const couponFields = {
 export const salesRoutes = [
   route({
     method: 'post', path: '/api/pos/sale', perm: 'pos.sale', status: 201, body: saleBody,
-    async handler({ db, branch, body }) {
+    async handler({ db, branch, body, session }) {
       const b = body
-      const r = await db.query(
+      return db.tx(async (t) => {
+      const r = await t.query(
         `SELECT public.complete_pos_sale_with_inventory(
            p_customer_name => $1, p_phone => $2, p_address => $3, p_items => $4::jsonb, p_shipping => $5, p_status => $6,
            p_order_mode => $7, p_order_type => $8, p_delivery_charge => $9, p_discount_amount => $10,
@@ -59,7 +60,11 @@ export const salesRoutes = [
          b.discount_amount, b.manual_discount_amount, b.manual_discount_type, b.manual_discount_value, b.coupon_code ?? null, b.coupon_percentage,
          b.payment_method, JSON.stringify(b.split_details), b.total_gst, b.gst_enabled, b.remarks ?? null, b.reference_number ?? null,
          b.billing_date ?? null, branch])
+      const sale = r.rows[0].r as { order_id: string }
+      // remember who made the bill: only this login session may re-save its totals (finalize)
+      await t.query(`UPDATE public.orders SET created_by_role = $1, created_by_sid = $2 WHERE id = $3 AND branch_id = $4`, [session!.role, session!.sid, sale.order_id, branch])
       return r.rows[0].r
+      })
     },
   }),
 
@@ -189,7 +194,7 @@ export const salesRoutes = [
     },
   }),
   // The original POS re-saves the bill's totals / payment / remarks / billing date right after the sale function ran.
-  // Same step, same fields, but only on a bill of THIS branch created in the last 30 minutes.
+  // Same step, same fields, but only on a bill of THIS branch, made by THIS login session and role, in the last 30 minutes.
   route({
     method: 'patch', path: '/api/orders/:id/finalize', perm: 'pos.sale',
     body: z.object({
@@ -197,14 +202,17 @@ export const salesRoutes = [
       delivery_charge: money, payment_mode: z.string().max(200), payment_method: z.string().max(200),
       remarks: z.string().max(1000), reference_number: z.string().max(100), billing_date: date,
     }).partial().strict(),
-    async handler({ db, branch, body, params }) {
+    async handler({ db, branch, body, params, session }) {
       const keys = Object.keys(body).filter((k) => (body as Record<string, unknown>)[k] !== undefined)
       if (!keys.length) return { ok: true }
       const sets = keys.map((k, i) => `"${k}" = $${i + 1}`)
       const vals = keys.map((k) => (body as Record<string, unknown>)[k])
+      // ALL of: the token's branch, the same login session and role that made the bill, younger than 30 minutes
       const r = await db.query(
-        `UPDATE public.orders SET ${sets.join(', ')}, updated_at = now() WHERE id = $${keys.length + 1} AND branch_id = $${keys.length + 2}
-           AND created_at > now() - interval '30 minutes'`, [...vals, params.id, branch])
+        `UPDATE public.orders SET ${sets.join(', ')}, updated_at = now()
+         WHERE id = $${keys.length + 1} AND branch_id = $${keys.length + 2}
+           AND created_by_sid = $${keys.length + 3} AND created_by_role = $${keys.length + 4}
+           AND created_at > now() - interval '30 minutes'`, [...vals, params.id, branch, session!.sid, session!.role])
       if (!r.rowCount) throw notFound('Bill not found, or too old to edit')
       return { ok: true }
     },

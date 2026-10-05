@@ -1,5 +1,5 @@
--- 0002: core schema. Generated from the final state of the legacy Supabase migration chain
--- with Supabase auth / RLS / storage / realtime removed and the branch text column replaced
+-- 0002: core schema. Generated from the final state of the legacy migration chain
+-- with the old hosted-backend auth / RLS / storage / realtime removed and the branch text column replaced
 -- by a branch_id foreign key to public.branches.
 
 BEGIN;
@@ -250,6 +250,9 @@ CREATE TABLE public.orders (
   reference_number text DEFAULT ''::text NOT NULL,
   billing_date timestamp with time zone,
   branch_id text NOT NULL REFERENCES public.branches(id),
+  -- set by the API when a bill is made: only that same login session (and role) may re-save its totals (POS finalize)
+  created_by_role text,
+  created_by_sid text,
   CONSTRAINT orders_pkey PRIMARY KEY (id),
   CONSTRAINT orders_invoice_no_key UNIQUE (invoice_no),
   CONSTRAINT orders_branch_invoice_no_key UNIQUE (branch_id, invoice_no)

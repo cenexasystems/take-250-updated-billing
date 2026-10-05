@@ -68,11 +68,15 @@ export const advanceRoutes = [
       coupon_code: z.string().max(60).nullish(), coupon_percentage: z.number().finite().min(0).max(100).default(0),
       manual_discount: money.default(0), remarks: z.string().max(1000).default(''),
     }).strict(),
-    async handler({ db, branch, body, params }) {
-      const r = await db.query(
-        `SELECT * FROM public.complete_advance_order_v2($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [params.id, body.payment_method, body.final_amount, body.coupon_code ?? null, body.coupon_percentage, body.manual_discount, body.remarks, branch])
-      return { result: r.rows[0] }
+    async handler({ db, branch, body, params, session }) {
+      return db.tx(async (t) => {
+        const r = await t.query(
+          `SELECT * FROM public.complete_advance_order_v2($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [params.id, body.payment_method, body.final_amount, body.coupon_code ?? null, body.coupon_percentage, body.manual_discount, body.remarks, branch])
+        // the bill this produced belongs to this login session (it may re-save the split payment text, nothing else)
+        await t.query(`UPDATE public.orders SET created_by_role = $1, created_by_sid = $2 WHERE id = $3 AND branch_id = $4`, [session!.role, session!.sid, r.rows[0].order_id, branch])
+        return { result: r.rows[0] }
+      })
     },
   }),
   // after a split-payment completion the screen stores the readable "Split (...)" text, as the original did

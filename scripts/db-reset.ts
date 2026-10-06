@@ -8,6 +8,11 @@ import { spawnSync } from 'node:child_process'
 import { getPool } from '../server/lib/db'
 
 async function main() {
+  if (process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production') {
+    console.error('Refusing to reset: NODE_ENV/VERCEL_ENV is production.')
+    process.exitCode = 1
+    return
+  }
   if (!process.argv.includes('--yes')) {
     console.error('Refusing to reset: pass --yes to confirm (this deletes ALL data in the public schema).')
     process.exitCode = 1

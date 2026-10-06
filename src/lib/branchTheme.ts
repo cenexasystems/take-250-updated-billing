@@ -63,7 +63,8 @@ export const accentSurface = (hex: string) => (luminance(hex) < 0.08 ? mixHex(he
 
 /** Accent classes per branch. Each branch has its OWN CSS variables (--pos-one / --pos-two / --pos-three), all of which
  * default to the shared black-and-gold palette until a branch colour is saved. */
-export const posAccent = (branch: PosBranch) => branch === 'pos3'
+// `null` (no branch chosen yet, e.g. the admin's global appearance tab) gets the shared accent; every branch uses the same palette
+export const posAccent = (branch: PosBranch | null) => branch === 'pos3'
   ? { bg: 'bg-posThree', bgLight: 'bg-posThree-light', text: 'text-posThree-dark', border: 'border-posThree', hex: accentSurface(resolveBranchColor('pos3')) }
   : branch === 'pos2'
   ? { bg: 'bg-posTwo', bgLight: 'bg-posTwo-light', text: 'text-posTwo-dark', border: 'border-posTwo', hex: accentSurface(resolveBranchColor('pos2')) }

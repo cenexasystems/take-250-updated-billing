@@ -9,6 +9,7 @@
 import './test-env'
 import type { PoolClient } from 'pg'
 import { getPool } from '../server/lib/db'
+import { repairSequences, restoreSequences, snapshotSequences } from './lib/devState'
 
 const BRANCHES = ['pos1', 'pos2', 'pos3'] as const
 type B = (typeof BRANCHES)[number]
@@ -56,10 +57,15 @@ async function run() {
   const one = async <T = any>(sql: string, p: unknown[] = []): Promise<T> => (await c.query(sql, p)).rows[0] as T
   const all = async <T = any>(sql: string, p: unknown[] = []): Promise<T[]> => (await c.query(sql, p)).rows as T[]
 
-  // -- snapshot sequences (setval is not transactional, so restore them at the end)
-  const seqNames = (await all<{ sequencename: string }>(`SELECT sequencename FROM pg_sequences WHERE schemaname='public'`)).map((r) => r.sequencename)
-  const seqState = new Map<string, { last: string | null }>()
-  for (const n of seqNames) { const r = await one(`SELECT last_value::text AS v, is_called FROM public."${n}"`); seqState.set(n, { last: r.is_called ? r.v : null }) }
+  // -- sequences: setval/nextval are not transactional. Heal leftovers of an earlier killed run first, snapshot, and
+  //    restore in the finally block (also on Ctrl+C / SIGTERM) so an interrupted run cannot leave counters moved.
+  const healed = await repairSequences(pool)
+  if (healed.length) console.warn('repaired counters left over from an earlier interrupted run:\n  ' + healed.join('\n  '))
+  const seqSnapshot = await snapshotSequences(pool)
+  let restored = false
+  const restoreOnce = async () => { if (restored) return; restored = true; await restoreSequences(pool, seqSnapshot) }
+  const onSignal = (sig: NodeJS.Signals) => { void restoreOnce().finally(() => process.exit(sig === 'SIGINT' ? 130 : 143)) }
+  process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal)
   const baseline = await one(`SELECT (SELECT count(*) FROM products)::int p, (SELECT count(*) FROM orders)::int o, (SELECT count(*) FROM categories)::int c, (SELECT count(*) FROM coupons)::int cp, (SELECT count(*) FROM branches)::int b`)
 
   await c.query('BEGIN')
@@ -428,12 +434,8 @@ async function run() {
     await rejected('a product that still has a barcode cannot be deleted directly (RESTRICT, as in the original)', () =>
       c.query(`DELETE FROM products WHERE id = $1`, [productId.pos1]))
   } finally {
-    await c.query('ROLLBACK')
-    // restore sequences advanced during the test
-    for (const [n, st] of seqState) {
-      if (st.last === null) await c.query(`SELECT setval('public."${n}"', (SELECT min_value FROM pg_sequences WHERE schemaname='public' AND sequencename=$1), false)`, [n])
-      else await c.query(`SELECT setval('public."${n}"', $1::bigint, true)`, [st.last])
-    }
+    await c.query('ROLLBACK').catch(() => undefined)
+    await restoreOnce() // sequences advanced during the test
     const after = await one(`SELECT (SELECT count(*) FROM products)::int p, (SELECT count(*) FROM orders)::int o, (SELECT count(*) FROM categories)::int c, (SELECT count(*) FROM coupons)::int cp, (SELECT count(*) FROM branches)::int b`)
     record(JSON.stringify(after) === JSON.stringify(baseline), 'cleanup: database is exactly as it was before the test (rolled back, sequences restored)')
     c.release()

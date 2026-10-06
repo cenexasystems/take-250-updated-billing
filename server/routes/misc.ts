@@ -57,6 +57,33 @@ const pollRoutes = [
 const NOT_FOUND = 'Invoice not found'
 const REF = /^[A-Za-z0-9_\- ]{1,64}$/
 
+// ---------------------------------------------------------------- health (deploy smoke test / uptime monitor)
+const HEALTH_DB_TIMEOUT_MS = 4000
+
+const healthRoutes = [
+  route({
+    method: 'get', path: '/api/health', perm: 'health.check',
+    async handler({ db }) {
+      // Answers "is this deployment wired up?" and nothing else: no secrets, no connection string, no error text,
+      // no data. Only the NAMES of missing settings are listed, never their values.
+      const ping = db.query('SELECT 1 AS ok')
+      let timer: NodeJS.Timeout | undefined
+      const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), HEALTH_DB_TIMEOUT_MS) })
+      try {
+        await Promise.race([ping, timeout])
+      } catch {
+        ping.catch(() => undefined)
+        throw new ApiError(503, 'Database unavailable')
+      } finally {
+        clearTimeout(timer)
+      }
+      const missing = ['JWT_SECRET', ...(process.env.VERCEL ? ['BLOB_READ_WRITE_TOKEN'] : [])].filter((k) => !process.env[k])
+      if (missing.length) throw new ApiError(503, `Server settings missing: ${missing.join(', ')}`)
+      return { status: 'ok', database: 'up', environment: process.env.VERCEL_ENV || (process.env.VERCEL ? 'vercel' : 'local') }
+    },
+  }),
+]
+
 const publicRoutes = [
   route({
     method: 'get', path: '/api/public/invoice/:ref', perm: 'public.invoice',
@@ -83,4 +110,4 @@ const publicRoutes = [
   }),
 ]
 
-export const miscRoutes = [...uploadRoutes, ...pollRoutes, ...publicRoutes]
+export const miscRoutes = [...uploadRoutes, ...pollRoutes, ...healthRoutes, ...publicRoutes]

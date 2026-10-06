@@ -12,6 +12,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed-passcodes.ts",
     "db:reset": "tsx scripts/db-reset.ts",
+    "db:reset-dev": "tsx scripts/db-reset-dev.ts",
     "test:isolation": "tsx scripts/test-isolation.ts",
     "test:api": "tsx scripts/test-api.ts",
     "test:e2e": "tsx scripts/e2e.ts",

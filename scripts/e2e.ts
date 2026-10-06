@@ -305,6 +305,14 @@ async function main() {
       check((await bodyText(mp)).includes(`E2E expense ${i + 1}`), 'the expense shows in the ledger')
       check(!exp.some((e) => /E2E expense/.test(e.description) && e.description !== `E2E expense ${i + 1}`), "the ledger holds none of the other branches' expenses")
       await shot(mp, `manager-${b}-expenses`)
+      // Store Settings opens on the manager's own branch (token branch), never on Branch 1
+      await go(mp, '/dashboard?tab=store_settings')
+      await waitText(mp, 'Profile')
+      const ss = await bodyText(mp)
+      const ownLabel = b === 'pos1' ? 'Jute & Wedding POS' : b === 'pos2' ? 'Fireworks POS' : ((await apiGet(mp, '/api/branches')).branches.find((x: any) => x.id === b)?.short_label as string | undefined)
+      const profileTitles = [...ss.matchAll(/([A-Za-z0-9 &'.-]+?) Profile/gi)].map((m) => m[1].trim().toLowerCase()) // the heading is upper-cased by CSS
+      check(profileTitles.length > 0 && !!ownLabel && profileTitles.some((t) => t.endsWith(ownLabel.toLowerCase())) && (i === 0 || !profileTitles.some((t) => t.endsWith('jute & wedding pos'))), `Store Settings shows ${b}'s own profile (not Branch 1)`, profileTitles.join(' | '))
+      check((await mp.locator('button:has-text("Admin Portal (Global)")').count()) === 0, 'manager has no branch tabs in Store Settings')
       await mg.ctx.close()
     }
 
@@ -345,6 +353,11 @@ async function main() {
         await p.getByRole('button', { name: /order history/i }).first().click(); await settle(p); await waitText(p, bills[B[n - 1]])
         const hn = await bodyText(p)
         check(hn.includes(bills[B[n - 1]]) && !Object.entries(bills).filter(([k]) => k !== B[n - 1]).some(([, no]) => hn.includes(no)), `branch ${n} order history shows only branch ${n}'s bill`)
+        // Store Settings follows the branch selected in the switcher
+        await p.getByRole('button', { name: /store settings/i }).first().click(); await settle(p); await waitText(p, 'Profile')
+        const lbl = n === 2 ? 'Fireworks POS' : ((await apiGet(p, `/api/branches`)).branches.find((x: any) => x.id === `pos${n}`)?.short_label as string)
+        const titles = [...(await bodyText(p)).matchAll(/([A-Za-z0-9 &'.-]+?) Profile/gi)].map((m) => m[1].trim().toLowerCase())
+        check(titles.some((t) => t.endsWith(lbl.toLowerCase())) && !titles.some((t) => t.endsWith('jute & wedding pos')), `admin on branch ${n}: Store Settings opens on branch ${n}'s profile, not Branch 1`, titles.join(' | '))
       }
       // analytics is the admin's
       await sel.selectOption('pos1'); await settle(p)

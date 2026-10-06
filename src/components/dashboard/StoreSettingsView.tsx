@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Store, Phone, MapPin, Palette, RotateCcw, Save, Upload, Trash2, Loader2, Shield } from 'lucide-react'
 import { api } from '../../lib/apiClient'
 import { uploadBrandingLogo } from '../../lib/storage'
-import { useAdminAuthStore, useSettingsStore, resolveBranch, type PosBranch } from '../../store/store'
+import { useAdminAuthStore, useBranchStore, useSettingsStore, type PosBranch } from '../../store/store'
 import { posAccent, branchShortLabel, branchLogo, getAdminThemeColor, setAdminThemeColor, applyActiveTheme } from '../../lib/branchTheme'
 import { normalizeHex } from '../../lib/color'
 
@@ -38,14 +38,20 @@ const emptyForm: FormState = {
 
 export default function StoreSettingsView() {
   const { role, activeBranch, branch: staffBranch } = useAdminAuthStore()
-  const defaultBranch = resolveBranch(activeBranch)
 
-  // Staff and manager are locked to their branch; admin defaults to activeBranch or pos1
-  const [target, setTarget] = useState<SettingsTarget>(
-    role !== 'admin' ? (staffBranch || 'pos1') : defaultBranch
-  )
+  // Staff and manager are locked to the branch in their token; the admin works in the branch picked in the
+  // switcher. There is no default branch: with none selected the admin sees the Admin appearance tab only.
+  const workingBranch: PosBranch | null = role === 'admin'
+    ? (activeBranch && activeBranch !== 'all' ? activeBranch : null)
+    : staffBranch
+  const [target, setTarget] = useState<SettingsTarget>(workingBranch ?? 'admin')
 
-  const effectiveBranch: PosBranch = target === 'admin' ? 'pos1' : target
+  // the switcher (or a new session) moved the working branch: follow it, never keep showing the old one
+  useEffect(() => {
+    setTarget(workingBranch ?? 'admin')
+  }, [workingBranch])
+
+  const effectiveBranch: PosBranch | null = target === 'admin' ? workingBranch : target
   const accent = posAccent(effectiveBranch)
   const { settingsByBranch, fetchSettings } = useSettingsStore()
   const [form, setForm] = useState<FormState>(emptyForm)
@@ -53,11 +59,13 @@ export default function StoreSettingsView() {
   const [uploading, setUploading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
+  // staff/manager can only read their own branch (the server enforces it); the admin reads every branch that has a tab
+  const branchRows = useBranchStore((s) => s.branches)
+  const branchIds = useMemo(() => branchRows.map((b) => b.id as PosBranch), [branchRows])
   useEffect(() => {
-    void fetchSettings('pos1')
-    void fetchSettings('pos2')
-    void fetchSettings('pos3')
-  }, [fetchSettings])
+    const toLoad: PosBranch[] = role === 'admin' ? branchIds : workingBranch ? [workingBranch] : []
+    toLoad.forEach((b) => void fetchSettings(b))
+  }, [fetchSettings, role, workingBranch, branchIds])
 
   // Sync form when target or settingsByBranch changes
   useEffect(() => {
@@ -329,11 +337,11 @@ export default function StoreSettingsView() {
             {/* Shop Profile */}
             <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-3.5">
               <p className="text-xs font-black uppercase tracking-wide text-gray-700 flex items-center gap-1.5">
-                <Store size={15} className={accent.text} /> {branchShortLabel(effectiveBranch)} Profile
+                <Store size={15} className={accent.text} /> {branchShortLabel(target)} Profile
               </p>
               <div className="flex items-center gap-3">
                 <div className={`w-16 h-16 rounded-2xl ${accent.bgLight} border ${accent.border} p-1.5 flex items-center justify-center overflow-hidden shrink-0`}>
-                  <img src={form.logoUrl || branchLogo(effectiveBranch)} alt="Logo" className="w-full h-full object-contain" />
+                  <img src={form.logoUrl || branchLogo(target)} alt="Logo" className="w-full h-full object-contain" />
                 </div>
                 <div className="flex flex-col gap-1">
                   <div className="flex gap-2">
@@ -348,7 +356,7 @@ export default function StoreSettingsView() {
                     )}
                   </div>
                   {!form.logoUrl && (
-                    <p className="text-[10px] text-gray-400 font-semibold">Using {branchShortLabel(effectiveBranch)} default logo.</p>
+                    <p className="text-[10px] text-gray-400 font-semibold">Using {branchShortLabel(target)} default logo.</p>
                   )}
                 </div>
               </div>

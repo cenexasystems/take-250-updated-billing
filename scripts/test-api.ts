@@ -14,6 +14,7 @@ import jwt from 'jsonwebtoken'
 import type { PoolClient } from 'pg'
 import { allRoutes, createApp } from '../server/app'
 import { getPool, singleClientDb } from '../server/lib/db'
+import { repairSequences, restoreSequences, snapshotSequences } from './lib/devState'
 import { PERMISSIONS, type PermKey } from '../server/lib/permissions'
 import { slowdownMs } from '../server/lib/rateLimit'
 import { registerRoutes } from '../server/lib/route'
@@ -51,10 +52,15 @@ async function run() {
   const rows = async <T = any>(sql: string, p: unknown[] = []): Promise<T[]> => (await client.query(sql, p)).rows as T[]
   const one = async <T = any>(sql: string, p: unknown[] = []): Promise<T> => (await rows<T>(sql, p))[0]
 
-  // sequences are not transactional: remember and restore them
-  const seqs = await rows<{ sequencename: string }>(`SELECT sequencename FROM pg_sequences WHERE schemaname='public'`)
-  const seqState = new Map<string, string | null>()
-  for (const s of seqs) { const r = await one(`SELECT last_value::text v, is_called FROM public."${s.sequencename}"`); seqState.set(s.sequencename, r.is_called ? r.v : null) }
+  // sequences are not transactional: heal leftovers of an earlier killed run, remember the state, and restore it in the
+  // finally block (also on Ctrl+C / SIGTERM) so an interrupted run cannot leave counters moved
+  const healed = await repairSequences(pool)
+  if (healed.length) console.warn('repaired counters left over from an earlier interrupted run:\n  ' + healed.join('\n  '))
+  const seqSnapshot = await snapshotSequences(pool)
+  let restored = false
+  const restoreOnce = async () => { if (restored) return; restored = true; await restoreSequences(pool, seqSnapshot) }
+  const onSignal = (sig: NodeJS.Signals) => { void restoreOnce().finally(() => process.exit(sig === 'SIGINT' ? 130 : 143)) }
+  process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal)
   const base = await one(`SELECT (SELECT count(*) FROM products)::int p, (SELECT count(*) FROM orders)::int o, (SELECT count(*) FROM expenses)::int e,
     (SELECT count(*) FROM login_attempts)::int l, (SELECT string_agg(md5(passcode_hash) || token_version::text, ',' ORDER BY id) FROM passcodes) pc`)
 
@@ -577,6 +583,23 @@ async function run() {
       check((await call('GET', `/api/public/invoice/${inv.pos1}`, { ip: '203.0.113.100' })).status === 200, 'another IP is not affected by the lockout')
       const stored = await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'invoice' AND ip = $1`, [ip2])
       check(stored.n >= 30, 'the invoice limit is stored in the database (works across serverless instances)')
+
+      // ---- /api/health: DB ping for the deploy smoke test, never any secret
+      const h = await call('GET', '/api/health', { ip: '203.0.113.150' })
+      check(h.status === 200 && h.body.status === 'ok' && h.body.database === 'up', 'GET /api/health answers 200 {status ok, database up} without a login')
+      const hText = JSON.stringify(h.body) + [...h.headers.entries()].map(([k, v]) => `${k}:${v}`).join(' ')
+      const secrets = [process.env.DATABASE_URL, process.env.JWT_SECRET, process.env.BLOB_READ_WRITE_TOKEN, PASS.admin, PASS.staff1].filter((s): s is string => !!s && s.length >= 8)
+      check(!secrets.some((s) => hText.includes(s)) && !/postgres(ql)?:\/\//i.test(hText) && !/neon\.tech/i.test(hText), '/api/health response contains no connection string, secret or passcode')
+      check(Object.keys(h.body).sort().join(',') === 'database,environment,status', '/api/health returns only status, database and environment', Object.keys(h.body).join(','))
+      // a broken database: 503 with a generic message, the driver error text (host, user, password) never leaks
+      const brokenDb = { ...db, query: async () => { throw new Error('connect ECONNREFUSED postgresql://neondb_owner:hunter2secret@ep-test-pooler.neon.tech/neondb') } } as typeof db
+      const brokenApp = createApp({ db: brokenDb, blobPut: async () => ({ url: 'x' }) })
+      const brokenServer = await new Promise<import('node:http').Server>((res) => { const s = brokenApp.listen(0, '127.0.0.1', () => res(s)) })
+      try {
+        const br = await fetch(`http://127.0.0.1:${(brokenServer.address() as AddressInfo).port}/api/health`)
+        const brText = await br.text()
+        check(br.status === 503 && /Database unavailable/.test(brText) && !/hunter2secret|neondb_owner|neon\.tech|postgresql:/i.test(brText), '/api/health answers 503 "Database unavailable" when the database is down, with no driver error text', `${br.status} ${brText.slice(0, 80)}`)
+      } finally { brokenServer.close() }
     }
 
     // ================================================================== M. passcode management
@@ -655,12 +678,9 @@ async function run() {
       check(bad.status === 401, 'a wrong passcode under slowdown is still a plain 401 (not 429)')
     }
   } finally {
-    await client.query('ROLLBACK')
+    await client.query('ROLLBACK').catch(() => undefined)
     server.close()
-    for (const [n, last] of seqState) {
-      if (last === null) await client.query(`SELECT setval('public."${n}"', (SELECT min_value FROM pg_sequences WHERE schemaname='public' AND sequencename=$1), false)`, [n])
-      else await client.query(`SELECT setval('public."${n}"', $1::bigint, true)`, [last])
-    }
+    await restoreOnce()
     const after = await one(`SELECT (SELECT count(*) FROM products)::int p, (SELECT count(*) FROM orders)::int o, (SELECT count(*) FROM expenses)::int e,
       (SELECT count(*) FROM login_attempts)::int l, (SELECT string_agg(md5(passcode_hash) || token_version::text, ',' ORDER BY id) FROM passcodes) pc`)
     check(JSON.stringify(after) === JSON.stringify(base), 'cleanup: database, real passcodes and sequences are exactly as before the run')

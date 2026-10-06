@@ -71,6 +71,8 @@ export const PERMISSIONS = {
   'uploads.avatars':       { roles: AM, scope: 'branch' as Scope },
   // polling replacement for realtime (row 36)
   'poll.stamps':           { roles: AMS, scope: 'branch' as Scope },
+  // deploy smoke test / uptime monitor: DB ping + missing setting NAMES only, never a secret
+  'health.check':          { roles: 'public' as Allowed, scope: 'none' as Scope },
   // public invoice lookup (row 35): rate limited, no auth
   'public.invoice':        { roles: 'public' as Allowed, scope: 'none' as Scope },
 } as const

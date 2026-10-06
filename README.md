@@ -52,8 +52,15 @@ Public (bundled into the frontend): `VITE_WHATSAPP_NUMBER`.
 | `npm run test:api` | API tests: every route × every role, forged branches, tokens, passcode changes, rate limits, barcodes, uploads, polling (rolled back) |
 | `npm run test:e2e` | real-browser tests (Playwright, Chromium) across all branches and roles; screenshots in `e2e-report/` |
 | `npm run db:migrate` / `db:seed` / `db:reset` | schema, passcodes, full reset |
+| `npm run db:reset-dev -- --yes` | restores a clean **dev** state: removes leftovers of interrupted test runs and puts the invoice / barcode counters back to "highest number used". Add `--hard` to also drop the schema, re-migrate and re-seed |
+
+`test:isolation` and `test:api` repair those counters at the start and restore them in a `finally` block (also on Ctrl+C), so an interrupted run cannot leave them moved; `db:reset-dev` is the fallback after a hard kill.
+
+`GET /api/health` (no login) checks the database connection and returns only `{status, database, environment}`; it answers 503 "Database unavailable" or lists the **names** of missing settings, never a secret.
 
 ## Deploying on Vercel (preview or production)
+
+Step-by-step preview checklist (Neon preview branch, env vars, Blob store, migrate + seed, smoke tests): [docs/VERCEL_PREVIEW.md](docs/VERCEL_PREVIEW.md).
 
 1. Create the project from this repository. Framework: **Vite** (already in `vercel.json`).
 2. **Storage → Blob → Create store** and connect it to the project: this adds `BLOB_READ_WRITE_TOKEN`.

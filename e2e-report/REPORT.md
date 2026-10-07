@@ -1,6 +1,6 @@
 # Browser test report
 
-219 passed, 0 failed (2026-10-07T03:58:05.148Z)
+226 passed, 0 failed (2026-10-07T06:39:27.524Z)
 
 | Result | Area | Check |
 |---|---|---|
@@ -20,6 +20,13 @@
 | PASS | login | /expenses -> passcode login (not blank) |
 | PASS | login | /pos-analytics -> passcode login (not blank) |
 | PASS | login | /admin -> passcode login (not blank) |
+| PASS | login | login screen has the tabs Staff POS Login / Manager Login / Admin Orchestrator |
+| PASS | login | login screen shows three branch tiles, each with its own logo |
+| PASS | login | the branch tiles carry the three shop names |
+| PASS | login | the Admin tab has no branch tiles |
+| PASS | login | Staff Branch 1 passcode on the Branch 2 tile is refused |
+| PASS | login | Staff Branch 1 passcode on the Admin tab is refused |
+| PASS | login | the Admin passcode on the Staff tab is refused |
 | PASS | login | a wrong passcode shows "Invalid passcode" and stays on the login |
 | PASS | login | the wrong passcode is not echoed on the page |
 | PASS | login | the right passcode signs in |
@@ -226,40 +233,43 @@
 
 ## Screenshots
 - 01-login-page.png
-- 02-login-wrong-passcode.png
-- 03-staff-pos1-inventory.png
-- 04-staff-pos1-wrong-branch-scan.png
-- 05-staff-pos1-pos-before-sale.png
-- 06-staff-pos1-bill-generated.png
-- 07-thermal-preview-pos1.png
-- 08-staff-pos1-bill-view.png
-- 09-staff-pos1-advance-form.png
-- 10-staff-pos1-advance-orders.png
-- 11-manager-pos1-expenses.png
-- 12-staff-pos2-inventory.png
-- 13-staff-pos2-wrong-branch-scan.png
-- 14-staff-pos2-pos-before-sale.png
-- 15-staff-pos2-bill-generated.png
-- 16-thermal-preview-pos2.png
-- 17-staff-pos2-bill-view.png
-- 18-staff-pos2-advance-form.png
-- 19-staff-pos2-advance-orders.png
-- 20-manager-pos2-expenses.png
-- 21-staff-pos3-inventory.png
-- 22-staff-pos3-wrong-branch-scan.png
-- 23-staff-pos3-pos-before-sale.png
-- 24-staff-pos3-bill-generated.png
-- 25-thermal-preview-pos3.png
-- 26-staff-pos3-bill-view.png
-- 27-staff-pos3-advance-form.png
-- 28-staff-pos3-advance-orders.png
-- 29-manager-pos3-expenses.png
-- 30-admin-global.png
-- 31-admin-change-passcodes.png
-- 32-admin-branch1-inventory.png
-- 33-admin-branch2-inventory.png
-- 34-admin-branch3-inventory.png
-- 35-admin-analytics.png
-- 36-polling-pos-tab.png
-- 37-polling-history-tab-updated.png
-- 38-polling-catalogue-tab-updated.png
+- 02-login-staff-tab.png
+- 03-login-manager-tab.png
+- 04-login-admin-tab.png
+- 05-login-wrong-passcode.png
+- 06-staff-pos1-inventory.png
+- 07-staff-pos1-wrong-branch-scan.png
+- 08-staff-pos1-pos-before-sale.png
+- 09-staff-pos1-bill-generated.png
+- 10-thermal-preview-pos1.png
+- 11-staff-pos1-bill-view.png
+- 12-staff-pos1-advance-form.png
+- 13-staff-pos1-advance-orders.png
+- 14-manager-pos1-expenses.png
+- 15-staff-pos2-inventory.png
+- 16-staff-pos2-wrong-branch-scan.png
+- 17-staff-pos2-pos-before-sale.png
+- 18-staff-pos2-bill-generated.png
+- 19-thermal-preview-pos2.png
+- 20-staff-pos2-bill-view.png
+- 21-staff-pos2-advance-form.png
+- 22-staff-pos2-advance-orders.png
+- 23-manager-pos2-expenses.png
+- 24-staff-pos3-inventory.png
+- 25-staff-pos3-wrong-branch-scan.png
+- 26-staff-pos3-pos-before-sale.png
+- 27-staff-pos3-bill-generated.png
+- 28-thermal-preview-pos3.png
+- 29-staff-pos3-bill-view.png
+- 30-staff-pos3-advance-form.png
+- 31-staff-pos3-advance-orders.png
+- 32-manager-pos3-expenses.png
+- 33-admin-global.png
+- 34-admin-change-passcodes.png
+- 35-admin-branch1-inventory.png
+- 36-admin-branch2-inventory.png
+- 37-admin-branch3-inventory.png
+- 38-admin-analytics.png
+- 39-polling-pos-tab.png
+- 40-polling-history-tab-updated.png
+- 41-polling-catalogue-tab-updated.png

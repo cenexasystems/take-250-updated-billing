@@ -97,12 +97,19 @@ Let `URL` be the preview address, e.g. `https://yg-billing-git-xyz.vercel.app`.
 - [ ] Browser dev tools → Application → Cookies: `yg_session` is **HttpOnly**, **Secure**, **SameSite=Strict**; `document.cookie` in the console does not show it.
 - [ ] Logout, then reload: you are at the passcode login.
 
+### B2. Take250 branding (the migrations seed it, so a fresh preview must already show it)
+
+- [ ] Login page: Take250 shirt-shop logo, no Jute / Fireworks / YG text anywhere.
+- [ ] Header badge / branch switcher names: `Take250 Karanthai`, `Take250 Kinathukadavu`, `Take250 Pollachi`.
+- [ ] Admin → Store Settings per branch: shop name `Take250 Shop - Dress & Footwear` (Branches 1, 2) / `Take250 Women's Wear` (Branch 3), owner `M. Ramkumar`, phones `+91 88831 73358, +91 73393 44149`, email `take250shop@gmail.com`, Instagram `take.250shop`, and the right address for each branch.
+- [ ] Open any bill (`/invoice/<number>`): that branch's logo, name and address only.
+
 ### C. Data and isolation (create a few rows; delete them after)
 
 - [ ] As Admin (Branch 1): Add / Edit Products → create "Preview Test Item", then Stock → Add Barcode / receive 10. The barcode starts `PB`.
 - [ ] As Admin switched to Branch 2: the item is **not** there. Create one; its barcode starts `P2`. Branch 3 → `P3`.
 - [ ] As Staff Branch 1 on POS: scan the Branch 2 barcode → "not found". Scan the Branch 1 barcode → added. Complete a sale (name, 10-digit mobile, cash) → "Bill Generated Successfully". Stock drops by 1.
-- [ ] Print Receipt opens the thermal preview with the right branch logo (Branch 3 shows the placeholder until you upload one).
+- [ ] Print Receipt opens the thermal preview: black logo on white (no solid black badge), shop name, address, `Ph:` both numbers, email and `instagram.com/take.250shop`. Branch 1 = Karanthai address, Branch 2 = Kinathukadavu (Coimbatore 642109), Branch 3 = women's wear logo and "No. 853, Bhagvati Palayam, Pollachi - 642109".
 - [ ] Open the bill (`/invoice/<number>`): total is a real amount (not NaN), **PDF Invoice** downloads and opens.
 - [ ] Order History (Branch 1) shows that bill; Branch 2's staff session does not.
 - [ ] Advance Orders: create one (deposit less than total), it appears in the list.

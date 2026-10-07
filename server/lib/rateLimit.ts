@@ -18,7 +18,14 @@ export function clientIp(req: Request): string {
 interface Limit { ip?: { max: number; windowMs: number }; target?: { max: number; windowMs: number; key: string }; global?: { max: number; windowMs: number } }
 
 export const LIMITS = {
-  loginFailuresPerIp: { max: 5, windowMs: 15 * 60_000 },
+  // Sign-in lockout. The counter is keyed on IP + the portal picked on the login screen (role + branch), so a staff
+  // member typing a wrong passcode does not lock the manager at the same shop (shared Wi-Fi / 4G = one public IP).
+  // A second, wider guard per IP (all portals together) stops a client from dodging the per-portal limit by changing
+  // the selection, which the client controls. A lockout lasts lockMs from the LAST counted failure (attempts made while
+  // locked are refused without being counted, so it never extends itself) and then the counter is reset.
+  loginPerPortal: { max: 10, windowMs: 10 * 60_000 },
+  loginPerIp: { max: 30, windowMs: 10 * 60_000 },
+  loginLockMs: 5 * 60_000,
   // Distributed guessing guard: passcodes carry no username, so a per-account lockout is not possible at login.
   // It is a SLOWDOWN, never a block, so an attacker cannot lock every real user out: once the whole system has
   // seen `freeFailures` failed logins in the window, every login attempt waits stepMs more per extra failure (up to maxMs).
@@ -67,4 +74,50 @@ export function slowdownMs(failures: number): number {
 export async function loginDelayMs(db: Db): Promise<number> {
   const r = await recentCount(db, 'login', LIMITS.loginSlowdown.windowMs, {}, true)
   return slowdownMs(r.n)
+}
+
+// ---------------------------------------------------------------- sign-in lockout (database-backed, shared by every serverless instance)
+
+/** Counter key for the portal chosen on the login screen: "staff:pos1", "manager:pos3", "admin", or "any" when none was sent. */
+export function loginKey(as?: string | null, site?: string | null): string {
+  if (!as) return 'any'
+  return as === 'admin' ? 'admin' : `${as}:${site ?? '?'}`
+}
+
+/** Throws 429 {retryAfter} while this IP (+ portal) is locked out. An expired lockout is cleared here, so the counter starts again from zero. */
+export async function enforceLogin(db: Db, ip: string, key: string) {
+  const scopes: Array<{ max: number; target: string | null }> = [
+    { max: LIMITS.loginPerPortal.max, target: key },
+    { max: LIMITS.loginPerIp.max, target: null },
+  ]
+  const where = `bucket = 'login' AND success = false AND ip = $1 AND ($2::text IS NULL OR target = $2)`
+  for (const sc of scopes) {
+    const r = await db.query<{ n: number; remaining: number | null }>(
+      `SELECT count(*) FILTER (WHERE attempted_at > now() - ($3::int * interval '1 millisecond'))::int AS n,
+              EXTRACT(EPOCH FROM (max(attempted_at) + ($4::int * interval '1 millisecond') - now()))::float AS remaining
+       FROM public.login_attempts WHERE ${where}`,
+      [ip, sc.target, LIMITS.loginPerPortal.windowMs, LIMITS.loginLockMs])
+    const { n, remaining } = r.rows[0]
+    if (n < sc.max) continue
+    if (remaining !== null && remaining > 0) throw new ApiError(429, 'Too many attempts', { retryAfter: Math.ceil(remaining) })
+    // lockout over: forget these failures so the next window starts clean
+    await db.query(`DELETE FROM public.login_attempts WHERE ${where}`, [ip, sc.target])
+  }
+}
+export async function recordLoginFailure(db: Db, ip: string, key: string) {
+  await record(db, 'login', ip, false, key)
+}
+
+/** A good sign-in on a selected portal resets that portal's counter for this IP (not the whole IP: see loginPerIp). */
+export async function resetLoginFailures(db: Db, ip: string, key: string) {
+  if (key === 'any') return // no selected portal: a guesser could otherwise reset its own counter with one known passcode
+  await db.query(`DELETE FROM public.login_attempts WHERE bucket = 'login' AND success = false AND ip = $1 AND target = $2`, [ip, key])
+}
+
+/** Admin: forget sign-in failures, for one branch's portals (staff/manager of that branch) or for everything. */
+export async function clearLoginLockouts(db: Db, site?: string): Promise<number> {
+  const r = site
+    ? await db.query(`DELETE FROM public.login_attempts WHERE bucket = 'login' AND success = false AND target LIKE $1`, [`%:${site}`])
+    : await db.query(`DELETE FROM public.login_attempts WHERE bucket = 'login' AND success = false`)
+  return r.rowCount ?? 0
 }

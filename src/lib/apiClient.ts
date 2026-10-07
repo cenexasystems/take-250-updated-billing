@@ -5,9 +5,12 @@ import { useAdminAuthStore } from '../store/store'
  * selects a branch, via ?branch_id=, and only on routes that are branch-scoped. */
 export class ApiClientError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /** seconds until a 429 lockout ends (sign-in screen countdown) */
+  retryAfter?: number
+  constructor(status: number, message: string, retryAfter?: number) {
     super(message)
     this.status = status
+    this.retryAfter = retryAfter
   }
 }
 
@@ -45,7 +48,8 @@ export async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' 
     const message = (json as { error?: string } | null)?.error || `Request failed (${res.status})`
     // an expired / replaced session ends the local session too (not for the login call itself)
     if (res.status === 401 && path !== '/api/auth/login') useAdminAuthStore.getState().expireSession()
-    throw new ApiClientError(res.status, message)
+    const retry = Number((json as { retry_after?: number } | null)?.retry_after)
+    throw new ApiClientError(res.status, message, Number.isFinite(retry) && retry > 0 ? retry : undefined)
   }
   return json as T
 }

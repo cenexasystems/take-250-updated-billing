@@ -123,7 +123,8 @@ export function registerRoutes(app: Express, routes: Route<any, any>[], deps: De
         const api = err instanceof ApiError ? err : mapDbError(err)
         if (api) {
           if (api.extra?.retryAfter) res.setHeader('Retry-After', String(api.extra.retryAfter))
-          res.status(api.status).json({ error: api.message })
+          // retry_after (seconds) lets the login screen show a live M:SS countdown
+          res.status(api.status).json({ error: api.message, ...(api.extra?.retryAfter ? { retry_after: api.extra.retryAfter } : {}) })
           return
         }
         logServerError(`${r.method.toUpperCase()} ${r.path}`, err)

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Lock, Eye, EyeOff, AlertCircle, ShieldCheck, Store, Briefcase } from 'lucide-react'
 import { useAdminAuthStore } from '../store/store'
-import { api } from '../lib/apiClient'
+import { api, ApiClientError } from '../lib/apiClient'
 import { BRAND_EN, BRAND_TA, BRAND_LOGO, BRAND_LOGO_POS1, BRAND_LOGO_POS2, BRAND_LOGO_POS3 } from '../lib/brand'
 import { combinedBranchSubtitle } from '../lib/branchTheme'
 import { useLangStore } from '../store/langStore'
@@ -34,7 +34,22 @@ export default function AdminLogin() {
 
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-
+  // lockout countdown ("Try again in M:SS"); the server decides how long, the screen only counts down
+  const [lockUntil, setLockUntil] = useState<number | null>(null)
+  const [lockKey, setLockKey] = useState('') // the lockout is per portal + branch on the server, so another tab / tile is not blocked
+  const portalKey = portal === 'admin' ? 'admin' : `${portal}:${site}`
+  const [now, setNow] = useState(() => Date.now())
+  const lockSecs = lockUntil && lockKey === portalKey ? Math.max(0, Math.ceil((lockUntil - now) / 1000)) : 0
+  const lockText = `${Math.floor(lockSecs / 60)}:${String(lockSecs % 60).padStart(2, '0')}`
+  useEffect(() => {
+    if (!lockUntil) return
+    const t = setInterval(() => {
+      const n = Date.now()
+      setNow(n)
+      if (n >= lockUntil) { setLockUntil(null); clearInterval(t) }
+    }, 500)
+    return () => clearInterval(t)
+  }, [lockUntil])
   const from = (location.state as { from?: Location })?.from?.pathname || '/dashboard'
 
   useEffect(() => {
@@ -71,11 +86,16 @@ export default function AdminLogin() {
       const destination = role === 'admin' && from !== '/pos' ? from : '/dashboard'
       navigate(destination, { replace: true })
     } catch (err) {
+      if (err instanceof ApiClientError && err.status === 429) {
+        const secs = err.retryAfter ?? 300
+        setNow(Date.now())
+        setLockKey(portalKey)
+        setLockUntil(Date.now() + secs * 1000)
+        return
+      }
       const msg = err instanceof Error ? err.message : ''
-      // the wrong-portal case is answered exactly like a wrong passcode, so the hint covers both
-      setError(msg === 'Invalid passcode'
-        ? l('Invalid passcode. Check the portal and branch you selected.', 'தவறான கடவுக்குறியீடு. தேர்ந்தெடுத்த பிரிவு மற்றும் கிளையை சரிபார்க்கவும்.')
-        : msg || l('Invalid passcode', 'தவறான கடவுக்குறியீடு'))
+      // the wrong-portal case is answered exactly like a wrong passcode, so one message covers both
+      setError(msg === 'Incorrect passcode' ? l('Incorrect passcode', 'தவறான கடவுக்குறியீடு') : msg || l('Incorrect passcode', 'தவறான கடவுக்குறியீடு'))
     } finally {
       setLoading(false)
     }
@@ -116,8 +136,14 @@ export default function AdminLogin() {
             </button>
           </div>
 
-          {/* Server-level error */}
-          {error && (
+          {/* Lockout countdown, or the server's error */}
+          {lockSecs > 0 && (
+            <div role="alert" className="bg-amber-50 border border-amber-200 text-amber-800 px-3.5 py-2.5 rounded-xl text-[12px] mb-3.5 flex items-center gap-2">
+              <AlertCircle size={14} className="shrink-0" />
+              <span>{l('Too many attempts.', 'அதிக முயற்சிகள்.')} <b>{l('Try again in', 'மீண்டும் முயற்சிக்கவும்:')} {lockText}</b></span>
+            </div>
+          )}
+          {error && lockSecs === 0 && (
             <div className="bg-red-50 border border-red-200 text-red-600 px-3.5 py-2.5 rounded-xl text-[12px] mb-3.5 flex items-center gap-2">
               <AlertCircle size={14} className="shrink-0" />
               {error}
@@ -192,7 +218,7 @@ export default function AdminLogin() {
 
             <button
               type="submit"
-              disabled={loading || !passcode || (needsBranch && !site)}
+              disabled={loading || !passcode || (needsBranch && !site) || lockSecs > 0}
               className="group flex w-full items-center justify-center gap-2 rounded-xl bg-[#7A1220] border border-[#D4AF37] py-3 font-black text-xs sm:text-sm text-[#D4AF37] shadow-lg shadow-black/20 transition-all hover:bg-[#1A1A1A] hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60 cursor-pointer"
             >
               {loading ? (

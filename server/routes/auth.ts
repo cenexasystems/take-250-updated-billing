@@ -5,7 +5,7 @@ import { clearSessionCookie, setSessionCookie, signSession, targetLabel, type Ro
 import { ApiError } from '../lib/errors.js'
 import { validatePasscodeStrength } from '../lib/passcodePolicy.js'
 import { route } from '../lib/route.js'
-import { enforce, LIMITS, loginDelayMs, record } from '../lib/rateLimit.js'
+import { clearLoginLockouts, enforce, enforceLogin, LIMITS, loginDelayMs, loginKey, record, recordLoginFailure, resetLoginFailures } from '../lib/rateLimit.js'
 
 const BCRYPT_COST = 10
 
@@ -33,7 +33,9 @@ export const authRoutes = [
       site: z.string().regex(/^[a-z0-9_]{2,32}$/).optional(),
     }).strict(),
     async handler({ db, body, ip, res }) {
-      await enforce(db, 'login', ip, { ip: LIMITS.loginFailuresPerIp }, true)
+      // lockout counter: this IP + the portal picked on the login screen (role + branch); expires by itself (see LIMITS)
+      const key = loginKey(body.as, body.site)
+      await enforceLogin(db, ip, key)
       // system-wide slowdown (never a block): many failures anywhere make every attempt slower, real users still get in
       const delay = await loginDelayMs(db)
       if (delay > 0) await new Promise((r) => setTimeout(r, delay))
@@ -45,12 +47,24 @@ export const authRoutes = [
       // a passcode that is valid but belongs to another portal than the one selected is refused exactly like a wrong one
       const portalOk = !body.as || (row && row.role === body.as && (row.role === 'admin' ? !body.site : row.branch_id === (body.site ?? null)))
       if (hit.length !== 1 || !portalOk) {
-        await record(db, 'login', ip, false)
-        throw new ApiError(401, 'Invalid passcode')
+        await recordLoginFailure(db, ip, key)
+        throw new ApiError(401, 'Incorrect passcode')
       }
       await record(db, 'login', ip, true, targetLabel({ role: row.role, branch: row.branch_id }))
+      await resetLoginFailures(db, ip, key) // a good sign-in on the selected portal resets that portal's counter
       setSessionCookie(res, signSession({ role: row.role, branch: row.branch_id, tv: row.token_version, sid: randomUUID() }))
       return { role: row.role, branch: row.branch_id }
+    },
+  }),
+
+  // Admin only: forget sign-in lockouts (one branch's portals, or all) without redeploying or touching the database by hand.
+  route({
+    method: 'post', path: '/api/admin/login-lockouts/clear', perm: 'lockouts.clear',
+    // `site` is the portal being unlocked, not a request scope, so it is not named branch_id
+    body: z.object({ site: z.string().regex(/^[a-z0-9_]{2,32}$/).optional() }).strict(),
+    async handler({ db, body }) {
+      const cleared = await clearLoginLockouts(db, body.site)
+      return { ok: true, cleared, site: body.site ?? null }
     },
   }),
 

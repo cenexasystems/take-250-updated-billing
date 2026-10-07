@@ -90,7 +90,7 @@ Let `URL` be the preview address, e.g. `https://yg-billing-git-xyz.vercel.app`.
 
 ### B. Login and portals (use the preview passcodes)
 
-- [ ] Wrong passcode → "Invalid passcode", stays on the login.
+- [ ] Wrong passcode → "Incorrect passcode", stays on the login.
 - [ ] Admin passcode → global view. Header badge "ADMIN"; branch switcher lists All Branches + 3 branches; Analytics Dashboard and **Change passcodes** present.
 - [ ] Manager Branch 2 passcode → badge "MANAGER · Branch 2", no switcher, **no** Analytics Dashboard, no passcode section.
 - [ ] Staff Branch 3 passcode → badge "STAFF · Branch 3", only POS / Stock / Advance Orders / Order History. `URL/expenses` and `/dashboard?tab=pos_analytics` bounce back.
@@ -131,7 +131,7 @@ Let `URL` be the preview address, e.g. `https://yg-billing-git-xyz.vercel.app`.
 
 ### F. Abuse and limits
 
-- [ ] 5 wrong passcodes in a row from one device → the next attempt is refused with "Too many attempts. Please try again later." (429) for 15 minutes, even with the right passcode. Do this last, and from a device you can spare: it locks that IP out of the preview login for 15 minutes.
+- [ ] 10 wrong passcodes in 10 minutes from one device on the SAME tab + branch → the screen shows "Too many attempts. Try again in 4:5x" (counting down) and the button is disabled; it clears itself after 5 minutes. Another branch or role from the same network is not affected. To unlock sooner: Admin → Staff & Memberships → Login Lockouts → Clear lockouts. Do this last, and from a device you can spare.
 - [ ] `curl.exe -s -X POST URL/api/products -H "content-type: application/json" -d "{}"` → `401`.
 - [ ] Vercel → **Logs** (Runtime Logs) for the deployment: no stack traces, and no passcode, token or connection string anywhere in them.
 
@@ -148,7 +148,7 @@ Let `URL` be the preview address, e.g. `https://yg-billing-git-xyz.vercel.app`.
 | Every page is "Vercel Authentication" | Deployment Protection (step 5.3), not the app |
 | `/api/health` 503 "Database unavailable" | `DATABASE_URL` wrong / not Preview-scoped / not redeployed; Neon branch suspended |
 | `/api/health` 503 "Server settings missing" | the named variable is missing for the Preview environment; redeploy after adding |
-| Login always "Invalid passcode" | the preview database was not seeded (step 4), or seeded with different passcodes |
+| Login always "Incorrect passcode" | the preview database was not seeded (step 4), or seeded with different passcodes |
 | Login works, then logged out at once | `JWT_SECRET` changed between requests, or `COOKIE_INSECURE=1` set on Vercel |
 | Upload fails with 413 | file over 4 MB (app limit; Vercel's own limit is 4.5 MB) |
 | Upload fails with 500 | Blob store not connected to **Preview**, or not Public |

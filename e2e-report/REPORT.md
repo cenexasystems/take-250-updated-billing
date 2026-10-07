@@ -1,6 +1,6 @@
 # Browser test report
 
-226 passed, 0 failed (2026-10-07T06:39:27.524Z)
+232 passed, 0 failed (2026-10-07T08:20:21.176Z)
 
 | Result | Area | Check |
 |---|---|---|
@@ -27,7 +27,7 @@
 | PASS | login | Staff Branch 1 passcode on the Branch 2 tile is refused |
 | PASS | login | Staff Branch 1 passcode on the Admin tab is refused |
 | PASS | login | the Admin passcode on the Staff tab is refused |
-| PASS | login | a wrong passcode shows "Invalid passcode" and stays on the login |
+| PASS | login | a wrong passcode shows "Incorrect passcode" and stays on the login |
 | PASS | login | the wrong passcode is not echoed on the page |
 | PASS | login | the right passcode signs in |
 | PASS | login | the session cookie is httpOnly + SameSite=Strict |
@@ -70,7 +70,7 @@
 | PASS | staff pos1 | thermal receipt prints pos1's built-in Take250 logo |
 | PASS | staff pos1 | thermal receipt prints pos1's own address only |
 | PASS | staff pos1 | thermal logo for pos1 is black artwork on white (corner 255,255,255, dark 16%) |
-| PASS | staff pos1 | bill view shows #INV10000001, the item and TOTAL ₹100.00 (no NaN) |
+| PASS | staff pos1 | bill view shows #INV10000002, the item and TOTAL ₹100.00 (no NaN) |
 | PASS | staff pos1 | bill view shows pos1's own address and no other branch's |
 | PASS | staff pos1 | bill view shows the shared Instagram, phone and email |
 | PASS | staff pos1 | bill view shows pos1's logo (yg-logo-pos1) |
@@ -224,9 +224,15 @@
 | PASS | admin | the admin can open the Analytics Dashboard |
 | PASS | admin | a branch id in the request body is refused even for the admin |
 | PASS | polling | tab B (same session) created a product and a bill |
-| PASS | polling | tab A (Order History) shows the new bill by itself, no reload (6 s) |
-| PASS | polling | tab C (POS catalogue) shows the new product by itself, no reload (6 s) |
+| PASS | polling | tab A (Order History) shows the new bill by itself, no reload (5 s) |
+| PASS | polling | tab C (POS catalogue) shows the new product by itself, no reload (5 s) |
 | PASS | polling | a change in another branch never appears in this branch's tab |
+| PASS | lockout | a locked portal shows "Try again in M:SS" (about 5 minutes) |
+| PASS | lockout | the lockout message replaces "Incorrect passcode" and the page stays on the login |
+| PASS | lockout | the sign-in button is disabled while locked |
+| PASS | lockout | the same network can still sign in to another portal (Staff Branch 1) |
+| PASS | lockout | the admin clears the Branch 3 lockout |
+| PASS | lockout | the locked-out Manager Branch 3 signs in right after the admin cleared the lockout |
 | PASS | logos | Branch 1 and Branch 2 print the same (shirt shop) logo |
 | PASS | logos | Branch 3 prints its own (women's wear) logo |
 | PASS | summary | no uncaught page errors / console errors in any flow |
@@ -273,3 +279,4 @@
 - 39-polling-pos-tab.png
 - 40-polling-history-tab-updated.png
 - 41-polling-catalogue-tab-updated.png
+- 42-login-locked.png

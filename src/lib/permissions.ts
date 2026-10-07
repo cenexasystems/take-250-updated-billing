@@ -75,7 +75,7 @@ export const FEATURE_SERVER_PERM: Record<Feature, string[]> = {
   'coupons.manage': ['coupons.write', 'coupons.read'],
   'expenses.use': ['expenses.read', 'expenses.write'],
   'branch.switch': [],
-  'passcodes.manage': ['passcodes.list', 'passcodes.change'],
+  'passcodes.manage': ['passcodes.list', 'passcodes.change', 'lockouts.clear'],
   'analytics.view': ['analytics.read'],
   'global.view': ['global.read'],
 }

@@ -110,17 +110,17 @@ async function main() {
       for (const [role, i, label] of [['staff', 1, 'Staff Branch 1 passcode on the Branch 2 tile'], ['admin', 0, 'Staff Branch 1 passcode on the Admin tab']] as Array<[Role, number, string]>) {
         await page.goto(`${origin}/admin-login`)
         await uiLogin(page, role, i, PASS.staff[0])
-        await page.getByText(/invalid passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
-        check(/invalid passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), `${label} is refused`)
+        await page.getByText(/incorrect passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
+        check(/incorrect passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), `${label} is refused`)
       }
       await page.goto(`${origin}/admin-login`)
       await uiLogin(page, 'staff', 0, PASS.admin)
-      await page.getByText(/invalid passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
-      check(/invalid passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), 'the Admin passcode on the Staff tab is refused')
+      await page.getByText(/incorrect passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
+      check(/incorrect passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), 'the Admin passcode on the Staff tab is refused')
       await page.goto(`${origin}/admin-login`)
       await uiLogin(page, 'staff', 0, 'definitely-wrong-passcode')
-      await page.getByText(/invalid passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
-      check(/invalid passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), 'a wrong passcode shows "Invalid passcode" and stays on the login')
+      await page.getByText(/incorrect passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
+      check(/incorrect passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), 'a wrong passcode shows "Incorrect passcode" and stays on the login')
       check(!(await bodyText(page)).includes('definitely-wrong-passcode'), 'the wrong passcode is not echoed on the page')
       await shot(page, 'login-wrong-passcode')
       await uiLogin(page, 'staff', 0, PASS.staff[0])
@@ -460,6 +460,36 @@ async function main() {
       await s2.ctx.close()
       await sC.ctx.close()
       await s1.ctx.close()
+    }
+
+    // ============================================================================================ lockout screen + admin unlock
+    area = 'lockout'
+    {
+      const ctx = await newCtx(); const page = await ctx.newPage(); watch(page, 'anon-lock')
+      for (let i = 0; i < 10; i++) await page.request.post(`${origin}/api/auth/login`, { data: { passcode: `lock-guess-${i}-zzzz`, as: 'manager', site: 'pos3' } })
+      await page.goto(`${origin}/admin-login`)
+      await page.locator('input[type="password"]').first().waitFor()
+      await uiLogin(page, 'manager', 2, passFor('manager', 2))
+      await page.getByText(/try again in \d+:\d\d/i).first().waitFor({ timeout: 8000 }).catch(() => undefined)
+      const locked = await bodyText(page)
+      check(/try again in (4:[3-5]\d|5:00)/i.test(locked), 'a locked portal shows "Try again in M:SS" (about 5 minutes)', (locked.match(/try again in \d+:\d\d/i) || [''])[0])
+      check(!/incorrect passcode/i.test(locked) && /admin-login/.test(page.url()), 'the lockout message replaces "Incorrect passcode" and the page stays on the login')
+      check(await page.locator('button[type="submit"]').isDisabled(), 'the sign-in button is disabled while locked')
+      await shot(page, 'login-locked')
+      // the same network is not locked out of another portal / branch
+      await uiLogin(page, 'staff', 0, passFor('staff', 0)).catch(() => undefined)
+      await page.waitForURL((u) => !u.pathname.includes('admin-login'), { timeout: 20000 }).catch(() => undefined)
+      check(!/admin-login/.test(page.url()), 'the same network can still sign in to another portal (Staff Branch 1)')
+      // the admin unlocks Branch 3 without touching the database
+      const adm = await loginAs('admin')
+      const cleared = await apiSend(adm.page, 'post', '/api/admin/login-lockouts/clear', { site: 'pos3' })
+      check(cleared.status === 200 && cleared.body.cleared >= 10, 'the admin clears the Branch 3 lockout', JSON.stringify(cleared.body))
+      const p2 = await (await newCtx()).newPage(); watch(p2, 'anon-unlock')
+      await p2.goto(`${origin}/admin-login`)
+      await uiLogin(p2, 'manager', 2, passFor('manager', 2))
+      await p2.waitForURL((u) => !u.pathname.includes('admin-login'), { timeout: 20000 }).catch(() => undefined)
+      check(!/admin-login/.test(p2.url()), 'the locked-out Manager Branch 3 signs in right after the admin cleared the lockout')
+      await adm.ctx.close(); await p2.context().close(); await ctx.close()
     }
 
     area = 'logos'

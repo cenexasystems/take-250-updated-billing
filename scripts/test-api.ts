@@ -200,7 +200,7 @@ async function run() {
       check(!JSON.stringify(ok.body).includes('token'), 'login response does not contain the token')
       const bad1 = await call('POST', '/api/auth/login', { body: { passcode: 'definitely-wrong-passcode' } })
       const bad2 = await call('POST', '/api/auth/login', { body: { passcode: PASS.staff1 + 'x' } })
-      check(bad1.status === 401 && bad2.status === 401 && JSON.stringify(bad1.body) === JSON.stringify(bad2.body) && bad1.body.error === 'Invalid passcode', 'wrong passcodes get one generic 401 message')
+      check(bad1.status === 401 && bad2.status === 401 && JSON.stringify(bad1.body) === JSON.stringify(bad2.body) && bad1.body.error === 'Incorrect passcode', 'wrong passcodes get one generic 401 message')
       check(!JSON.stringify(bad1.body).includes('definitely-wrong'), 'error responses never echo the submitted passcode')
       const me = await call('GET', '/api/auth/me', { cookie: cookies.staff2 })
       check(me.status === 200 && me.body.role === 'staff' && me.body.branch === 'pos2' && me.body.branches.length === 1 && me.body.branches[0].id === 'pos2', 'staff2 /me shows only branch 2')
@@ -220,7 +220,7 @@ async function run() {
       check(adm.status === 200 && adm.body.role === 'admin' && adm.body.branch === null, 'admin passcode on the Admin tab signs in')
       const mgr = await L({ passcode: PASS.manager3, as: 'manager', site: 'pos3' })
       check(mgr.status === 200 && mgr.body.role === 'manager' && mgr.body.branch === 'pos3', 'manager 3 passcode on the Manager tab + Branch 3 tile signs in')
-      const generic = JSON.stringify({ error: 'Invalid passcode' })
+      const generic = JSON.stringify({ error: 'Incorrect passcode' })
       const refused = [
         ['staff1 passcode on another branch tile', { passcode: PASS.staff1, as: 'staff', site: 'pos2' }],
         ['staff1 passcode on the Manager tab', { passcode: PASS.staff1, as: 'manager', site: 'pos1' }],
@@ -686,16 +686,65 @@ async function run() {
     // ================================================================== N. login rate limits (run last: they lock logins)
     {
       const ip = '192.0.2.50'
-      const codes: number[] = []
-      for (let i = 0; i < 5; i++) codes.push((await call('POST', '/api/auth/login', { ip, body: { passcode: `wrong-guess-${i}-xxxx` } })).status)
-      check(codes.every((c) => c === 401), '5 wrong passcodes from one IP are answered 401')
+      const codes: Array<{ status: number; error?: string }> = []
+      for (let i = 0; i < 10; i++) { const r = await call('POST', '/api/auth/login', { ip, body: { passcode: `wrong-guess-${i}-xxxx` } }); codes.push({ status: r.status, error: r.body?.error }) }
+      check(codes.every((c) => c.status === 401 && c.error === 'Incorrect passcode'), '10 wrong passcodes from one IP are each answered 401 "Incorrect passcode"')
       const locked = await call('POST', '/api/auth/login', { ip, body: { passcode: PASS.manager1 } })
-      check(locked.status === 429 && Number(locked.headers.get('retry-after')) > 0, 'the 6th attempt from that IP is locked out (429 + Retry-After) even with a CORRECT passcode')
+      check(locked.status === 429 && Number(locked.headers.get('retry-after')) > 0, 'the 11th attempt from that IP is locked out (429 + Retry-After) even with a CORRECT passcode')
+      check(locked.body.error === 'Too many attempts' && locked.body.retry_after >= 290 && locked.body.retry_after <= 300, 'the lockout answer carries retry_after in seconds (about 5 minutes) for the "Try again in M:SS" countdown', JSON.stringify(locked.body))
       check(locked.cookies.length === 0, 'a locked-out attempt never sets a cookie')
       const other = await call('POST', '/api/auth/login', { ip: '192.0.2.51', body: { passcode: PASS.manager1 } })
       check(other.status === 200, 'a different IP can still sign in')
-      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false`, [ip])).n === 5, 'failed attempts are recorded in login_attempts (database-backed)')
-      // distributed guessing across many IPs is SLOWED, never blocked: real users must still be able to sign in
+      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false`, [ip])).n === 10, 'failed attempts are recorded in login_attempts (database-backed), and attempts made while locked are not added')
+
+      // ---- the lockout is keyed on IP + role + branch: one portal being locked leaves the others usable from the same IP
+      const ipS = '192.0.2.60'
+      for (let i = 0; i < 10; i++) await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: `staff1-guess-${i}-xx`, as: 'staff', site: 'pos1' } })
+      const s1 = await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: PASS.staff1, as: 'staff', site: 'pos1' } })
+      check(s1.status === 429, 'Staff Branch 1 is locked after 10 wrong passcodes from this IP')
+      const s2 = await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: 'New-Staff2-Pass-9', as: 'staff', site: 'pos2' } })
+      check(s2.status === 200, 'Staff Branch 2 from the SAME IP is not locked (the counter is per branch)')
+      const m1 = await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: PASS.manager1, as: 'manager', site: 'pos1' } })
+      check(m1.status === 200, 'Manager Branch 1 from the SAME IP is not locked (the counter is per role)')
+      // ---- the lockout ends by itself after 5 minutes, and the old failures are forgotten
+      await client.query(`UPDATE login_attempts SET attempted_at = attempted_at - interval '4 minutes' WHERE ip = $1`, [ipS])
+      const still = await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: PASS.staff1, as: 'staff', site: 'pos1' } })
+      check(still.status === 429 && still.body.retry_after >= 50 && still.body.retry_after <= 70, 'after 4 minutes the lockout still has about 1 minute to go', JSON.stringify(still.body))
+      await client.query(`UPDATE login_attempts SET attempted_at = attempted_at - interval '2 minutes' WHERE ip = $1`, [ipS])
+      const back = await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: PASS.staff1, as: 'staff', site: 'pos1' } })
+      check(back.status === 200, 'after 5 minutes the lockout has cleared itself and the right passcode signs in')
+      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false AND target = 'staff:pos1'`, [ipS])).n === 0, 'the expired failures were deleted and the counter restarted from zero')
+      // ---- a good sign-in resets that portal's counter
+      const ipR = '192.0.2.61'
+      for (let i = 0; i < 4; i++) await call('POST', '/api/auth/login', { ip: ipR, body: { passcode: `wrong-${i}-xxxxxx`, as: 'staff', site: 'pos3' } })
+      check((await call('POST', '/api/auth/login', { ip: ipR, body: { passcode: PASS.staff3, as: 'staff', site: 'pos3' } })).status === 200, 'a right passcode after a few wrong ones signs in')
+      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false`, [ipR])).n === 0, 'a successful sign-in resets that portal\'s failure counter')
+      // without a selected portal a success must NOT reset (a guesser could clear its own counter with one known passcode)
+      const ipN = '192.0.2.62'
+      for (let i = 0; i < 3; i++) await call('POST', '/api/auth/login', { ip: ipN, body: { passcode: `wrong-${i}-xxxxxx` } })
+      await call('POST', '/api/auth/login', { ip: ipN, body: { passcode: PASS.staff3 } })
+      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false`, [ipN])).n === 3, 'a sign-in without a selected portal does not reset the counter')
+      // ---- changing the (client-supplied) portal selection cannot dodge the limit: a wider per-IP guard counts all portals together
+      const ipW = '192.0.2.63'
+      for (const [as, site] of [['staff', 'pos1'], ['staff', 'pos2'], ['staff', 'pos3']] as const) {
+        for (let i = 0; i < 10; i++) await call('POST', '/api/auth/login', { ip: ipW, body: { passcode: `dodge-${as}-${site}-${i}`, as, site } })
+      }
+      const dodge = await call('POST', '/api/auth/login', { ip: ipW, body: { passcode: PASS.manager2, as: 'manager', site: 'pos2' } })
+      check(dodge.status === 429, '30 failures across portals lock the whole IP, so rotating the selection does not dodge the limit')
+      // ---- admin clears lockouts without redeploying
+      const ipC = '192.0.2.64'
+      for (let i = 0; i < 10; i++) await call('POST', '/api/auth/login', { ip: ipC, body: { passcode: `clear-${i}-xxxxxxx`, as: 'staff', site: 'pos2' } })
+      check((await call('POST', '/api/auth/login', { ip: ipC, body: { passcode: 'New-Staff2-Pass-9', as: 'staff', site: 'pos2' } })).status === 429, 'Staff Branch 2 is locked on this IP')
+      check((await call('POST', '/api/admin/login-lockouts/clear', { body: { site: 'pos2' } })).status === 401, 'clearing lockouts needs a session (401 without)')
+      check((await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.manager1, body: { site: 'pos2' } })).status === 403, 'a manager cannot clear lockouts (403)')
+      check((await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.staff1, body: {} })).status === 403, 'staff cannot clear lockouts (403)')
+      check((await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.admin, body: { site: 'POS 2' } })).status === 400, 'clear rejects a malformed branch id (zod)')
+      const cl = await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.admin, body: { site: 'pos2' } })
+      check(cl.status === 200 && cl.body.cleared >= 10 && cl.body.site === 'pos2', 'admin clears the Branch 2 lockouts', JSON.stringify(cl.body))
+      check((await call('POST', '/api/auth/login', { ip: ipC, body: { passcode: 'New-Staff2-Pass-9', as: 'staff', site: 'pos2' } })).status === 200, 'Staff Branch 2 signs in again right after the admin cleared the lockout')
+      const clAll = await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.admin, body: {} })
+      check(clAll.status === 200 && (await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND success = false`)).n === 0, 'clearing without a branch forgets every failed sign-in')
+      check((await call('POST', '/api/auth/login', { ip: ipW, body: { passcode: PASS.manager2, as: 'manager', site: 'pos2' } })).status === 200, 'the IP that was locked by the wider guard is free again')      // distributed guessing across many IPs is SLOWED, never blocked: real users must still be able to sign in
       const seq = [0, 5, 9, 10, 11, 15, 30, 1000].map((n) => slowdownMs(n))
       check(seq[0] === 0 && seq[1] === 0 && seq[2] === 0, 'no slowdown below the free failure count')
       check(seq[3] > 0 && seq[4] > seq[3] && seq[5] > seq[4] && seq[6] >= seq[5], 'the delay grows with every additional failure')

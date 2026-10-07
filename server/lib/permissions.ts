@@ -25,6 +25,7 @@ export const PERMISSIONS = {
   // admin only: passcode management (matrix row 28)
   'passcodes.list':        { roles: A, scope: 'none' as Scope },
   'passcodes.change':      { roles: A, scope: 'none' as Scope },
+  'lockouts.clear':        { roles: A, scope: 'none' as Scope },
   // store settings (rows 24, 25)
   'settings.read':         { roles: AMS, scope: 'branch' as Scope },
   'settings.write':        { roles: AM, scope: 'branch' as Scope },

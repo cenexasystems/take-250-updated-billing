@@ -89,6 +89,14 @@ const healthRoutes = [
 ]
 
 const publicRoutes = [
+  // The login screen's branch tiles (name, logo) before anyone is signed in: the shops' public branding only.
+  route({
+    method: 'get', path: '/api/public/branches', perm: 'public.branches',
+    async handler({ db }) {
+      const r = await db.query(`SELECT id, short_label, subtitle, logo_url, sort_order FROM public.branches WHERE is_active ORDER BY sort_order, id`)
+      return { branches: r.rows }
+    },
+  }),
   route({
     method: 'get', path: '/api/public/invoice/:ref', perm: 'public.invoice',
     async handler({ db, ip, params }) {

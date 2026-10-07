@@ -385,7 +385,7 @@ interface AdminAuthState {
   /** What the dashboard is currently showing: a specific branch, or 'all' (admin global view). */
   activeBranch: ActiveBranch
   /** Passcode-only sign in. Throws ApiClientError (message is safe to show) when the passcode is wrong or throttled. */
-  login: (passcode: string) => Promise<AdminRole>
+  login: (passcode: string, portal?: { as: Exclude<AdminRole, null>; site?: string }) => Promise<AdminRole>
   logout: () => void
   /** Re-checks the server session (httpOnly cookie) on page load; clears the local session if it is gone. */
   restoreSession: () => Promise<void>
@@ -402,8 +402,9 @@ export const useAdminAuthStore = create<AdminAuthState>()(
       adminId: null,
       branch: null,
       activeBranch: null,
-      login: async (passcode: string) => {
-        const res = await api<{ role: Exclude<AdminRole, null>; branch: PosBranch | null }>('POST', '/api/auth/login', { body: { passcode } })
+      login: async (passcode: string, portal) => {
+        // the selected tab / branch only restricts sign-in further; the server decides role and branch from the passcode
+        const res = await api<{ role: Exclude<AdminRole, null>; branch: PosBranch | null }>('POST', '/api/auth/login', { body: portal ? { passcode, as: portal.as, ...(portal.site ? { site: portal.site } : {}) } : { passcode } })
         resetBranchScopedStores()
         useSettingsStore.setState({ settings: null, settingsByBranch: {} })
         useAlarmStore.getState().resetSilencedState()

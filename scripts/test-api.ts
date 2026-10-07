@@ -211,6 +211,35 @@ async function run() {
       check((await call('POST', '/api/auth/login', { body: { passcode: PASS.staff1, extra: 1 } })).status === 400, 'login rejects unknown body fields (zod strict)')
       check((await call('POST', '/api/auth/login', { body: { passcode: 12345678 } })).status === 400, 'login rejects a non-string passcode (zod)')
       check((await call('POST', '/api/auth/login', { body: {} })).status === 400, 'login rejects a missing passcode (zod)')
+
+      // ---- the login screen's portal selection (tab + branch tile) can only make sign-in stricter
+      const L = (body: Record<string, unknown>) => call('POST', '/api/auth/login', { body })
+      const right = await L({ passcode: PASS.staff1, as: 'staff', site: 'pos1' })
+      check(right.status === 200 && right.body.role === 'staff' && right.body.branch === 'pos1', 'right passcode on the right tab + branch tile signs in')
+      const adm = await L({ passcode: PASS.admin, as: 'admin' })
+      check(adm.status === 200 && adm.body.role === 'admin' && adm.body.branch === null, 'admin passcode on the Admin tab signs in')
+      const mgr = await L({ passcode: PASS.manager3, as: 'manager', site: 'pos3' })
+      check(mgr.status === 200 && mgr.body.role === 'manager' && mgr.body.branch === 'pos3', 'manager 3 passcode on the Manager tab + Branch 3 tile signs in')
+      const generic = JSON.stringify({ error: 'Invalid passcode' })
+      const refused = [
+        ['staff1 passcode on another branch tile', { passcode: PASS.staff1, as: 'staff', site: 'pos2' }],
+        ['staff1 passcode on the Manager tab', { passcode: PASS.staff1, as: 'manager', site: 'pos1' }],
+        ['staff1 passcode on the Admin tab', { passcode: PASS.staff1, as: 'admin' }],
+        ['admin passcode on the Staff tab', { passcode: PASS.admin, as: 'staff', site: 'pos1' }],
+        ['admin passcode on the Admin tab with a branch tile', { passcode: PASS.admin, as: 'admin', site: 'pos1' }],
+        ['manager1 passcode on the Staff tab', { passcode: PASS.manager1, as: 'staff', site: 'pos1' }],
+        ['a staff tab without any branch tile', { passcode: PASS.staff1, as: 'staff' }],
+        ['an unknown branch tile', { passcode: PASS.staff1, as: 'staff', site: 'pos9' }],
+      ] as const
+      for (const [label, body] of refused) {
+        const r = await L({ ...body })
+        check(r.status === 401 && JSON.stringify(r.body) === generic && r.cookies.length === 0, `${label} is refused with the same generic 401 and no cookie`, `${r.status} ${JSON.stringify(r.body)}`)
+      }
+      check((await L({ passcode: PASS.staff1, as: 'owner' })).status === 400, 'login rejects an unknown portal name (zod)')
+      check((await L({ passcode: PASS.staff1, as: 'staff', site: 'POS 1; DROP' })).status === 400, 'login rejects a malformed branch tile id (zod)')
+      const pub = await call('GET', '/api/public/branches')
+      check(pub.status === 200 && pub.body.branches.length === 3 && pub.body.branches.every((b: any) => Object.keys(b).sort().join() === 'id,logo_url,short_label,sort_order,subtitle'), 'GET /api/public/branches (no login) lists the 3 branches with name and logo only')
+      check(['pos1', 'pos2', 'pos3'].every((id, k) => pub.body.branches[k]?.id === id && /yg-logo-pos\d\.png$/.test(pub.body.branches[k]?.logo_url || '')), 'each public branch tile has its own logo file')
     }
 
     // ================================================================== C. a passcode never opens another branch / higher role

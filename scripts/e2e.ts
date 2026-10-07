@@ -39,7 +39,7 @@ const shot = async (page: Page, name: string) => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 async function main() {
-  const { server, origin } = await startDevServer(4310)
+  const { server, origin } = await startDevServer(Number(process.env.E2E_PORT || 4311)) // not 4310: that is the port of dev:full
   const browser: Browser = await chromium.launch({ headless: true })
   const pool = getPool()
   const errors: string[] = []
@@ -49,13 +49,19 @@ async function main() {
     page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`))
     page.on('console', (m) => { if (m.type() === 'error' && !/favicon|Failed to load resource/.test(m.text()) && !(tag === 'anon' && /Failed to fetch/.test(m.text()))) errors.push(`${tag}: ${m.text().slice(0, 160)}`) })
   }
+  // the login screen: pick the portal tab, then (staff / manager) the branch tile, type the passcode, submit
+  async function uiLogin(page: Page, role: Role, i: number, passcode: string) {
+    await page.getByRole('tab', { name: role === 'staff' ? /staff pos login/i : role === 'manager' ? /manager login/i : /admin orchestrator/i }).click()
+    if (role !== 'admin') await page.locator(`button[data-branch="pos${i + 1}"]`).click()
+    await page.locator('input[type="password"]').first().fill(passcode)
+    await page.locator('button[type="submit"]').click()
+  }
   async function loginAs(role: Role, i = 0, tag = ''): Promise<{ ctx: BrowserContext; page: Page }> {
     const ctx = await newCtx()
     const page = await ctx.newPage()
     watch(page, `${role}${role === 'admin' ? '' : i + 1}${tag}`)
     await page.goto(`${origin}/admin-login`)
-    await page.locator('input[type="password"]').first().fill(passFor(role, i))
-    await page.getByRole('button', { name: /sign in/i }).click()
+    await uiLogin(page, role, i, passFor(role, i))
     await page.waitForURL((u) => !u.pathname.includes('admin-login'), { timeout: 20000 })
     await settle(page)
     return { ctx, page }
@@ -86,15 +92,37 @@ async function main() {
         check(/admin-login/.test(page.url()) && txt.length > 40 && /passcode/i.test(txt), `${p} -> passcode login (not blank)`, `${page.url()} len=${txt.length}`)
       }
       await shot(page, 'login-page')
+      // the screen itself: three portal tabs, three branch tiles with their own logos, Admin has no branch tiles
       await page.goto(`${origin}/admin-login`)
-      await page.locator('input[type="password"]').first().fill('definitely-wrong-passcode')
-      await page.getByRole('button', { name: /sign in/i }).click()
+      await page.locator('input[type="password"]').first().waitFor()
+      const tabs = (await page.getByRole('tab').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim().toLowerCase())
+      check(tabs.length === 3 && /staff pos login/.test(tabs[0]) && /manager login/.test(tabs[1]) && /admin orchestrator/.test(tabs[2]), 'login screen has the tabs Staff POS Login / Manager Login / Admin Orchestrator', tabs.join(' | '))
+      const tileLogos = await page.locator('button[data-branch] img').evaluateAll((els) => els.map((e) => (e as HTMLImageElement).getAttribute('src') || ''))
+      check(tileLogos.length === 3 && ['pos1', 'pos2', 'pos3'].every((b, k) => tileLogos[k].includes(`yg-logo-${b}`)), 'login screen shows three branch tiles, each with its own logo', tileLogos.join(' | '))
+      check(/Take250 Karanthai/i.test(await bodyText(page)) && /Take250 Kinathukadavu/i.test(await bodyText(page)) && /Take250 Pollachi/i.test(await bodyText(page)), 'the branch tiles carry the three shop names')
+      await shot(page, 'login-staff-tab')
+      await page.getByRole('tab', { name: /manager login/i }).click(); await shot(page, 'login-manager-tab')
+      await page.getByRole('tab', { name: /admin orchestrator/i }).click()
+      check((await page.locator('button[data-branch]').count()) === 0, 'the Admin tab has no branch tiles')
+      await shot(page, 'login-admin-tab')
+      // a valid passcode of ANOTHER portal is refused exactly like a wrong passcode (no hint which is which).
+      // Kept to 4 failures in total here: the 5th failure from one IP would lock this test's own logins out.
+      for (const [role, i, label] of [['staff', 1, 'Staff Branch 1 passcode on the Branch 2 tile'], ['admin', 0, 'Staff Branch 1 passcode on the Admin tab']] as Array<[Role, number, string]>) {
+        await page.goto(`${origin}/admin-login`)
+        await uiLogin(page, role, i, PASS.staff[0])
+        await page.getByText(/invalid passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
+        check(/invalid passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), `${label} is refused`)
+      }
+      await page.goto(`${origin}/admin-login`)
+      await uiLogin(page, 'staff', 0, PASS.admin)
+      await page.getByText(/invalid passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
+      check(/invalid passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), 'the Admin passcode on the Staff tab is refused')      await page.goto(`${origin}/admin-login`)
+      await uiLogin(page, 'staff', 0, 'definitely-wrong-passcode')
       await page.getByText(/invalid passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
       check(/invalid passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), 'a wrong passcode shows "Invalid passcode" and stays on the login')
       check(!(await bodyText(page)).includes('definitely-wrong-passcode'), 'the wrong passcode is not echoed on the page')
       await shot(page, 'login-wrong-passcode')
-      await page.locator('input[type="password"]').first().fill(PASS.staff[0])
-      await page.getByRole('button', { name: /sign in/i }).click()
+      await uiLogin(page, 'staff', 0, PASS.staff[0])
       await page.waitForURL((u) => !u.pathname.includes('admin-login'), { timeout: 20000 })
       check(!/admin-login/.test(page.url()), 'the right passcode signs in')
       const sess = (await ctx.cookies()).find((c) => c.name === 'yg_session')

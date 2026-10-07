@@ -24,7 +24,14 @@ async function loadPasscodes(db: { query: (t: string, p?: unknown[]) => Promise<
 export const authRoutes = [
   route({
     method: 'post', path: '/api/auth/login', perm: 'auth.login',
-    body: z.object({ passcode: z.string().min(1).max(200) }).strict(),
+    // `as` / `site` are the portal the person picked on the login screen (tab + branch tile). They can only make
+    // sign-in STRICTER: the passcode must belong to exactly that portal, otherwise it is the same generic 401.
+    // The server still decides role and branch from the passcode alone; nothing here names a branch for later requests.
+    body: z.object({
+      passcode: z.string().min(1).max(200),
+      as: z.enum(['admin', 'manager', 'staff']).optional(),
+      site: z.string().regex(/^[a-z0-9_]{2,32}$/).optional(),
+    }).strict(),
     async handler({ db, body, ip, res }) {
       await enforce(db, 'login', ip, { ip: LIMITS.loginFailuresPerIp }, true)
       // system-wide slowdown (never a block): many failures anywhere make every attempt slower, real users still get in
@@ -34,11 +41,13 @@ export const authRoutes = [
       // Compare against EVERY stored hash (no early exit) so timing does not reveal which role matched.
       const matches = await Promise.all(rows.map((r) => bcrypt.compare(body.passcode, r.passcode_hash)))
       const hit = rows.filter((_, i) => matches[i])
-      if (hit.length !== 1) {
+      const row = hit[0]
+      // a passcode that is valid but belongs to another portal than the one selected is refused exactly like a wrong one
+      const portalOk = !body.as || (row && row.role === body.as && (row.role === 'admin' ? !body.site : row.branch_id === (body.site ?? null)))
+      if (hit.length !== 1 || !portalOk) {
         await record(db, 'login', ip, false)
         throw new ApiError(401, 'Invalid passcode')
       }
-      const row = hit[0]
       await record(db, 'login', ip, true, targetLabel({ role: row.role, branch: row.branch_id }))
       setSessionCookie(res, signSession({ role: row.role, branch: row.branch_id, tv: row.token_version, sid: randomUUID() }))
       return { role: row.role, branch: row.branch_id }

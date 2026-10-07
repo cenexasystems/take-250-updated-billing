@@ -1,12 +1,13 @@
-export const BRAND_EN = 'YG ENTERPRISES'
-export const BRAND_TA = 'YG ENTERPRISES'
-export const BRAND_SHORT = 'YG'
-export const BRAND_MONOGRAM = 'YG'
+export const BRAND_EN = 'TAKE250'
+export const BRAND_TA = 'TAKE250'
+export const BRAND_SHORT = 'T250'
+export const BRAND_MONOGRAM = 'T250'
 
 // Branch-specific barcode prefixes for inventory differentiation
 export function getBarcodePrefix(branch?: string): string {
-  if (branch === 'pos2') return 'YG2'
-  return 'YG1' // Default to POS1
+  if (branch === 'pos3') return 'T253'
+  if (branch === 'pos2') return 'T252'
+  return 'T251' // Default to POS1
 }
 
 // Branch-specific barcode settings
@@ -19,19 +20,9 @@ export interface BarcodeSettingsConfig {
   showDiscount: boolean
 }
 
-export function getDefaultBarcodeSettings(branch?: string): BarcodeSettingsConfig {
-  if (branch === 'pos2') {
-    // POS2: Fireworks/Crackers - Large carton labels with discounts
-    return {
-      printerType: 'regular',
-      selectedSizeId: '1_100x50',
-      showSalePrice: true,
-      showCompanyName: true,
-      showItemName: true,
-      showDiscount: true
-    }
-  }
-  // POS1: Wedding Cards/Bags - Standard thermal labels (default)
+export function getDefaultBarcodeSettings(_branch?: string): BarcodeSettingsConfig {
+  // Clothing and footwear in every branch: the standard thermal label (50 x 25 mm) is the default;
+  // each branch can still change it in the label settings (kept per branch in this browser).
   return {
     printerType: 'label',
     selectedSizeId: '2_50x25',
@@ -59,28 +50,27 @@ export const THEME_PALETTE = {
  * is treated as "never customised" and shows the shared palette instead; any other saved colour still wins. */
 export const LEGACY_THEME_COLORS = ['#7a1220', '#8b1a1a', '#b8860b', '#1f6f5c', '#5a0e17', '#5c0d18']
 
-export const BRAND_SUBTITLE = 'Wedding Card, Wedding Bag and Jute Bag Manufacturing'
+export const BRAND_SUBTITLE = 'Dress & Footwear'
 export const BRAND_LOGO = '/yg-logo.png'
 export const BRAND_ICON = '/yg-icon.png'
 export const BRAND_FAVICON = '/yg-favicon.png'
 
-// Per-branch logos: POS 1 (wedding cards/bags/jute bag manufacturing) and
-// POS 2 (fireworks & crackers) are different enough businesses that they
-// get their own marks wherever the UI is showing one specific branch.
+// Per-branch logos: Branches 1 and 2 are the Take250 shirt shop, Branch 3 is Take250 Women's Wear.
 export const BRAND_LOGO_POS1 = '/yg-logo-pos1.png'
 export const BRAND_LOGO_POS2 = '/yg-logo-pos2.png'
+export const BRAND_LOGO_POS3 = '/yg-logo-pos3.png'
 export const BRAND_PRODUCTION_DOMAIN = 'https://cen-gen-pos.vercel.app'
 
-// Owner / Personal contact
-export const BRAND_OWNER_NAME = 'M. Gurumoorthy'
-export const BRAND_OWNER_PHONE_DISPLAY = '+91 98844 10700'
-export const BRAND_OWNER_PHONE_E164 = '919884410700'
+// Owner / personal contact
+export const BRAND_OWNER_NAME = 'M. Ramkumar'
+export const BRAND_OWNER_PHONE_DISPLAY = '+91 88831 73358'
+export const BRAND_OWNER_PHONE_E164 = '918883173358'
 
-// Official Shop contact (used for receipts, billing, and customer WhatsApp)
-export const BRAND_PRIMARY_PHONE_DISPLAY = '+91 98844 10700'
-export const BRAND_PRIMARY_PHONE_E164 = '919884410700'
-export const BRAND_SECONDARY_PHONE_DISPLAY = '+91 97878 08090'
-export const BRAND_SECONDARY_PHONE_E164 = '919787808090'
+// Official shop contact (used for receipts, billing, and customer WhatsApp)
+export const BRAND_PRIMARY_PHONE_DISPLAY = '+91 88831 73358'
+export const BRAND_PRIMARY_PHONE_E164 = '918883173358'
+export const BRAND_SECONDARY_PHONE_DISPLAY = '+91 73393 44149'
+export const BRAND_SECONDARY_PHONE_E164 = '917339344149'
 export const BRAND_THIRD_PHONE_DISPLAY = BRAND_SECONDARY_PHONE_DISPLAY
 export const BRAND_THIRD_PHONE_E164 = BRAND_SECONDARY_PHONE_E164
 
@@ -91,15 +81,15 @@ export const BRAND_WHATSAPP = BRAND_PRIMARY_PHONE_DISPLAY
 export const WHATSAPP_NUM = BRAND_PRIMARY_PHONE_E164
 export const BRAND_WHATSAPP_LINK = `https://wa.me/${BRAND_PRIMARY_PHONE_E164}`
 
-export const BRAND_EMAIL = 'ygenterprises2000@gmail.com'
-export const BRAND_ADDRESS = '#189, N.S.C. Bose Road, (Opp. Bus Depot, Hotel Sankar Cafe Building), Chennai - 600 001'
-export const BRAND_WEBSITE = 'https://ygenterprises.co.in'
+// Fallbacks only: every branch's own details come from Store Settings (see migration 0005)
+export const BRAND_EMAIL = 'take250shop@gmail.com'
+export const BRAND_ADDRESS = '' // never another branch's address: each branch's own comes from Store Settings
+export const BRAND_WEBSITE = 'https://www.instagram.com/take.250shop/'
 export const BRAND_LOCATION_LINK = '#'
 
-// Instagram URLs shown on invoices, receipts and WhatsApp messages — same handles for both branches
+// Instagram shown on invoices, receipts and WhatsApp messages: one account for all branches
 export function getInstagramUrls(_branch?: string): string {
-  return `https://www.instagram.com/yg_enterprises001/
-https://www.instagram.com/ygenterprises7755/`
+  return 'https://www.instagram.com/take.250shop/'
 }
 
 export const BRAND_INSTAGRAM = '' // Deprecated: use getInstagramUrls(branch)

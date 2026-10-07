@@ -302,7 +302,7 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
       } catch { data = null }
       if (data) {
         // Legacy placeholder identities (CLAD / Chaji / Purple Boutique) seeded by
-        // very early migrations are replaced with the YG Enterprises brand
+        // very early migrations are replaced with the Take250 brand
         // constants, so a stale store_settings row can never leak onto an
         // invoice, receipt, WhatsApp message or the admin UI.
         const name = cleanIdentityField(data.name) || BRAND_EN

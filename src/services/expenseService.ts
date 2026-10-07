@@ -163,5 +163,5 @@ export function exportExpensesToCSV(expenses: ExpenseRecord[]): void {
     String(e?.recorded_by_name || 'Staff'),
   ])
 
-  downloadCsvFile(`YG-Expenses-${new Date().toISOString().slice(0, 10)}.csv`, buildCsv(headers, rows))
+  downloadCsvFile(`TAKE250-Expenses-${new Date().toISOString().slice(0, 10)}.csv`, buildCsv(headers, rows))
 }

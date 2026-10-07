@@ -1,37 +1,42 @@
 import { useBranchStore, useSettingsStore, type PosBranch, type ActiveBranch, type AdminRole, type StoreSettings } from '../store/store'
 import { normalizeHex, shadeHex, tintHex, mixHex } from './color'
-import { BRAND_LOGO_POS1, BRAND_LOGO_POS2, LEGACY_THEME_COLORS, THEME_PALETTE } from './brand'
+import { BRAND_LOGO_POS1, BRAND_LOGO_POS2, BRAND_LOGO_POS3, LEGACY_THEME_COLORS, THEME_PALETTE } from './brand'
 
 /** User-facing branch name, themed to what that branch actually sells
  * (not a generic "POS 1"/"POS 2") — keep this the single source of truth
  * for the branch name shown anywhere in the UI. */
 const branchRow = (branch: PosBranch) => useBranchStore.getState().branches.find((b) => b.id === branch)
 
-export const branchLabel = (branch: PosBranch) =>
-  branch === 'pos3' ? (branchRow(branch)?.name || 'Branch 3') : branch === 'pos2' ? 'Fireworks & Crackers POS' : 'Jute & Wedding POS'
+// Shown only until /api/auth/me has delivered the branch rows (names, labels and logos are data, so a new branch
+// needs no code); after that the rows win.
+const FALLBACK_LABEL: Record<string, string> = { pos1: 'Take250 Karanthai', pos2: 'Take250 Kinathukadavu', pos3: 'Take250 Pollachi' }
+const FALLBACK_SUBTITLE: Record<string, string> = { pos1: 'Dress & Footwear', pos2: 'Dress & Footwear', pos3: "Women's Wear" }
+const FALLBACK_LOGO: Record<string, string> = { pos1: BRAND_LOGO_POS1, pos2: BRAND_LOGO_POS2, pos3: BRAND_LOGO_POS3 }
+const plainName = (branch: string) => `Branch ${branch.replace(/\D/g, '') || '1'}`
+
+export const branchLabel = (branch: PosBranch) => branchRow(branch)?.short_label || FALLBACK_LABEL[branch] || plainName(branch)
 
 /** Short chip/badge form of branchLabel for tight spaces (nav pills, badges). */
-export const branchShortLabel = (branch: PosBranch) =>
-  branch === 'pos3' ? (branchRow(branch)?.short_label || 'Branch 3') : branch === 'pos2' ? 'Fireworks POS' : 'Jute & Wedding POS'
+export const branchShortLabel = (branch: PosBranch) => branchRow(branch)?.short_label || FALLBACK_LABEL[branch] || plainName(branch)
 
 /** "Branch 1" / "Branch 2" / "Branch 3": the plain branch name used in the header role badge. */
-export const branchName = (branch: PosBranch) => branchRow(branch)?.name || `Branch ${branch.slice(-1)}`
+export const branchName = (branch: PosBranch) => branchRow(branch)?.name || plainName(branch)
 
-/** What this branch actually sells, for taglines/subtitles (matches the
- * wording baked into each branch's own logo art and Store Settings
- * business_type). */
-export const branchSubtitle = (branch: PosBranch) =>
-  branch === 'pos3' ? (branchRow(branch)?.subtitle || 'Branch 3') : branch === 'pos2' ? 'Fireworks & Crackers' : 'Wedding Card, Wedding Bag and Jute Bag Manufacturing'
+/** What this branch actually sells, for taglines/subtitles (the branch row's subtitle). */
+export const branchSubtitle = (branch: PosBranch) => branchRow(branch)?.subtitle || FALLBACK_SUBTITLE[branch] || ''
 
-/** Combined tagline for admin/global contexts that span both branches
- * (e.g. the Admin Orchestrator login tab) — showing only one branch's
- * business line there would be misleading since admin manages both. */
-export const combinedBranchSubtitle = () => `${branchSubtitle('pos1')} + ${branchSubtitle('pos2')}`
+/** Combined tagline for admin/global contexts that span every branch: each distinct business line once. */
+export const combinedBranchSubtitle = () => {
+  const ids = useBranchStore.getState().branches.map((b) => b.id as PosBranch)
+  const lines = (ids.length ? ids : (['pos1', 'pos2', 'pos3'] as PosBranch[])).map((id) => branchSubtitle(id))
+  return [...new Set(lines.filter(Boolean))].join(' + ')
+}
 
 export const branchLogo = (branch: PosBranch) =>
   useSettingsStore.getState().settingsByBranch[branch]?.logoUrl ||
-  (branch === 'pos3' ? (branchRow(branch)?.logo_url || '/branch-placeholder.svg') : branch === 'pos2' ? BRAND_LOGO_POS2 : BRAND_LOGO_POS1)
-
+  branchRow(branch)?.logo_url ||
+  FALLBACK_LOGO[branch] ||
+  '/branch-placeholder.svg'
 /** Per-branch palette. All branches point at the SAME shared palette today; give a branch its own object here
  * (or just save a colour in Store Settings) to retheme it later without touching any component. */
 export interface BranchPalette { primary: string }

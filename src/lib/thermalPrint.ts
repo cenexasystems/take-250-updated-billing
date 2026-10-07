@@ -1,5 +1,5 @@
 import { BRAND_EN } from './brand'
-import { printLogoFor } from './branchLogo'
+import { thermalLogoFor } from './branchLogo'
 import { formatCurrency, formatInvoiceNo } from './retail'
 import { formatPhoneForDisplay } from './phone'
 import type { PosBranch } from '../store/store'
@@ -35,8 +35,8 @@ export interface ThermalReceiptData {
 export function printThermalReceipt(data: ThermalReceiptData) {
   try {
     const profile = getBranchProfile(data.branch)
-    // Embedded logo prints instantly; a custom logo from Store Settings is used when one is uploaded
-    const logoSrc = printLogoFor(data.branch)
+    // Embedded black-on-white logo prints instantly; a custom logo from Store Settings is used when one is uploaded
+    const logoSrc = thermalLogoFor(data.branch)
     const instagramUrls = profile.instagramUrls
     // Create an isolated print iframe protected from third-party extension observers
     const iframe = document.createElement('iframe')
@@ -99,8 +99,8 @@ export function printThermalReceipt(data: ThermalReceiptData) {
       </head>
       <body>
         <div class="text-center mb-2">
-          <img src="${logoSrc}" style="width: 64px; height: 64px; object-fit: contain; margin: 0 auto 8px auto; display: block;" alt="YG Logo" />
-          <div class="font-bold" style="font-size: 16px; letter-spacing: 2px;">${data.storeName || BRAND_EN}</div>
+          <img src="${logoSrc}" style="width: 64px; height: 64px; object-fit: contain; margin: 0 auto 8px auto; display: block;" alt="Logo" />
+          <div class="font-bold" style="font-size: 16px; letter-spacing: 2px;">${data.storeName || getBranchProfile(data.branch).name || BRAND_EN}</div>
           <div style="font-size: 10px; margin-top: 2px;">${data.storeAddress || profile.address}</div>
           <div class="mt-1" style="font-size: 10px;">Ph: ${data.storePhone || profile.phone}</div>
           <div style="font-size: 9px; color: #333;">${data.storeEmail || profile.email}</div>
@@ -186,7 +186,7 @@ export function printThermalReceipt(data: ThermalReceiptData) {
         </div>
 
         <div class="text-center mt-2" style="font-size: 11px;">
-          <div class="font-bold">Thank you for shopping at YG ENTERPRISES!</div>
+          <div class="font-bold">Thank you for shopping at ${getBranchProfile(data.branch).name || BRAND_EN}!</div>
           ${instagramUrls ? `<div style="font-size: 10px; margin-top: 2px;">Follow us on Instagram:<br/>${instagramUrls.split('\n').join('<br/>')}</div>` : ''}
         </div>
       </body>

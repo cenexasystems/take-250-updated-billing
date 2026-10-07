@@ -1160,7 +1160,7 @@ export default function Pos(props: PosProps = {}) {
                       : 'text-gray-600 hover:text-gray-900'
                   }`}
                 >
-                  POS 1 (Jute)
+                  {branchShortLabel('pos1')}
                 </button>
                 <button
                   type="button"
@@ -1171,7 +1171,7 @@ export default function Pos(props: PosProps = {}) {
                       : 'text-gray-600 hover:text-gray-900'
                   }`}
                 >
-                  POS 2 (Crackers)
+                  {branchShortLabel('pos2')}
                 </button>
                 <button
                   type="button"

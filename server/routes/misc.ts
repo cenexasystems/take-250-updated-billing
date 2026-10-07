@@ -7,11 +7,15 @@ import type { PermKey } from '../lib/permissions.js'
 
 // ---------------------------------------------------------------- uploads (Vercel Blob)
 const IMAGE = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] // no SVG: it can carry scripts
-const UPLOAD_KINDS: Array<{ kind: 'product-images' | 'invoices' | 'branding' | 'avatars'; types: string[]; maxBytes: number }> = [
-  { kind: 'product-images', types: IMAGE, maxBytes: 5 * 1024 * 1024 },
-  { kind: 'invoices', types: [...IMAGE, 'application/pdf'], maxBytes: 8 * 1024 * 1024 },
-  { kind: 'branding', types: IMAGE, maxBytes: 3 * 1024 * 1024 },
-  { kind: 'avatars', types: IMAGE, maxBytes: 2 * 1024 * 1024 },
+// Vercel rejects request bodies over 4.5 MB before the function runs, so every upload is capped at 4 MB (the client
+// checks the same limit first and shows the same message). The invoice PDFs the app uploads are generated in the
+// browser and are a few hundred KB.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024
+const UPLOAD_KINDS: Array<{ kind: 'product-images' | 'invoices' | 'branding' | 'avatars'; types: string[] }> = [
+  { kind: 'product-images', types: IMAGE },
+  { kind: 'invoices', types: [...IMAGE, 'application/pdf'] },
+  { kind: 'branding', types: IMAGE },
+  { kind: 'avatars', types: IMAGE },
 ]
 const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'application/pdf': 'pdf' }
 
@@ -24,7 +28,7 @@ const uploadRoutes = UPLOAD_KINDS.map((k) =>
       if (!k.types.includes(contentType)) throw new ApiError(415, 'Unsupported file type')
       const body = req.body as Buffer
       if (!Buffer.isBuffer(body) || body.length === 0) throw new ApiError(400, 'Empty upload')
-      if (body.length > k.maxBytes) throw new ApiError(413, 'File too large')
+      if (body.length > MAX_UPLOAD_BYTES) throw new ApiError(413, contentType === 'application/pdf' ? 'PDF too large, max 4 MB' : 'Image too large, max 4 MB')
       const base = (query.filename || 'file').replace(/\.[^.]*$/, '').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'file'
       // every path starts with the branch id taken from the token / validated admin selector
       const pathname = `${branch}/${k.kind}/${randomUUID()}-${base}.${EXT[contentType]}`

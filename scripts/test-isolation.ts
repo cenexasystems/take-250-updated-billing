@@ -25,6 +25,7 @@ const record = (ok: boolean, label: string, detail = '') => {
 async function run() {
   const pool = getPool()
   const c: PoolClient = await pool.connect()
+  c.on('error', (e) => console.error('database connection error:', e.message)) // see test-api.ts
   let sp = 0
 
   const ok = async <T>(label: string, fn: () => Promise<T>): Promise<T | undefined> => {

@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf'
 import { BRAND_EN, THEME_PALETTE } from './brand'
-import { printLogoFor } from './branchLogo'
+import { printLogoFor, thermalLogoFor } from './branchLogo'
 import { formatCurrency } from './retail'
 import type { AdvanceOrder } from '../services/advanceOrderService'
 import { getBranchProfile } from './branchProfile'
@@ -96,7 +96,7 @@ export function printAdvanceReceipt(order: AdvanceOrder) {
 </style>
 </head><body>
 <div class="c" style="margin-bottom: 6px;">
-  <img src="${printLogoFor(order.branch)}" style="width: 50px; height: 50px; object-fit: contain; margin: 0 auto; display: block;" alt="YG Logo" />
+  <img src="${thermalLogoFor(order.branch)}" style="width: 50px; height: 50px; object-fit: contain; margin: 0 auto; display: block;" alt="Logo" />
 </div>
 <div class="c big">${esc(BRAND_EN)}</div>
 <div class="c" style="font-size:10px;color:#555;">${esc(getBranchProfile(order.branch).address)}</div>

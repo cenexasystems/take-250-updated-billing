@@ -25,7 +25,7 @@ export function createApp(deps: Deps): Express {
   })
   // JSON for API bodies, raw bytes (size-capped) only for the upload routes
   app.use(express.json({ limit: '1mb' }))
-  app.use(express.raw({ type: ['image/*', 'application/pdf'], limit: '9mb' }))
+  app.use(express.raw({ type: ['image/*', 'application/pdf'], limit: '4.4mb' }))
   registerRoutes(app, allRoutes, deps)
   // Anything not registered above does not exist (default deny); never reveals framework details.
   app.use('/api', (_req, res) => { res.status(404).json({ error: 'Not found' }) })

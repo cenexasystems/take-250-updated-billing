@@ -74,7 +74,7 @@ export default function StoreSettingsView() {
       setForm((prev) => ({
         ...prev,
         themeColor: adminColor,
-        name: 'YG ENTERPRISES (Admin Portal)',
+        name: 'TAKE250 (Admin Portal)',
       }))
       return
     }
@@ -205,7 +205,7 @@ export default function StoreSettingsView() {
             }`}
           >
             <span className="w-2 h-2 rounded-full bg-red-500" />
-            POS 1 — Jute &amp; Wedding
+            {branchShortLabel('pos1')}
           </button>
           <button
             type="button"
@@ -217,7 +217,7 @@ export default function StoreSettingsView() {
             }`}
           >
             <span className="w-2 h-2 rounded-full bg-amber-500" />
-            POS 2 — Fireworks &amp; Crackers
+            {branchShortLabel('pos2')}
           </button>
           <button
             type="button"
@@ -372,7 +372,7 @@ export default function StoreSettingsView() {
                 </div>
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-wide text-gray-500 mb-1">Business Type</label>
-                  <input value={form.businessType} onChange={(e) => setForm((f) => ({ ...f, businessType: e.target.value }))} placeholder="e.g. Fireworks / Bags" className="w-full h-10 px-3 rounded-xl border border-gray-200 bg-[#FBFAF6] text-sm font-bold outline-none focus:border-gray-400" />
+                  <input value={form.businessType} onChange={(e) => setForm((f) => ({ ...f, businessType: e.target.value }))} placeholder="e.g. Dress & Footwear" className="w-full h-10 px-3 rounded-xl border border-gray-200 bg-[#FBFAF6] text-sm font-bold outline-none focus:border-gray-400" />
                 </div>
               </div>
             </div>

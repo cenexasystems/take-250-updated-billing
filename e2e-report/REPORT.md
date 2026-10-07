@@ -1,6 +1,6 @@
 # Browser test report
 
-199 passed, 0 failed (2026-10-06T14:06:06.329Z)
+219 passed, 0 failed (2026-10-07T03:58:05.148Z)
 
 | Result | Area | Check |
 |---|---|---|
@@ -52,16 +52,22 @@
 | PASS | staff pos1 | restock +10 in the browser changes this branch's stock (50 -> 60) |
 | PASS | staff pos1 | the stock movement was recorded in this branch only |
 | PASS | staff pos1 | the other branches' stock was not touched by this restock |
-| PASS | staff pos1 | scanning another branch's barcode (P2P10000002) at pos1: "not found" and nothing added to the bill |
+| PASS | staff pos1 | scanning another branch's barcode (P2P10000001) at pos1: "not found" and nothing added to the bill |
 | PASS | staff pos1 | the API agrees: 404 for that barcode in this branch |
-| PASS | staff pos1 | scanning this branch's barcode (PBP10000002) adds E2E Item 1 |
+| PASS | staff pos1 | scanning this branch's barcode (PBP10000001) adds E2E Item 1 |
 | PASS | staff pos1 | POS sale completes in pos1 and shows a bill number |
 | PASS | staff pos1 | the bill total is ₹100.00 |
 | PASS | staff pos1 | the bill is stored in pos1 with the right total |
 | PASS | staff pos1 | the sale reduced stock by exactly 1 in this branch (60 -> 59) |
 | PASS | staff pos1 | thermal receipt preview contains the bill number |
-| PASS | staff pos1 | thermal receipt uses pos1's logo (built-in logo) |
-| PASS | staff pos1 | bill view shows #INV10000003, the item and TOTAL ₹100.00 (no NaN) |
+| PASS | staff pos1 | thermal receipt prints pos1's built-in Take250 logo |
+| PASS | staff pos1 | thermal receipt prints pos1's own address only |
+| PASS | staff pos1 | thermal logo for pos1 is black artwork on white (corner 255,255,255, dark 16%) |
+| PASS | staff pos1 | bill view shows #INV10000001, the item and TOTAL ₹100.00 (no NaN) |
+| PASS | staff pos1 | bill view shows pos1's own address and no other branch's |
+| PASS | staff pos1 | bill view shows the shared Instagram, phone and email |
+| PASS | staff pos1 | bill view shows pos1's logo (yg-logo-pos1) |
+| PASS | staff pos1 | bill view has no trace of the old business name |
 | PASS | staff pos1 | PDF invoice downloads as a real PDF for pos1 |
 | PASS | staff pos1 | Order History lists the new bill |
 | PASS | staff pos1 | Order History shows none of the other branches' bills |
@@ -101,16 +107,22 @@
 | PASS | staff pos2 | restock +10 in the browser changes this branch's stock (50 -> 60) |
 | PASS | staff pos2 | the stock movement was recorded in this branch only |
 | PASS | staff pos2 | the other branches' stock was not touched by this restock |
-| PASS | staff pos2 | scanning another branch's barcode (P3P10000002) at pos2: "not found" and nothing added to the bill |
+| PASS | staff pos2 | scanning another branch's barcode (P3P10000001) at pos2: "not found" and nothing added to the bill |
 | PASS | staff pos2 | the API agrees: 404 for that barcode in this branch |
-| PASS | staff pos2 | scanning this branch's barcode (P2P10000002) adds E2E Item 2 |
+| PASS | staff pos2 | scanning this branch's barcode (P2P10000001) adds E2E Item 2 |
 | PASS | staff pos2 | POS sale completes in pos2 and shows a bill number |
 | PASS | staff pos2 | the bill total is ₹101.00 |
 | PASS | staff pos2 | the bill is stored in pos2 with the right total |
 | PASS | staff pos2 | the sale reduced stock by exactly 1 in this branch (60 -> 59) |
 | PASS | staff pos2 | thermal receipt preview contains the bill number |
-| PASS | staff pos2 | thermal receipt uses pos2's logo (built-in logo) |
-| PASS | staff pos2 | bill view shows #INV50000002, the item and TOTAL ₹101.00 (no NaN) |
+| PASS | staff pos2 | thermal receipt prints pos2's built-in Take250 logo |
+| PASS | staff pos2 | thermal receipt prints pos2's own address only |
+| PASS | staff pos2 | thermal logo for pos2 is black artwork on white (corner 255,255,255, dark 16%) |
+| PASS | staff pos2 | bill view shows #INV50000001, the item and TOTAL ₹101.00 (no NaN) |
+| PASS | staff pos2 | bill view shows pos2's own address and no other branch's |
+| PASS | staff pos2 | bill view shows the shared Instagram, phone and email |
+| PASS | staff pos2 | bill view shows pos2's logo (yg-logo-pos2) |
+| PASS | staff pos2 | bill view has no trace of the old business name |
 | PASS | staff pos2 | PDF invoice downloads as a real PDF for pos2 |
 | PASS | staff pos2 | Order History lists the new bill |
 | PASS | staff pos2 | Order History shows none of the other branches' bills |
@@ -150,16 +162,22 @@
 | PASS | staff pos3 | restock +10 in the browser changes this branch's stock (50 -> 60) |
 | PASS | staff pos3 | the stock movement was recorded in this branch only |
 | PASS | staff pos3 | the other branches' stock was not touched by this restock |
-| PASS | staff pos3 | scanning another branch's barcode (PBP10000002) at pos3: "not found" and nothing added to the bill |
+| PASS | staff pos3 | scanning another branch's barcode (PBP10000001) at pos3: "not found" and nothing added to the bill |
 | PASS | staff pos3 | the API agrees: 404 for that barcode in this branch |
-| PASS | staff pos3 | scanning this branch's barcode (P3P10000002) adds E2E Item 3 |
+| PASS | staff pos3 | scanning this branch's barcode (P3P10000001) adds E2E Item 3 |
 | PASS | staff pos3 | POS sale completes in pos3 and shows a bill number |
 | PASS | staff pos3 | the bill total is ₹102.00 |
 | PASS | staff pos3 | the bill is stored in pos3 with the right total |
 | PASS | staff pos3 | the sale reduced stock by exactly 1 in this branch (60 -> 59) |
 | PASS | staff pos3 | thermal receipt preview contains the bill number |
-| PASS | staff pos3 | thermal receipt uses pos3's logo (Branch 3 placeholder) |
-| PASS | staff pos3 | bill view shows #INV90000002, the item and TOTAL ₹102.00 (no NaN) |
+| PASS | staff pos3 | thermal receipt prints pos3's built-in Take250 logo |
+| PASS | staff pos3 | thermal receipt prints pos3's own address only |
+| PASS | staff pos3 | thermal logo for pos3 is black artwork on white (corner 255,255,255, dark 23%) |
+| PASS | staff pos3 | bill view shows #INV90000001, the item and TOTAL ₹102.00 (no NaN) |
+| PASS | staff pos3 | bill view shows pos3's own address and no other branch's |
+| PASS | staff pos3 | bill view shows the shared Instagram, phone and email |
+| PASS | staff pos3 | bill view shows pos3's logo (yg-logo-pos3) |
+| PASS | staff pos3 | bill view has no trace of the old business name |
 | PASS | staff pos3 | PDF invoice downloads as a real PDF for pos3 |
 | PASS | staff pos3 | Order History lists the new bill |
 | PASS | staff pos3 | Order History shows none of the other branches' bills |
@@ -199,9 +217,11 @@
 | PASS | admin | the admin can open the Analytics Dashboard |
 | PASS | admin | a branch id in the request body is refused even for the admin |
 | PASS | polling | tab B (same session) created a product and a bill |
-| PASS | polling | tab A (Order History) shows the new bill by itself, no reload (5 s) |
-| PASS | polling | tab C (POS catalogue) shows the new product by itself, no reload (5 s) |
+| PASS | polling | tab A (Order History) shows the new bill by itself, no reload (6 s) |
+| PASS | polling | tab C (POS catalogue) shows the new product by itself, no reload (6 s) |
 | PASS | polling | a change in another branch never appears in this branch's tab |
+| PASS | logos | Branch 1 and Branch 2 print the same (shirt shop) logo |
+| PASS | logos | Branch 3 prints its own (women's wear) logo |
 | PASS | summary | no uncaught page errors / console errors in any flow |
 
 ## Screenshots

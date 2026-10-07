@@ -47,5 +47,5 @@ if (process.argv[1] && /dev-server\.ts$/.test(process.argv[1].replace(/\\/g, '/'
     console.error('dist/ is missing: run `npm run build` first (or use `npm run dev:full`).')
     process.exit(1)
   }
-  startDevServer(Number(process.env.PORT || 4310)).then(({ origin }) => console.log(`YG Billing: ${origin}`))
+  startDevServer(Number(process.env.PORT || 4310)).then(({ origin }) => console.log(`Take250 Billing: ${origin}`))
 }

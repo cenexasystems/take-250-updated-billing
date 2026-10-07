@@ -1,6 +1,6 @@
-# YG Enterprises Billing
+# Take250 Billing
 
-React + Vite point-of-sale and inventory administration for YG Enterprises, with three isolated branches (Branch 1, Branch 2, Branch 3), a passcode-only login and three portals: **Admin**, **Manager** and **Staff**. Data lives in **Neon Postgres**, served through a small Express API (`server/`, deployed as one Vercel function in `api/index.ts`). Files go to **Vercel Blob**.
+React + Vite point-of-sale and inventory administration for Take250 (dress, footwear and women's wear), with three isolated branches (Branch 1 Karanthai, Branch 2 Kinathukadavu, Branch 3 Pollachi), a passcode-only login and three portals: **Admin**, **Manager** and **Staff**. Data lives in **Neon Postgres**, served through a small Express API (`server/`, deployed as one Vercel function in `api/index.ts`). Files go to **Vercel Blob**.
 
 The screens, invoices, PDFs, thermal receipts, CSV exports and barcode labels are the original app's; only the login, the three portals, the branch badge / switcher, the Change passcodes section, the black-and-gold colours and the backend plumbing differ.
 
@@ -38,7 +38,7 @@ Server only (never prefix with `VITE_`):
 | `SEED_PASSCODE_ADMIN`, `SEED_PASSCODE_MANAGER_BRANCH1..3`, `SEED_PASSCODE_STAFF_BRANCH1..3` | initial passcodes for `npm run db:seed` only (min 8 chars, all different). Remove them after seeding and change them from Admin → Change passcodes |
 | `LOGIN_SLOWDOWN_STEP_MS`, `LOGIN_SLOWDOWN_MAX_MS` | optional; default 200 ms per failure beyond 10 system-wide, capped at 4000 ms |
 
-Public (bundled into the frontend): `VITE_WHATSAPP_NUMBER`.
+No `VITE_` (browser-side) variables are needed: shop phone numbers, addresses and Instagram are Store Settings data.
 
 > **Direct Neon URL, tests only.** `npm run test:api` and `npm run test:isolation` run one long transaction that is rolled back. Neon's pooled endpoint drops a connection that stays open for several minutes, so `scripts/test-env.ts` automatically swaps `-pooler` out of `DATABASE_URL` for those two scripts. Nothing else uses the direct URL; production keeps the pooled one.
 
@@ -64,7 +64,7 @@ Step-by-step preview checklist (Neon preview branch, env vars, Blob store, migra
 
 1. Create the project from this repository. Framework: **Vite** (already in `vercel.json`).
 2. **Storage → Blob → Create store** and connect it to the project: this adds `BLOB_READ_WRITE_TOKEN`.
-3. **Settings → Environment Variables** (Production and Preview): `DATABASE_URL` (pooled Neon URL), `JWT_SECRET`, `VITE_WHATSAPP_NUMBER`. Use a separate Neon branch for Preview.
+3. **Settings → Environment Variables** (Production and Preview): `DATABASE_URL` (pooled Neon URL) and `JWT_SECRET`. Use a separate Neon branch for Preview.
 4. Rewrites are in `vercel.json`: `/api/*` → the Express function `api/index.ts`; every other path → `index.html` (the SPA). API responses are sent with `Cache-Control: no-store`, and the service worker never caches `/api`.
 5. Once, against that database from your machine: `npm run db:migrate && npm run db:seed` (with the `SEED_PASSCODE_*` variables in your local `.env`).
 6. Deploy. Old customer-storefront URLs (`/login`, `/register`, `/profile`, `/products`, `/cart`, …) redirect to the passcode login.
@@ -77,4 +77,4 @@ Generated barcodes are `<prefix><P|V><8 digits>` (e.g. `PBP10000001`) with an in
 
 Label settings and custom label sizes are kept in the browser's `localStorage` under `yg:barcode-settings:<branch_id>` and `yg:label-sizes:<branch_id>`, and are cleared on login, logout and every branch switch.
 
-Brand assets are located in `public/` (`yg-logo*.png`, `branch-placeholder.svg` for Branch 3 until its real logo is added in Store Settings).
+Branding: the two source logos are in `branding/` (shirt shop for Branches 1 and 2, women's wear for Branch 3). `node scripts/make-branding-assets.mjs` rebuilds every logo and icon from them (`public/yg-logo*.png`, the PWA / favicon icons and `src/lib/logoBase64.ts`; file names keep the old `yg-` prefix so no path changes). Each branch's shop name, owner, phones, email, address and Instagram are data (migration `0005_take250_branding.sql`, editable in Admin → Store Settings); a different logo for a branch can also be uploaded there.

@@ -5,11 +5,11 @@ import {
   BRAND_EN,
   BRAND_LOGO_POS1,
   BRAND_LOGO_POS2,
+  BRAND_LOGO_POS3,
   BRAND_PRIMARY_PHONE_DISPLAY,
   getInstagramUrls,
 } from './brand'
 import { cleanIdentityField } from './identity'
-import { printLogoFor } from './branchLogo'
 
 export interface BranchProfile {
   name: string
@@ -45,7 +45,7 @@ export function getBranchProfile(branch?: string | null): BranchProfile {
     address: cleanIdentityField(s?.address) || BRAND_ADDRESS,
     phone: cleanIdentityField(s?.phone) || BRAND_PRIMARY_PHONE_DISPLAY,
     email: cleanIdentityField(s?.email) || BRAND_EMAIL,
-    logo: s?.logoUrl || (b === 'pos3' ? printLogoFor(b) : b === 'pos2' ? BRAND_LOGO_POS2 : BRAND_LOGO_POS1),
+    logo: s?.logoUrl || (b === 'pos3' ? BRAND_LOGO_POS3 : b === 'pos2' ? BRAND_LOGO_POS2 : BRAND_LOGO_POS1),
     instagramUrls: instagramUrlsFromIds(s?.instagramId) || getInstagramUrls(b),
   }
 }

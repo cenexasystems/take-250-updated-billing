@@ -247,7 +247,7 @@ export const Invoice: React.FC<InvoiceProps> = ({
         }}
       >
         <div style={{ fontSize: 12, fontWeight: 800, color: THEME_PALETTE.primary, letterSpacing: 0.5 }}>
-          Thank you for shopping at YG ENTERPRISES!
+          Thank you for shopping at {profile.name}!
         </div>
         {instagramUrls && (
           <div style={{ fontSize: 10, color: '#666', marginTop: 3, fontWeight: 500, whiteSpace: 'pre-line' }}>

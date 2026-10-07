@@ -48,6 +48,8 @@ const check = (ok: boolean, label: string, detail = '') => {
 async function run() {
   const pool = getPool()
   const client: PoolClient = await pool.connect()
+  // Neon can reset a long-held connection; without a listener that error would kill the process before the finally block restores the counters
+  client.on('error', (e) => console.error('database connection error:', e.message))
   const db = singleClientDb(client)
   const rows = async <T = any>(sql: string, p: unknown[] = []): Promise<T[]> => (await client.query(sql, p)).rows as T[]
   const one = async <T = any>(sql: string, p: unknown[] = []): Promise<T> => (await rows<T>(sql, p))[0]
@@ -458,6 +460,12 @@ async function run() {
       check((await up('staff1', 'product-images', { raw: { buf: Buffer.from('<svg/>'), type: 'image/svg+xml' } })).status === 415, 'SVG upload refused (415)')
       check((await up('staff1', 'product-images', { raw: { buf: Buffer.from('x'), type: 'text/html' } })).status === 415, 'HTML upload refused (415)')
       check((await up('staff1', 'product-images', { raw: { buf: Buffer.alloc(6 * 1024 * 1024, 1), type: 'image/png' } })).status === 413, 'oversized image refused (413)')
+      const over = await up('staff1', 'product-images', { raw: { buf: Buffer.alloc(4 * 1024 * 1024 + 1, 1), type: 'image/png' } })
+      check(over.status === 413 && over.body.error === 'Image too large, max 4 MB', 'an image of 4 MB + 1 byte is refused with "Image too large, max 4 MB"', `${over.status} ${JSON.stringify(over.body)}`)
+      check((await up('staff1', 'product-images', { raw: { buf: Buffer.alloc(4 * 1024 * 1024, 1), type: 'image/png' } })).status === 201, 'an image of exactly 4 MB is accepted')
+      const bigPdf = await up('staff1', 'invoices', { raw: { buf: Buffer.alloc(4 * 1024 * 1024 + 1, 1), type: 'application/pdf' } })
+      check(bigPdf.status === 413 && bigPdf.body.error === 'PDF too large, max 4 MB', 'a PDF over 4 MB is refused with "PDF too large, max 4 MB"')
+      check((await up('manager1', 'branding', { raw: { buf: Buffer.alloc(4 * 1024 * 1024 + 1, 1), type: 'image/jpeg' } })).status === 413, 'branding images share the same 4 MB cap')
       check((await up('staff1', 'product-images', { body: undefined, raw: { buf: Buffer.alloc(0), type: 'image/png' } })).status === 400, 'empty upload refused')
       check((await up('staff1', 'product-images', { query: { filename: 'a.png', branch_id: 'pos2' } })).status === 400, 'upload refuses a client branch_id')
       check(blobCalls.every((c) => /^pos[123]\//.test(c.pathname)), 'every blob path in the run starts with a branch id')

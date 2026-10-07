@@ -124,7 +124,7 @@ export const InventoryAnalyticsView: React.FC = () => {
       })
 
       const csv = buildCsv(headers, rows)
-      downloadCsvFile(`YG_Inventory_Snapshot_${new Date().toISOString().slice(0, 10)}.csv`, csv)
+      downloadCsvFile(`TAKE250_Inventory_Snapshot_${new Date().toISOString().slice(0, 10)}.csv`, csv)
     } catch (err) {
       console.error('Failed to export inventory snapshot:', err)
     } finally {
@@ -161,7 +161,7 @@ export const InventoryAnalyticsView: React.FC = () => {
     ])
 
     const csv = buildCsv(headers, rows)
-    downloadCsvFile(`YG_Inventory_Movements_${range}_${Date.now()}.csv`, csv)
+    downloadCsvFile(`TAKE250_Inventory_Movements_${range}_${Date.now()}.csv`, csv)
   }
 
   const getMovementBadge = (type: InventoryMovement['movement_type']) => {

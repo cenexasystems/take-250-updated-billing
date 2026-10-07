@@ -131,6 +131,8 @@ async function main() {
 
     // ============================================================================================ 3. each branch: staff + manager
     const bills: Record<string, string> = {}
+    const thermalLogo: Record<string, string> = {}
+    const ADDRESS_HINT: Record<string, string> = { pos1: 'Karanthai', pos2: 'Kinathukadavu', pos3: 'Bhagvati Palayam' } // each branch prints its own address
     for (let i = 0; i < 3; i++) {
       const b = B[i]
       const me = fx[b]
@@ -218,12 +220,27 @@ async function main() {
       const thermal: string = await page.evaluate(() => (window as any).__thermal)
       check(thermal.length > 500 && thermal.includes(invNo), 'thermal receipt preview contains the bill number', `len=${thermal.length}`)
       const logoSrc = (thermal.match(/<img[^>]+src="([^"]+)"/) || [])[1] || ''
-      check(i === 2 ? /branch-placeholder/.test(logoSrc) : /^data:image/.test(logoSrc), `thermal receipt uses ${b}'s logo (${i === 2 ? 'Branch 3 placeholder' : 'built-in logo'})`, logoSrc.slice(0, 60))
+      thermalLogo[b] = logoSrc
+      check(/^data:image/.test(logoSrc), `thermal receipt prints ${b}'s built-in Take250 logo`, logoSrc.slice(0, 40))
+      const thermalText = thermal.replace(/<[^>]+>/g, ' ')
+      check(thermalText.includes(ADDRESS_HINT[b]) && !Object.entries(ADDRESS_HINT).some(([k, h]) => k !== b && thermalText.includes(h)), `thermal receipt prints ${b}'s own address only`, ADDRESS_HINT[b])
       if (thermal) {
         fs.writeFileSync(path.join(OUT, `thermal-${b}.html`), thermal)
         const pv = await ctx2(browser)
         await pv.setContent(thermal.replace(/src="\/([^"]+)"/g, `src="${origin}/$1"`))
         await sleep(400)
+        // the thermal logo must be black artwork on a WHITE background (a black one prints as a solid badge)
+        const px = await pv.evaluate(async () => {
+          const img = document.querySelector('img') as HTMLImageElement
+          await img.decode()
+          const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight
+          const g = c.getContext('2d')!; g.drawImage(img, 0, 0)
+          const all = g.getImageData(0, 0, c.width, c.height).data
+          let dark = 0; for (let k = 0; k < all.length; k += 4) if (all[k] < 100) dark++
+          const corner = g.getImageData(0, 0, 3, 3).data
+          return { corner: [corner[0], corner[1], corner[2]], darkShare: dark / (all.length / 4) }
+        })
+        check(px.corner.every((v) => v > 240) && px.darkShare < 0.45, `thermal logo for ${b} is black artwork on white (corner ${px.corner.join(',')}, dark ${(px.darkShare * 100).toFixed(0)}%)`)
         await shot(pv, `thermal-preview-${b}`)
         await pv.context().close()
       }
@@ -233,6 +250,10 @@ async function main() {
       const bill = await bodyText(page)
       check(bill.includes(`#INV${invNo}`) && bill.includes(me.name) && new RegExp(`TOTAL\\s*₹${me.price}\\.00`).test(bill) && !/NaN/.test(bill), `bill view shows #INV${invNo}, the item and TOTAL ₹${me.price}.00 (no NaN)`)
       await shot(page, `staff-${b}-bill-view`)
+      check(bill.includes(ADDRESS_HINT[b]) && !Object.entries(ADDRESS_HINT).some(([k, h]) => k !== b && bill.includes(h)), `bill view shows ${b}'s own address and no other branch's`)
+      check(/take\.250shop/i.test(bill) && /73358/.test(bill.replace(/\s/g, '')) && /take250shop@gmail\.com/i.test(bill), 'bill view shows the shared Instagram, phone and email')
+      check((await page.locator(`img[src*='yg-logo-pos${i + 1}']`).count()) > 0, `bill view shows ${b}'s logo (yg-logo-pos${i + 1})`)
+      check(!/YG ENTERPRISES|Jute|Fireworks|Wedding/i.test(bill), 'bill view has no trace of the old business name')
       const dl = page.waitForEvent('download', { timeout: 20000 }).catch(() => null)
       await page.getByRole('button', { name: /pdf invoice/i }).click()
       const d = await dl
@@ -309,9 +330,11 @@ async function main() {
       await go(mp, '/dashboard?tab=store_settings')
       await waitText(mp, 'Profile')
       const ss = await bodyText(mp)
-      const ownLabel = b === 'pos1' ? 'Jute & Wedding POS' : b === 'pos2' ? 'Fireworks POS' : ((await apiGet(mp, '/api/branches')).branches.find((x: any) => x.id === b)?.short_label as string | undefined)
+      const branchRows = (await apiGet(mp, '/api/branches')).branches as any[]
+      const ownLabel = branchRows.find((x) => x.id === b)?.short_label as string | undefined
+      const branch1Label = (branchRows.find((x) => x.id === 'pos1')?.short_label as string | undefined) || 'take250 karanthai'
       const profileTitles = [...ss.matchAll(/([A-Za-z0-9 &'.-]+?) Profile/gi)].map((m) => m[1].trim().toLowerCase()) // the heading is upper-cased by CSS
-      check(profileTitles.length > 0 && !!ownLabel && profileTitles.some((t) => t.endsWith(ownLabel.toLowerCase())) && (i === 0 || !profileTitles.some((t) => t.endsWith('jute & wedding pos'))), `Store Settings shows ${b}'s own profile (not Branch 1)`, profileTitles.join(' | '))
+      check(profileTitles.length > 0 && !!ownLabel && profileTitles.some((t) => t.endsWith(ownLabel.toLowerCase())) && (i === 0 || !profileTitles.some((t) => t.endsWith(branch1Label.toLowerCase()))), `Store Settings shows ${b}'s own profile (not Branch 1)`, profileTitles.join(' | '))
       check((await mp.locator('button:has-text("Admin Portal (Global)")').count()) === 0, 'manager has no branch tabs in Store Settings')
       await mg.ctx.close()
     }
@@ -355,9 +378,11 @@ async function main() {
         check(hn.includes(bills[B[n - 1]]) && !Object.entries(bills).filter(([k]) => k !== B[n - 1]).some(([, no]) => hn.includes(no)), `branch ${n} order history shows only branch ${n}'s bill`)
         // Store Settings follows the branch selected in the switcher
         await p.getByRole('button', { name: /store settings/i }).first().click(); await settle(p); await waitText(p, 'Profile')
-        const lbl = n === 2 ? 'Fireworks POS' : ((await apiGet(p, `/api/branches`)).branches.find((x: any) => x.id === `pos${n}`)?.short_label as string)
+        const rowsAdm = (await apiGet(p, `/api/branches`)).branches as any[]
+        const lbl = rowsAdm.find((x) => x.id === `pos${n}`)?.short_label as string
+        const lbl1 = rowsAdm.find((x) => x.id === 'pos1')?.short_label as string
         const titles = [...(await bodyText(p)).matchAll(/([A-Za-z0-9 &'.-]+?) Profile/gi)].map((m) => m[1].trim().toLowerCase())
-        check(titles.some((t) => t.endsWith(lbl.toLowerCase())) && !titles.some((t) => t.endsWith('jute & wedding pos')), `admin on branch ${n}: Store Settings opens on branch ${n}'s profile, not Branch 1`, titles.join(' | '))
+        check(titles.some((t) => t.endsWith(lbl.toLowerCase())) && !titles.some((t) => t.endsWith(lbl1.toLowerCase())), `admin on branch ${n}: Store Settings opens on branch ${n}'s profile, not Branch 1`, titles.join(' | '))
       }
       // analytics is the admin's
       await sel.selectOption('pos1'); await settle(p)
@@ -407,6 +432,10 @@ async function main() {
       await sC.ctx.close()
       await s1.ctx.close()
     }
+
+    area = 'logos'
+    check(!!thermalLogo.pos1 && thermalLogo.pos1 === thermalLogo.pos2, 'Branch 1 and Branch 2 print the same (shirt shop) logo')
+    check(!!thermalLogo.pos3 && thermalLogo.pos3 !== thermalLogo.pos1, "Branch 3 prints its own (women's wear) logo")
 
     area = 'summary'
     check(errors.length === 0, 'no uncaught page errors / console errors in any flow', errors.slice(0, 4).join(' || '))

@@ -2,7 +2,7 @@
  * Legacy placeholder identities that were seeded into `store_settings` by very
  * early migrations (Purple Boutique, CLAD, Chaji Mens Wear). They must never
  * reach a customer-facing surface (invoice header, thermal receipt, advance
- * receipt, WhatsApp message) — YG Enterprises branding is the only identity
+ * receipt, WhatsApp message) — Take250 branding is the only identity
  * this app ships.
  *
  * A field is treated as "empty" when it matches one of these markers, so the

@@ -24,7 +24,7 @@ Optional, not recommended here: the Neon–Vercel integration creates a database
 1. Vercel dashboard → the project → **Storage** → **Create Database** → **Blob** → name it e.g. `yg-billing-preview`.
 2. Access must be **Public**: the API stores files with `access: 'public'` and the app shows them by URL (product images, logos, invoice PDFs).
 3. **Connect to Project**, tick **Preview** (and Production later, ideally with its own separate store). Connecting adds `BLOB_READ_WRITE_TOKEN` to those environments automatically.
-4. Known limit: Vercel rejects request bodies over **4.5 MB** before the function runs. The API accepts up to 5 MB (images) / 8 MB (PDFs), so keep product photos under about 4 MB.
+4. Known limit: Vercel rejects request bodies over **4.5 MB** before the function runs, so the API and the app both cap every upload at **4 MB** ("Image too large, max 4 MB"). The only PDFs uploaded are the invoice PDFs the browser generates (a few hundred KB); the heavier screenshot-style PDF is only ever downloaded, never uploaded.
 
 ## 3. Vercel environment variables (scope: Preview only)
 
@@ -35,7 +35,6 @@ Project → **Settings → Environment Variables**. For each one, untick Product
 | `DATABASE_URL` | the **pooled** (`-pooler`) string of the Neon `preview` branch | never the dev or production string |
 | `JWT_SECRET` | a new random value, at least 32 chars | generate: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. Different from production; changing it later signs everyone out |
 | `BLOB_READ_WRITE_TOKEN` | added by step 2 | do not type it in; just check it is listed under Preview |
-| `VITE_WHATSAPP_NUMBER` | the WhatsApp number | public by design, bundled into the frontend |
 
 Do **not** set on Vercel: `COOKIE_INSECURE` (it would drop the `Secure` flag), `SEED_PASSCODE_*` (seeding is done from your machine), `TRUST_PROXY` (not needed on Vercel).
 Changing an env var only affects **new** deployments: redeploy after any change.
@@ -114,7 +113,7 @@ Let `URL` be the preview address, e.g. `https://yg-billing-git-xyz.vercel.app`.
 
 - [ ] Admin → Store Settings → upload a small PNG as the branch logo and Save. The logo shows in the header and on the thermal preview.
 - [ ] Open the logo's address in a new tab: it is a `…public.blob.vercel-storage.com/pos1/branding/…` URL and loads without a login.
-- [ ] Add a product image (about 1 MB). Then try one over 4.5 MB and confirm the failure is a clear error, not a blank screen.
+- [ ] Add a product image (about 1 MB). Then try one over 4 MB: the app must say "Image too large, max 4 MB" without sending it.
 - [ ] Vercel dashboard → Storage → Blob lists the files under `pos1/…`, `pos2/…`: paths always start with the branch id.
 
 ### E. Polling and sessions
@@ -144,6 +143,6 @@ Let `URL` be the preview address, e.g. `https://yg-billing-git-xyz.vercel.app`.
 | `/api/health` 503 "Server settings missing" | the named variable is missing for the Preview environment; redeploy after adding |
 | Login always "Invalid passcode" | the preview database was not seeded (step 4), or seeded with different passcodes |
 | Login works, then logged out at once | `JWT_SECRET` changed between requests, or `COOKIE_INSECURE=1` set on Vercel |
-| Upload fails with 413 | file over 4.5 MB (Vercel platform limit) |
+| Upload fails with 413 | file over 4 MB (app limit; Vercel's own limit is 4.5 MB) |
 | Upload fails with 500 | Blob store not connected to **Preview**, or not Public |
 | First request after idle is slow | Neon autosuspend + function cold start; the second request is fast |

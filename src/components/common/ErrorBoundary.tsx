@@ -23,7 +23,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('[YG ErrorBoundary] Uncaught exception captured:', error, errorInfo)
+    console.error('[ErrorBoundary] Uncaught exception captured:', error, errorInfo)
 
     // Automatically reload once if dynamic chunk failed due to a new deployment
     const msg = error?.message || ''

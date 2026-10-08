@@ -49,14 +49,11 @@ async function main() {
     page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`))
     page.on('console', (m) => { if (m.type() === 'error' && !/favicon|Failed to load resource/.test(m.text()) && !(tag === 'anon' && /Failed to fetch/.test(m.text()))) errors.push(`${tag}: ${m.text().slice(0, 160)}`) })
   }
-  // the login screen: pick the portal tab, then (staff / manager) the branch tile, type the passcode, submit
-  async function uiLogin(page: Page, role: Role, i: number, passcode: string) {
-    await page.getByRole('tab', { name: role === 'staff' ? /staff pos login/i : role === 'manager' ? /manager login/i : /admin orchestrator/i }).click()
-    if (role !== 'admin') await page.locator(`button[data-branch="pos${i + 1}"]`).click()
+  // the login screen is only a logo and a passcode field: the passcode alone decides the portal and the branch
+  async function uiLogin(page: Page, _role: Role, _i: number, passcode: string) {
     await page.locator('input[type="password"]').first().fill(passcode)
     await page.locator('button[type="submit"]').click()
-  }
-  async function loginAs(role: Role, i = 0, tag = ''): Promise<{ ctx: BrowserContext; page: Page }> {
+  }  async function loginAs(role: Role, i = 0, tag = ''): Promise<{ ctx: BrowserContext; page: Page }> {
     const ctx = await newCtx()
     const page = await ctx.newPage()
     watch(page, `${role}${role === 'admin' ? '' : i + 1}${tag}`)
@@ -89,34 +86,17 @@ async function main() {
         await page.waitForURL(/admin-login/, { timeout: 8000 }).catch(() => undefined)
         await page.locator('input[type="password"]').first().waitFor({ timeout: 8000 }).catch(() => undefined)
         const txt = await bodyText(page)
-        check(/admin-login/.test(page.url()) && txt.length > 40 && /passcode/i.test(txt), `${p} -> passcode login (not blank)`, `${page.url()} len=${txt.length}`)
+        check(/admin-login/.test(page.url()) && txt.length > 20 && (await page.locator('input[type="password"]').count()) === 1, `${p} -> passcode login (not blank)`, `${page.url()} len=${txt.length}`)
       }
       await shot(page, 'login-page')
-      // the screen itself: three portal tabs, three branch tiles with their own logos, Admin has no branch tiles
+      // the screen itself: a logo and a passcode field, nothing that names a portal, a role or a branch
       await page.goto(`${origin}/admin-login`)
       await page.locator('input[type="password"]').first().waitFor()
-      const tabs = (await page.getByRole('tab').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim().toLowerCase())
-      check(tabs.length === 3 && /staff pos login/.test(tabs[0]) && /manager login/.test(tabs[1]) && /admin orchestrator/.test(tabs[2]), 'login screen has the tabs Staff POS Login / Manager Login / Admin Orchestrator', tabs.join(' | '))
-      const tileLogos = await page.locator('button[data-branch] img').evaluateAll((els) => els.map((e) => (e as HTMLImageElement).getAttribute('src') || ''))
-      check(tileLogos.length === 3 && ['pos1', 'pos2', 'pos3'].every((b, k) => tileLogos[k].includes(`yg-logo-${b}`)), 'login screen shows three branch tiles, each with its own logo', tileLogos.join(' | '))
-      check(/Take250 Karanthai/i.test(await bodyText(page)) && /Take250 Kinathukadavu/i.test(await bodyText(page)) && /Take250 Pollachi/i.test(await bodyText(page)), 'the branch tiles carry the three shop names')
-      await shot(page, 'login-staff-tab')
-      await page.getByRole('tab', { name: /manager login/i }).click(); await shot(page, 'login-manager-tab')
-      await page.getByRole('tab', { name: /admin orchestrator/i }).click()
-      check((await page.locator('button[data-branch]').count()) === 0, 'the Admin tab has no branch tiles')
-      await shot(page, 'login-admin-tab')
-      // a valid passcode of ANOTHER portal is refused exactly like a wrong passcode (no hint which is which).
-      // Kept to 4 failures in total here: the 5th failure from one IP would lock this test's own logins out.
-      for (const [role, i, label] of [['staff', 1, 'Staff Branch 1 passcode on the Branch 2 tile'], ['admin', 0, 'Staff Branch 1 passcode on the Admin tab']] as Array<[Role, number, string]>) {
-        await page.goto(`${origin}/admin-login`)
-        await uiLogin(page, role, i, PASS.staff[0])
-        await page.getByText(/incorrect passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
-        check(/incorrect passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), `${label} is refused`)
-      }
-      await page.goto(`${origin}/admin-login`)
-      await uiLogin(page, 'staff', 0, PASS.admin)
-      await page.getByText(/incorrect passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
-      check(/incorrect passcode/i.test(await bodyText(page)) && /admin-login/.test(page.url()), 'the Admin passcode on the Staff tab is refused')
+      const loginText = await bodyText(page)
+      check(!/staff|manager|admin|orchestrator|branch|women|karanthai|kinathukadavu|pollachi|portal/i.test(loginText), 'the login screen names no role, portal, branch, shop or product line', loginText)
+      check((await page.getByRole('tab').count()) === 0 && (await page.locator('button[data-branch]').count()) === 0, 'the login screen has no tabs and no branch tiles')
+      check((await page.locator('input[type="password"]').count()) === 1 && (await page.locator('img').count()) === 1, 'the login screen is one logo and one passcode field')
+      await shot(page, 'login-final')
       await page.goto(`${origin}/admin-login`)
       await uiLogin(page, 'staff', 0, 'definitely-wrong-passcode')
       await page.getByText(/incorrect passcode/i).waitFor({ timeout: 8000 }).catch(() => undefined)
@@ -156,6 +136,12 @@ async function main() {
       check(p.status === 201 && rec.status === 200 && /^(PB|P2|P3)P\d{8}$/.test(rec.body.barcode_value), `fixture product + barcode in ${b}`, rec.body?.barcode_value)
     }
     check(new Set(Object.values(fx).map((f) => f.code)).size === 3, 'three branches, three different barcodes', Object.values(fx).map((f) => f.code).join(' / '))
+    // a product with three variants, each with its OWN barcode (Branch 1): scanning must return the right variant and price
+    const salwar = await apiSend(admin.page, 'post', '/api/products?branch_id=pos1', { name: 'E2E Salwar', category: 'E2E', price: 100, stock_quantity: 0, stock: 0, has_variants: true, is_active: true })
+    const salwarVariants: Array<[string, number, string]> = [['XL', 100, 'E2E-SAL-XL'], ['XXL', 200, 'E2E-SAL-XXL'], ['XXXL', 300, 'E2E-SAL-XXXL']]
+    for (const [vn, price, code] of salwarVariants) await apiSend(admin.page, 'post', '/api/variants?branch_id=pos1', { product_id: salwar.body.product.id, variant_name: vn, price, stock: 5, barcode: code })
+    const dupVariant = await apiSend(admin.page, 'post', '/api/variants?branch_id=pos1', { product_id: salwar.body.product.id, variant_name: 'Dup', price: 1, stock: 1, barcode: 'e2e-sal-xl' })
+    check(dupVariant.status === 409, 'a fourth variant with an existing barcode is refused (409)', JSON.stringify(dupVariant.body))
     await admin.ctx.close()
 
     // ============================================================================================ 3. each branch: staff + manager
@@ -174,7 +160,8 @@ async function main() {
       const nav = (await navLabels(page)).join(' | ')
       check(/Store Dashboard & POS/.test(nav) && /Stock & Inventory/.test(nav) && /Advance Orders/.test(nav) && /Order History/.test(nav), 'staff sees POS, Stock, Advance Orders, Order History', nav)
       check(!/Expenses|Analytics|Coupons|Store Settings|Staff & Memberships|Business Overview/.test(nav), 'staff sees none of Expenses / Analytics / Coupons / Settings / Passcodes / Global', nav)
-      check(new RegExp(`STAFF\\s*·\\s*Branch ${i + 1}`, 'i').test(await bodyText(page)), `header badge reads "STAFF · Branch ${i + 1}"`)
+      const staffBody = await bodyText(page)
+      check(/\bSTAFF\b/.test(staffBody) && !/Branch\s*\d/i.test(staffBody), 'staff header badge reads just STAFF and the screen never says Branch 1/2/3')
       check((await page.locator('aside select').count()) === 0, 'staff has no branch switcher')
       for (const blocked of ['/expenses', '/pos-analytics', '/whatsapp-center', '/dashboard?tab=expenses', '/dashboard?tab=pos_analytics', '/dashboard?tab=store_settings', '/dashboard?tab=coupons', '/dashboard?tab=staff_memberships']) {
         await go(page, blocked)
@@ -222,7 +209,10 @@ async function main() {
       await page.locator('input[placeholder="Enter WhatsApp number"]').first().fill('9876543210')
       await page.locator('input[placeholder="0.00"]').first().fill('500')
       await shot(page, `staff-${b}-pos-before-sale`)
-      await page.getByRole('button', { name: /complete sale/i }).click()
+      check(!/Branch\s*\d|All Branches|Global/i.test(await bodyText(page)), 'the staff POS screen never says Branch 1/2/3 and shows no branch switcher')
+      // Branch 1 taps Complete Sale TWICE in a row (a slow phone): there must still be exactly ONE bill and one unit of stock gone
+      if (i === 0) await page.getByRole('button', { name: /complete sale/i }).dblclick()
+      else await page.getByRole('button', { name: /complete sale/i }).click()
       await page.getByText(/bill generated successfully/i).waitFor({ timeout: 25000 }).catch(() => undefined)
       const done = await bodyText(page)
       const invNo = (done.match(/#INV(\d+)/) || [])[1]
@@ -283,7 +273,31 @@ async function main() {
       check(/take\.250shop/i.test(bill) && /73358/.test(bill.replace(/\s/g, '')) && /take250shop@gmail\.com/i.test(bill), 'bill view shows the shared Instagram, phone and email')
       check((await page.locator(`img[src*='yg-logo-pos${i + 1}']`).count()) > 0, `bill view shows ${b}'s logo (yg-logo-pos${i + 1})`)
       check(!/YG ENTERPRISES|Jute|Fireworks|Wedding/i.test(bill), 'bill view has no trace of the old business name')
-      const dl = page.waitForEvent('download', { timeout: 20000 }).catch(() => null)
+      if (i === 0) {
+        const onlyOne = await pool.query(`SELECT count(*)::int n FROM orders WHERE branch_id = $1 AND customer_name = $2`, [b, `E2E Customer ${i + 1}`])
+        check(onlyOne.rows[0].n === 1, 'tapping Complete Sale twice made exactly ONE bill', `bills: ${onlyOne.rows[0].n}`)
+        // a bill with GST shows CGST and SGST as two halves (18.01 -> 9.00 + 9.01) and stores them
+        const gstSale = await apiSend(page, 'post', '/api/pos/sale', { customer_name: 'E2E GST', phone: '9876543210', items: [{ product_id: me.productId, quantity: 1, unit_price: me.price, name: me.name }], total_gst: 18.01, gst_enabled: true, payment_method: 'cash' })
+        await go(page, `/invoice/${gstSale.body.invoice_no}`)
+        const gstText = await bodyText(page)
+        check(/CGST\s*\+?₹9\.00/.test(gstText) && /SGST\s*\+?₹9\.01/.test(gstText) && !/\bGST\s*\+₹/.test(gstText), 'a bill with GST shows CGST ₹9.00 and SGST ₹9.01 (not one GST line)', (gstText.match(/CGST[^A-Za-z]*|SGST[^A-Za-z]*/g) || []).join(' | '))
+        const stored = await pool.query(`SELECT cgst_amount::numeric c, sgst_amount::numeric s FROM orders WHERE id = $1`, [gstSale.body.order_id])
+        check(Number(stored.rows[0].c) === 9 && Number(stored.rows[0].s) === 9.01, 'the database stores cgst_amount 9.00 and sgst_amount 9.01', JSON.stringify(stored.rows[0]))
+
+        // variants: scanning each variant's barcode at the POS puts THAT variant at ITS price in the cart (never the first variant)
+        await go(page, '/pos')
+        const vscan = page.locator('input[placeholder^="Scan barcode"]')
+        for (const [vn, price, code] of [salwarVariants[2], salwarVariants[0], salwarVariants[1]]) {
+          await vscan.fill(code); await vscan.press('Enter')
+          await page.getByText(`E2E Salwar (${vn})`).first().waitFor({ timeout: 8000 }).catch(() => undefined)
+          const cart = await bodyText(page)
+          check(cart.includes(`E2E Salwar (${vn})`) && new RegExp(`₹\\s*${price}(\\.00)?\\b`).test(cart), `scanning ${code} adds variant ${vn} at ₹${price}`, (cart.match(/E2E Salwar \([A-Z]+\)/g) || []).join(' | '))
+        }
+        const cartAll = await bodyText(page)
+        check(/₹\s*300/.test(cartAll) && /₹\s*200/.test(cartAll) && /₹\s*100/.test(cartAll), 'the cart holds three different variant lines at 100, 200 and 300 (not three times the first price)')
+        await shot(page, 'pos-variants-scanned')
+        await go(page, `/invoice/${invNo}`) // back to the bill the next steps (PDF) work on
+      }      const dl = page.waitForEvent('download', { timeout: 20000 }).catch(() => null)
       await page.getByRole('button', { name: /pdf invoice/i }).click()
       const d = await dl
       let pdfOk = false
@@ -299,6 +313,7 @@ async function main() {
       await go(page, '/dashboard?tab=history')
       const hist = await bodyText(page)
       check(hist.includes(invNo), 'Order History lists the new bill')
+      check((await page.locator('option[value="cancelled"]').count()) === 0, 'staff have no Cancelled option in Order History')
       check(!Object.entries(bills).filter(([k]) => k !== b).some(([, n]) => n && hist.includes(n)), "Order History shows none of the other branches' bills")
 
       // advance order in the UI
@@ -333,7 +348,8 @@ async function main() {
       check(!/Analytics/.test(nav2), 'manager has NO Analytics Dashboard in the menu', nav2)
       check(!/Staff & Memberships|Business Overview/.test(nav2), 'manager has no passcode / cross-branch entries')
       check((await mp.locator('aside select').count()) === 0, 'manager has no branch switcher (fixed branch badge)')
-      check(new RegExp(`MANAGER\\s*·\\s*Branch ${i + 1}`, 'i').test(await bodyText(mp)), `header badge reads "MANAGER · Branch ${i + 1}"`)
+      const mgrBody = await bodyText(mp)
+      check(/\bMANAGER\b/.test(mgrBody) && !/Branch\s*\d/i.test(mgrBody), 'manager header badge reads just MANAGER and the screen never says Branch 1/2/3')
       for (const blocked of ['/pos-analytics', '/dashboard?tab=pos_analytics', '/dashboard?tab=staff_memberships', '/dashboard?tab=business_overview']) {
         await go(mp, blocked)
         const t3 = await bodyText(mp)
@@ -355,6 +371,19 @@ async function main() {
       check((await bodyText(mp)).includes(`E2E expense ${i + 1}`), 'the expense shows in the ledger')
       check(!exp.some((e) => /E2E expense/.test(e.description) && e.description !== `E2E expense ${i + 1}`), "the ledger holds none of the other branches' expenses")
       await shot(mp, `manager-${b}-expenses`)
+      // cancel a bill from Order History: the item goes back in stock, the bill is marked cancelled and cannot be changed again
+      await go(mp, '/dashboard?tab=history')
+      const stockBeforeCancel = await stockOf(mp, me.name)
+      mp.on('dialog', (d) => { void d.accept(d.type() === 'prompt' ? 'E2E cancel reason' : undefined) })
+      const cancelSel = mp.locator('select:visible').filter({ has: mp.locator('option[value="cancelled"]') }).first()
+      await cancelSel.waitFor({ timeout: 15000 }).catch(() => undefined)
+      await cancelSel.selectOption('cancelled').catch(() => undefined)
+      await sleep(3000)
+      const cancelledRows = await pool.query(`SELECT cancelled_by, cancel_reason FROM orders WHERE branch_id = $1 AND status = 'cancelled' AND customer_name LIKE 'E2E %'`, [b])
+      check(cancelledRows.rowCount === 1 && cancelledRows.rows[0].cancelled_by === 'manager' && /E2E cancel reason/.test(cancelledRows.rows[0].cancel_reason), `the manager cancels a bill from Order History in ${b} (reason and who are stored)`, JSON.stringify(cancelledRows.rows))
+      check((await stockOf(mp, me.name)) === stockBeforeCancel + 1, 'cancelling put the item back in stock (+1)')
+      check((await mp.locator('select[disabled]').count()) >= 1, 'a cancelled bill\'s status can no longer be changed (dropdown disabled)')
+      await shot(mp, `manager-${b}-cancelled-bill`)
       // Store Settings opens on the manager's own branch (token branch), never on Branch 1
       await go(mp, '/dashboard?tab=store_settings')
       await waitText(mp, 'Profile')
@@ -465,33 +494,36 @@ async function main() {
     // ============================================================================================ lockout screen + admin unlock
     area = 'lockout'
     {
+      // one device (browser) makes 10 wrong attempts: the context keeps the server's device cookie, like a real phone
       const ctx = await newCtx(); const page = await ctx.newPage(); watch(page, 'anon-lock')
-      for (let i = 0; i < 10; i++) await page.request.post(`${origin}/api/auth/login`, { data: { passcode: `lock-guess-${i}-zzzz`, as: 'manager', site: 'pos3' } })
       await page.goto(`${origin}/admin-login`)
+      for (let i = 0; i < 10; i++) await page.request.post(`${origin}/api/auth/login`, { data: { passcode: `lock-guess-${i}-zzzz` } })
+      await page.reload()
       await page.locator('input[type="password"]').first().waitFor()
-      await uiLogin(page, 'manager', 2, passFor('manager', 2))
+      await uiLogin(page, 'staff', 0, passFor('staff', 0))
       await page.getByText(/try again in \d+:\d\d/i).first().waitFor({ timeout: 8000 }).catch(() => undefined)
       const locked = await bodyText(page)
-      check(/try again in (4:[3-5]\d|5:00)/i.test(locked), 'a locked portal shows "Try again in M:SS" (about 5 minutes)', (locked.match(/try again in \d+:\d\d/i) || [''])[0])
+      check(/try again in (4:[3-5]\d|5:00)/i.test(locked), 'a locked device shows "Try again in M:SS" (about 5 minutes)', (locked.match(/try again in \d+:\d\d/i) || [''])[0])
       check(!/incorrect passcode/i.test(locked) && /admin-login/.test(page.url()), 'the lockout message replaces "Incorrect passcode" and the page stays on the login')
       check(await page.locator('button[type="submit"]').isDisabled(), 'the sign-in button is disabled while locked')
       await shot(page, 'login-locked')
-      // the same network is not locked out of another portal / branch
-      await uiLogin(page, 'staff', 0, passFor('staff', 0)).catch(() => undefined)
-      await page.waitForURL((u) => !u.pathname.includes('admin-login'), { timeout: 20000 }).catch(() => undefined)
-      check(!/admin-login/.test(page.url()), 'the same network can still sign in to another portal (Staff Branch 1)')
-      // the admin unlocks Branch 3 without touching the database
+      // another device on the same network (same IP here) is NOT locked: shared Wi-Fi / 4G must not lock everyone out
+      const other = await newCtx(); const op = await other.newPage(); watch(op, 'anon-other-device')
+      await op.goto(`${origin}/admin-login`)
+      await uiLogin(op, 'staff', 1, passFor('staff', 1))
+      await op.waitForURL((u) => !u.pathname.includes('admin-login'), { timeout: 20000 }).catch(() => undefined)
+      check(!/admin-login/.test(op.url()), 'another device on the same network can still sign in')
+      // the admin unlocks everyone without touching the database
       const adm = await loginAs('admin')
-      const cleared = await apiSend(adm.page, 'post', '/api/admin/login-lockouts/clear', { site: 'pos3' })
-      check(cleared.status === 200 && cleared.body.cleared >= 10, 'the admin clears the Branch 3 lockout', JSON.stringify(cleared.body))
-      const p2 = await (await newCtx()).newPage(); watch(p2, 'anon-unlock')
-      await p2.goto(`${origin}/admin-login`)
-      await uiLogin(p2, 'manager', 2, passFor('manager', 2))
-      await p2.waitForURL((u) => !u.pathname.includes('admin-login'), { timeout: 20000 }).catch(() => undefined)
-      check(!/admin-login/.test(p2.url()), 'the locked-out Manager Branch 3 signs in right after the admin cleared the lockout')
-      await adm.ctx.close(); await p2.context().close(); await ctx.close()
+      const cleared = await apiSend(adm.page, 'post', '/api/admin/login-lockouts/clear', {})
+      check(cleared.status === 200 && cleared.body.cleared >= 10, 'the admin clears the lockouts', JSON.stringify(cleared.body))
+      await page.reload()
+      await page.locator('input[type="password"]').first().waitFor()
+      await uiLogin(page, 'staff', 0, passFor('staff', 0))
+      await page.waitForURL((u) => !u.pathname.includes('admin-login'), { timeout: 20000 }).catch(() => undefined)
+      check(!/admin-login/.test(page.url()), 'the locked-out device signs in right after the admin cleared the lockouts')
+      await adm.ctx.close(); await other.close(); await ctx.close()
     }
-
     area = 'logos'
     check(!!thermalLogo.pos1 && thermalLogo.pos1 === thermalLogo.pos2, 'Branch 1 and Branch 2 print the same (shirt shop) logo')
     check(!!thermalLogo.pos3 && thermalLogo.pos3 !== thermalLogo.pos1, "Branch 3 prints its own (women's wear) logo")

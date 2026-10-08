@@ -883,12 +883,35 @@ export default function Dashboard() {
     } catch { /* keep the list that is showing */ }
   }, [branch])
 
+  // Cancelling a bill is not just a label: the server puts every item back in stock (one transaction, reversing stock
+  // movements) and refuses a second cancel. A cancelled bill cannot be re-opened.
+  const cancelOrder = async (orderId: string) => {
+    const invoiceNo = orders.find(o => o.id === orderId)?.invoice_no || ''
+    if (!window.confirm(`Cancel bill ${invoiceNo}? Its items go back into stock. This cannot be undone.`)) return
+    const reason = window.prompt('Reason for cancelling (optional)', '')
+    if (reason === null) return
+    try {
+      await api('POST', `/api/orders/${orderId}/cancel`, { body: { reason: reason.trim() }, branchId: branch })
+    } catch (error) {
+      alert(`Could not cancel the bill: ${error instanceof Error ? error.message : 'Request failed'}`)
+      return
+    }
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelled' } : o))
+    setSearchResults(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelled' } : o))
+    void fetchProducts(branch, true) // the stock just changed
+  }
+
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
-    await api('PATCH', `/api/orders/${orderId}/status`, { body: { status: newStatus }, branchId: branch }).catch(() => undefined)
+    if (newStatus === 'cancelled') { await cancelOrder(orderId); return }
+    try {
+      await api('PATCH', `/api/orders/${orderId}/status`, { body: { status: newStatus }, branchId: branch })
+    } catch (error) {
+      alert(`Could not change the status: ${error instanceof Error ? error.message : 'Request failed'}`)
+      return
+    }
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o))
     setSearchResults(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o))
   }
-
   const deleteOrder = async (orderId: string, invoiceNo: string) => {
     if (!window.confirm(`Are you sure you want to completely delete order ${invoiceNo}? This cannot be undone.`)) return
     // the server also releases / cancels a linked advance order in the same transaction
@@ -1541,7 +1564,7 @@ export default function Dashboard() {
   // header badge: "ROLE · Branch name" (admin shows the branch being worked in, or all branches)
   const roleBadgeText = role === 'admin'
     ? (activeBranch && activeBranch !== 'all' ? `${roleLabel(role)} · ${branchName(activeBranch)}` : `${roleLabel(role)} · All Branches`)
-    : `${roleLabel(role)} · ${branchName(lockedBranch || 'pos1')}`
+    : roleLabel(role) // staff / manager: only the role, never a branch name (a shop must not learn how many branches exist)
   const branchLabel = branchShortLabel(branch)
 
   const globalNavItems: Array<{ id: TabKey; icon: React.ReactNode; label: string }> = [
@@ -1551,7 +1574,7 @@ export default function Dashboard() {
 
   const branchNavItems: Array<{ id: TabKey; icon: React.ReactNode; label: string }> = role === 'staff'
     ? [
-        { id: 'branch_hub',     icon: <Store size={18} />,        label: 'Branch Hub' },
+        { id: 'branch_hub',     icon: <Store size={18} />,        label: 'Store Hub' },
         { id: 'billing',        icon: <ShoppingCart size={18} />, label: 'Store Dashboard & POS' },
         { id: 'inventory',      icon: <Layers size={18} />,       label: 'Stock & Inventory' },
         { id: 'advance_orders', icon: <FileText size={18} />,     label: 'Advance Orders' },
@@ -1666,7 +1689,7 @@ export default function Dashboard() {
         </div>
         {/* Operating Branch selector (admin picks a scope) / fixed branch badge (staff) */}
         <div className={`px-3 py-2.5 border-b border-white/10 shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-          <p className="text-[9px] font-black uppercase tracking-widest text-white/50 mb-1.5">Operating Branch</p>
+          {can(role, 'branch.switch') && <p className="text-[9px] font-black uppercase tracking-widest text-white/50 mb-1.5">Operating Branch</p>}
           {can(role, 'branch.switch') ? (
             <select
               value={activeBranch || 'all'}
@@ -3482,14 +3505,15 @@ export default function Dashboard() {
                         </div>
                         <div className="flex gap-2 w-full sm:flex-1">
                         {can(role, 'orders.status') ? (
-                          <select value={normalizeStatus(o.status)} onChange={e => void updateOrderStatus(o.id, e.target.value)}
-                            className={`min-h-[44px] flex-1 cursor-pointer rounded-xl border px-3 py-2 text-[12px] font-black outline-none ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                          <select value={normalizeStatus(o.status)} onChange={e => void updateOrderStatus(o.id, e.target.value)} disabled={normalizeStatus(o.status) === 'cancelled'}
+                            className={`min-h-[44px] flex-1 cursor-pointer rounded-xl border px-3 py-2 text-[12px] font-black outline-none disabled:cursor-not-allowed ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : normalizeStatus(o.status) === 'cancelled' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
                             <option value="pending">{l('Pending', 'நிலுவை')}</option>
                             <option value="completed">{l('Completed', 'முடிந்தது')}</option>
+                            <option value="cancelled">{l('Cancelled', 'ரத்து')}</option>
                           </select>
                         ) : (
-                          <span className={`inline-flex items-center justify-center flex-1 min-h-[44px] px-3 py-2 rounded-xl text-[12px] font-black uppercase ${normalizeStatus(o.status) === 'completed' ? 'border border-emerald-200 bg-emerald-50 text-emerald-700' : 'border border-amber-200 bg-amber-50 text-amber-700'}`}>
-                            {normalizeStatus(o.status) === 'completed' ? l('Completed', 'முடிந்தது') : l('Pending', 'நிலுவை')}
+                          <span className={`inline-flex items-center justify-center flex-1 min-h-[44px] px-3 py-2 rounded-xl text-[12px] font-black uppercase ${normalizeStatus(o.status) === 'completed' ? 'border border-emerald-200 bg-emerald-50 text-emerald-700' : normalizeStatus(o.status) === 'cancelled' ? 'border border-red-200 bg-red-50 text-red-700' : 'border border-amber-200 bg-amber-50 text-amber-700'}`}>
+                            {normalizeStatus(o.status) === 'completed' ? l('Completed', 'முடிந்தது') : normalizeStatus(o.status) === 'cancelled' ? l('Cancelled', 'ரத்து') : l('Pending', 'நிலுவை')}
                           </span>
                         )}
                         {can(role, 'orders.delete') && (
@@ -3553,14 +3577,15 @@ export default function Dashboard() {
                           <td className="px-2 py-3">
                             <div className="flex items-center justify-center gap-1.5">
                               {can(role, 'orders.status') ? (
-                                <select value={normalizeStatus(o.status)} onChange={e => void updateOrderStatus(o.id, e.target.value)}
-                                  className={`cursor-pointer rounded-lg border px-1.5 py-1 text-[10px] font-black outline-none ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                                <select value={normalizeStatus(o.status)} onChange={e => void updateOrderStatus(o.id, e.target.value)} disabled={normalizeStatus(o.status) === 'cancelled'}
+                                  className={`cursor-pointer rounded-lg border px-1.5 py-1 text-[10px] font-black outline-none disabled:cursor-not-allowed ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : normalizeStatus(o.status) === 'cancelled' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
                                   <option value="pending">{l('Pending', 'நிலுவை')}</option>
                                   <option value="completed">{l('Completed', 'முடிந்தது')}</option>
+                                  <option value="cancelled">{l('Cancelled', 'ரத்து')}</option>
                                 </select>
                               ) : (
-                                <span className={`inline-flex items-center justify-center rounded-lg border px-2 py-0.5 text-[10px] font-black uppercase ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
-                                  {normalizeStatus(o.status) === 'completed' ? l('Completed', 'முடிந்தது') : l('Pending', 'நிலுவை')}
+                                <span className={`inline-flex items-center justify-center rounded-lg border px-2 py-0.5 text-[10px] font-black uppercase ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : normalizeStatus(o.status) === 'cancelled' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                                  {normalizeStatus(o.status) === 'completed' ? l('Completed', 'முடிந்தது') : normalizeStatus(o.status) === 'cancelled' ? l('Cancelled', 'ரத்து') : l('Pending', 'நிலுவை')}
                                 </span>
                               )}
                               {can(role, 'orders.delete') && (

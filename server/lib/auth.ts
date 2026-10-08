@@ -47,6 +47,18 @@ export function setSessionCookie(res: Response, token: string) {
   res.append('Set-Cookie', `${COOKIE_NAME}=${encodeURIComponent(token)}${cookieFlags()}; Max-Age=${SESSION_TTL_SECONDS}`)
 }
 
+/** Random id of this browser, so the sign-in lockout counts one device instead of every phone behind a shared public IP.
+ *  It carries no identity or permission: a client that drops it only falls back to the per-IP guard. */
+export const DEVICE_COOKIE = 'yg_dev'
+const DEVICE_ID = /^[a-f0-9]{24}$/
+export function deviceId(req: Request, res: Response, newId: () => string): string {
+  const have = readCookie(req, DEVICE_COOKIE)
+  if (have && DEVICE_ID.test(have)) return have
+  const id = newId()
+  res.append('Set-Cookie', `${DEVICE_COOKIE}=${id}${cookieFlags()}; Max-Age=${365 * 24 * 3600}`)
+  return id
+}
+
 export function clearSessionCookie(res: Response) {
   res.append('Set-Cookie', `${COOKIE_NAME}=${cookieFlags()}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`)
 }

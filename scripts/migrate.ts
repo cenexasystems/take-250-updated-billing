@@ -3,7 +3,7 @@
  * Already-applied files are tracked in public.schema_migrations and skipped.
  *   npm run db:migrate
  */
-import 'dotenv/config'
+import './admin-env'
 import fs from 'node:fs'
 import path from 'node:path'
 import { getPool } from '../server/lib/db'

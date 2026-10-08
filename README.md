@@ -33,6 +33,7 @@ Server only (never prefix with `VITE_`):
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | Neon connection string. **Use the pooled (`-pooler`) URL in production and on Vercel.** |
+| `DATABASE_URL_UNPOOLED` | optional: Neon's **direct** (non-pooled) string. `db:migrate`, `db:seed`, `db:reset` and the tests use it when set (schema changes belong on a direct connection); the running app never needs it |
 | `JWT_SECRET` | at least 32 random characters, signs the session cookie |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob read/write token (product images, invoice PDFs, logos) |
 | `SEED_PASSCODE_ADMIN`, `SEED_PASSCODE_MANAGER_BRANCH1..3`, `SEED_PASSCODE_STAFF_BRANCH1..3` | initial passcodes for `npm run db:seed` only (min 8 chars, all different). Remove them after seeding and change them from Admin → Change passcodes |
@@ -59,6 +60,8 @@ No `VITE_` (browser-side) variables are needed: shop phone numbers, addresses an
 `GET /api/health` (no login) checks the database connection and returns only `{status, database, environment}`; it answers 503 "Database unavailable" or lists the **names** of missing settings, never a secret.
 
 ## Deploying on Vercel (preview or production)
+
+Migration 0007 (duplicate-proof bills, cancel + restock, CGST / SGST) has its own Neon-branch walkthrough: [docs/NEON_MIGRATION_0007.md](docs/NEON_MIGRATION_0007.md). Clean-up scripts for already-duplicated records: `db/maintenance/duplicates_review.sql` (read-only) and `duplicates_cancel.sql` (ends with ROLLBACK until you change it).
 
 Step-by-step preview checklist (Neon preview branch, env vars, Blob store, migrate + seed, smoke tests): [docs/VERCEL_PREVIEW.md](docs/VERCEL_PREVIEW.md).
 

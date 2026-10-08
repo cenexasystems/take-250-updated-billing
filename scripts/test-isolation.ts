@@ -195,7 +195,7 @@ async function run() {
       adv[b] = (await one(`SELECT (public.create_advance_order('Cust','999','','Card','Cat','',100,20,CURRENT_DATE+3,'','cash','tester','[]'::jsonb,$1)).id AS id`, [b])).id
     }
     record(true, 'advance orders created in all 3 branches')
-    const dep = await all(`SELECT branch_id, deposit_id FROM advance_orders ORDER BY branch_id`)
+    const dep = await all(`SELECT branch_id, deposit_id FROM advance_orders WHERE id = ANY($1::uuid[]) ORDER BY branch_id`, [[adv.pos1, adv.pos2, adv.pos3]]) // only the three just made (the database may hold others)
     record(new Set(dep.map((d) => d.deposit_id)).size === 3, 'advance order numbers (deposit ids) are distinct across branches')
     await rejected('advance order -> completed order of another branch', () =>
       c.query(`UPDATE advance_orders SET completed_order_id = $1 WHERE id = $2`, [orderPos2.id, adv.pos1]))

@@ -78,10 +78,12 @@ export async function loginDelayMs(db: Db): Promise<number> {
 
 // ---------------------------------------------------------------- sign-in lockout (database-backed, shared by every serverless instance)
 
-/** Counter key for the portal chosen on the login screen: "staff:pos1", "manager:pos3", "admin", or "any" when none was sent. */
-export function loginKey(as?: string | null, site?: string | null): string {
-  if (!as) return 'any'
-  return as === 'admin' ? 'admin' : `${as}:${site ?? '?'}`
+/** Counter key: the portal chosen on the login screen ("staff:pos1", "manager:pos3", "admin", or "any" when none was
+ *  sent, as the current login screen does) plus the device id. */
+export function loginKey(as?: string | null, site?: string | null, device?: string | null): string {
+  const portal = !as ? 'any' : as === 'admin' ? 'admin' : `${as}:${site ?? '?'}`
+  // + this browser's random device id: phones sharing one public IP (4G, shop Wi-Fi) are counted separately
+  return device ? `${portal}|${device}` : portal
 }
 
 /** Throws 429 {retryAfter} while this IP (+ portal) is locked out. An expired lockout is cleared here, so the counter starts again from zero. */
@@ -110,14 +112,14 @@ export async function recordLoginFailure(db: Db, ip: string, key: string) {
 
 /** A good sign-in on a selected portal resets that portal's counter for this IP (not the whole IP: see loginPerIp). */
 export async function resetLoginFailures(db: Db, ip: string, key: string) {
-  if (key === 'any') return // no selected portal: a guesser could otherwise reset its own counter with one known passcode
+  if (key.startsWith('any')) return // no selected portal: a guesser could otherwise reset its own counter with one known passcode
   await db.query(`DELETE FROM public.login_attempts WHERE bucket = 'login' AND success = false AND ip = $1 AND target = $2`, [ip, key])
 }
 
 /** Admin: forget sign-in failures, for one branch's portals (staff/manager of that branch) or for everything. */
 export async function clearLoginLockouts(db: Db, site?: string): Promise<number> {
   const r = site
-    ? await db.query(`DELETE FROM public.login_attempts WHERE bucket = 'login' AND success = false AND target LIKE $1`, [`%:${site}`])
+    ? await db.query(`DELETE FROM public.login_attempts WHERE bucket = 'login' AND success = false AND target LIKE $1`, [`%:${site}|%`])
     : await db.query(`DELETE FROM public.login_attempts WHERE bucket = 'login' AND success = false`)
   return r.rowCount ?? 0
 }

@@ -1,7 +1,7 @@
 import React from 'react'
 import { BRAND_ICON, THEME_PALETTE } from '../lib/brand'
 import { formatPhoneForDisplay } from '../lib/phone'
-import { formatCurrency, formatQuantityValue, normalizeStructuredOrderItem, formatInvoiceNo } from '../lib/retail'
+import { formatCurrency, formatQuantityValue, normalizeStructuredOrderItem, formatInvoiceNo, splitGst } from '../lib/retail'
 import type { PosBranch } from '../store/store'
 import { getBranchProfile } from '../lib/branchProfile'
 
@@ -208,10 +208,16 @@ export const Invoice: React.FC<InvoiceProps> = ({
               </div>
             )}
             {gstAmount > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ fontSize: 10, color: '#666' }}>GST</span>
-                <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>+{formatCurrency(gstAmount)}</span>
-              </div>
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 10, color: '#666' }}>CGST</span>
+                  <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>+{formatCurrency(splitGst(gstAmount).cgst)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 10, color: '#666' }}>SGST</span>
+                  <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>+{formatCurrency(splitGst(gstAmount).sgst)}</span>
+                </div>
+              </>
             )}
             {effectiveDelivery > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>

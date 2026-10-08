@@ -307,6 +307,10 @@ export const AddEditProductView: React.FC<{
       api('POST', '/api/inventory/movements', { body: { ...m, product_id: Number(m.product_id) }, branchId: branch })
     const registerBarcode = (productId: number | string, variantId: string | null, value: string) =>
       barcodeService.registerBarcode(Number(productId), value, variantId)
+    // Problems with ONE variant (a barcode already used by another item, ...) must be shown, never swallowed:
+    // a swallowed duplicate is how several variants ended up scanning as the first one.
+    const problems: string[] = []
+    const note = (what: string, e: unknown) => { problems.push(`${what}: ${e instanceof Error ? e.message : 'could not be saved'}`) }
 
     try {
       if (selectedProductId) {
@@ -389,7 +393,11 @@ export const AddEditProductView: React.FC<{
                   },
                   branchId: branch,
                 })).variant
-              } catch { createdVar = null }
+              } catch (e) { createdVar = null; note(`Variant "${v.variantName.trim()}"`, e) }
+
+              if (createdVar && normalizeBarcode(v.customBarcode)) {
+                await registerBarcode(selectedProductId, createdVar.id, normalizeBarcode(v.customBarcode)).catch((e) => note(`Barcode of variant "${v.variantName.trim()}"`, e))
+              }
 
               if (createdVar && vStock > 0) {
                 await writeMovement({
@@ -421,7 +429,10 @@ export const AddEditProductView: React.FC<{
                   barcode: v.customBarcode?.trim() || null,
                 },
                 branchId: branch,
-              }).catch(() => undefined)
+              }).catch((e) => note(`Variant "${v.variantName.trim()}"`, e))
+              if (normalizeBarcode(v.customBarcode)) {
+                await registerBarcode(selectedProductId, v.id, normalizeBarcode(v.customBarcode)).catch((e) => note(`Barcode of variant "${v.variantName.trim()}"`, e))
+              }
 
               if (varDelta !== 0) {
                 await writeMovement({
@@ -459,10 +470,9 @@ export const AddEditProductView: React.FC<{
             branchId: branch,
           }).catch(() => undefined)
 
-          setStatusMessage({
-            type: 'success',
-            text: `Product "${trimmedName}" updated with ${totalVariantStock} total variant stock units! Ready in POS Catalog.`,
-          })
+          setStatusMessage(problems.length
+            ? { type: 'error', text: `Product "${trimmedName}" was saved, but not everything: ${problems.join('; ')}` }
+            : { type: 'success', text: `Product "${trimmedName}" updated with ${totalVariantStock} total variant stock units! Ready in POS Catalog.` })
         }
       } else {
         // CREATE NEW PRODUCT
@@ -562,10 +572,10 @@ export const AddEditProductView: React.FC<{
                 },
                 branchId: branch,
               })).variant
-            } catch { createdVar = null }
+            } catch (e) { createdVar = null; note(`Variant "${v.variantName.trim()}"`, e) }
 
             if (createdVar && normalizeBarcode(v.customBarcode)) {
-              await registerBarcode(newProd.id, createdVar.id, normalizeBarcode(v.customBarcode))
+              await registerBarcode(newProd.id, createdVar.id, normalizeBarcode(v.customBarcode)).catch((e) => note(`Barcode of variant "${v.variantName.trim()}"`, e))
             }
 
             if (createdVar && vStock > 0) {
@@ -583,11 +593,16 @@ export const AddEditProductView: React.FC<{
             }
           }
 
-          setStatusMessage({
-            type: 'success',
-            text: `Multi-variant product "${trimmedName}" created with ${totalVariantStock} total units! Immediately ready in catalog & billing.`,
-          })
-          resetForm()
+          if (problems.length) {
+            // keep the form open so the barcode can be corrected (the product itself is already saved)
+            setStatusMessage({ type: 'error', text: `Product "${trimmedName}" was created, but not everything: ${problems.join('; ')}. Fix it by editing the product.` })
+          } else {
+            setStatusMessage({
+              type: 'success',
+              text: `Multi-variant product "${trimmedName}" created with ${totalVariantStock} total units! Immediately ready in catalog & billing.`,
+            })
+            resetForm()
+          }
         }
       }
 

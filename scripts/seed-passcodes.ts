@@ -6,7 +6,7 @@
  * Passcodes are never logged. The script aborts without writing anything if any value is
  * missing, too weak (< 8 chars etc.) or duplicated by another role/branch.
  */
-import 'dotenv/config'
+import './admin-env'
 import bcrypt from 'bcryptjs'
 import { getPool } from '../server/lib/db'
 import { validatePasscodeStrength } from '../server/lib/passcodePolicy'

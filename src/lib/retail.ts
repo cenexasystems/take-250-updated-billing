@@ -62,6 +62,14 @@ export const roundTo = (value: number, places = 2) => {
   return Math.round((value + Number.EPSILON) * factor) / factor
 }
 
+/** GST is one amount per bill, shown as two equal halves: CGST rounds DOWN to the paisa and SGST takes the rest, so
+ *  CGST + SGST is always exactly the GST. Same rule as the database (orders.cgst_amount / sgst_amount). */
+export const splitGst = (gst: unknown) => {
+  const paise = Math.round((Number(gst) || 0) * 100)
+  const cgstPaise = Math.floor(paise / 2)
+  return { cgst: cgstPaise / 100, sgst: (paise - cgstPaise) / 100 }
+}
+
 export const toNumber = (value: unknown, fallback = 0) => {
   if (value === null || value === undefined) return fallback
   const parsed = Number(value)

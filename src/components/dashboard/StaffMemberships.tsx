@@ -103,9 +103,8 @@ function PasscodeRow({ entry, currentAdminPasscode, onChanged }: { entry: Roster
   )
 }
 
-/** Admin: clear sign-in lockouts (e.g. a shop that mistyped its passcode on shared Wi-Fi) without touching the database. */
-function LockoutCard({ branches }: { branches: PosBranch[] }) {
-  const [site, setSite] = useState('')
+/** Admin: clear sign-in lockouts (e.g. a shop that mistyped its passcode too often) without touching the database. */
+function LockoutCard() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
@@ -113,8 +112,8 @@ function LockoutCard({ branches }: { branches: PosBranch[] }) {
     setBusy(true)
     setMessage(null)
     try {
-      const res = await api<{ cleared: number }>('POST', '/api/admin/login-lockouts/clear', { body: site ? { site } : {} })
-      setMessage({ type: 'success', text: res.cleared ? `Cleared ${res.cleared} failed sign-in record${res.cleared === 1 ? '' : 's'}.` : 'No lockouts were active.' })
+      const res = await api<{ cleared: number }>('POST', '/api/admin/login-lockouts/clear', { body: {} })
+      setMessage({ type: 'success', text: res.cleared ? `Cleared ${res.cleared} failed sign-in record${res.cleared === 1 ? '' : 's'}. Everyone can try again now.` : 'No lockouts were active.' })
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Could not clear lockouts' })
     } finally {
@@ -128,33 +127,23 @@ function LockoutCard({ branches }: { branches: PosBranch[] }) {
         <ShieldCheck size={15} className="text-[#7A1220]" />
         <div>
           <p className="text-xs font-black uppercase tracking-wider text-gray-800">Login Lockouts</p>
-          <p className="text-[10px] text-gray-400 font-semibold">After 10 wrong passcodes in 10 minutes a portal is locked for 5 minutes on that network and clears itself. Use this to unlock sooner.</p>
+          <p className="text-[10px] text-gray-400 font-semibold">After 10 wrong passcodes in 10 minutes from one device, that device is locked for 5 minutes and clears itself. Use this to unlock everyone sooner.</p>
         </div>
       </div>
       <div className="p-4 flex flex-wrap items-center gap-3">
-        <select
-          value={site}
-          onChange={(e) => setSite(e.target.value)}
-          className="h-9 rounded-xl border border-gray-200 bg-[#FBFAF6] px-3 text-xs font-bold outline-none focus:border-gray-400"
-          aria-label="Branch to unlock"
-        >
-          <option value="">All branches</option>
-          {branches.map((b) => <option key={b} value={b}>{branchLabel(b)}</option>)}
-        </select>
         <button
           type="button"
           onClick={() => void clear()}
           disabled={busy}
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-[#7A1220] border border-[#D4AF37] text-[#D4AF37] text-xs font-black disabled:opacity-60 cursor-pointer"
         >
-          {busy ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />} Clear lockouts
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />} Clear all lockouts
         </button>
         {message && <p className={`text-[11px] font-bold ${message.type === 'success' ? 'text-emerald-600' : 'text-red-600'}`}>{message.text}</p>}
       </div>
     </div>
   )
 }
-
 export default function StaffMemberships() {
   // Admin only (the API enforces the same rule; this keeps the section out of every other portal's UI)
   const role = useAdminAuthStore((s) => s.role)
@@ -267,7 +256,7 @@ export default function StaffMemberships() {
         </ul>
       </div>
 
-      <LockoutCard branches={[...new Set(slots.map((s) => s.target_branch).filter((b): b is PosBranch => !!b))]} />
+      <LockoutCard />
 
       <p className="text-[10px] text-gray-400 font-semibold">
         Passcodes must be at least 8 characters and different from every other portal's passcode. They are stored only as hashes; changing one signs that portal out everywhere.

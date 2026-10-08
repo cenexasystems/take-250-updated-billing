@@ -69,7 +69,7 @@ export const FEATURE_ACCESS: Record<Feature, Role[]> = {
 /** Each UI feature and the server permission key that guards its API call (checked by the API tests). */
 export const FEATURE_SERVER_PERM: Record<Feature, string[]> = {
   'inventory.delete': ['inventory.delete'],
-  'orders.status': ['orders.status'],
+  'orders.status': ['orders.status', 'orders.cancel'],
   'orders.delete': ['orders.delete'],
   'settings.write': ['settings.write'],
   'coupons.manage': ['coupons.write', 'coupons.read'],

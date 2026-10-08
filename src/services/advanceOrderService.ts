@@ -81,6 +81,8 @@ export async function createAdvanceOrder(input: {
   customerName: string; phone: string; address: string; productName: string; category: string; description: string
   totalAmount: number; depositAmount: number; expectedDeliveryDate: string; remarks: string; referenceNumber: string
   paymentMethod: AdvancePaymentMethod; createdByName: string; products?: Array<Record<string, unknown>>; branch?: PosBranch
+  /** one random key per form: a repeated request returns the first advance order instead of making another */
+  idempotencyKey?: string
 }): Promise<AdvanceOrder> {
   const res = await api<{ order: Record<string, unknown> }>('POST', '/api/advance-orders', {
     body: {
@@ -89,6 +91,7 @@ export async function createAdvanceOrder(input: {
       deposit_amount: input.depositAmount, expected_delivery_date: input.expectedDeliveryDate, remarks: input.remarks,
       payment_method: input.paymentMethod, products: input.products || [],
       ...(input.referenceNumber.trim() ? { reference_number: input.referenceNumber.trim() } : {}),
+      ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
     },
     branchId: input.branch,
   })

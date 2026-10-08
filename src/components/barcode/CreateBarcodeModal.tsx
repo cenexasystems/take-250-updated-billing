@@ -153,7 +153,8 @@ export const CreateBarcodeModal: React.FC<CreateBarcodeModalProps> = ({
           const matched = targetVariantId ? vars.find(v => v.id === targetVariantId) : vars[0]
           const chosen = matched || vars[0]
           setSelectedVariant(chosen)
-          if (chosen.barcode) setItemCode(chosen.barcode)
+          // a variant WITHOUT a code gets its own fresh code: it must never inherit the previous variant's code
+          setItemCode(chosen.barcode ? chosen.barcode : barcodePrefix + Math.floor(1000000 + Math.random() * 9000000))
           setLine2(`Size: ${chosen.variantName}`)
           if (chosen.price) {
             setLine3(settings.showDiscount ? 'Discount: 0%' : `Price: ₹${chosen.price}`)
@@ -236,7 +237,8 @@ export const CreateBarcodeModal: React.FC<CreateBarcodeModalProps> = ({
     const v = variants.find((item) => item.id === varId)
     if (!v) return
     setSelectedVariant(v)
-    if (v.barcode) setItemCode(v.barcode)
+    // a variant WITHOUT a code gets its own fresh code: it must never inherit the previous variant's code
+    setItemCode(v.barcode ? v.barcode : barcodePrefix + Math.floor(1000000 + Math.random() * 9000000))
     setLine2(`Size: ${v.variantName}`)
     if (v.price) {
       setLine3(settings.showDiscount ? 'Discount: 0%' : `Price: ₹${v.price}`)

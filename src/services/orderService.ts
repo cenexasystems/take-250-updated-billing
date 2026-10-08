@@ -25,6 +25,8 @@ type CreateOrderInput = {
   totalGst?: number
   gstEnabled?: boolean
   branch?: PosBranch
+  /** one random key per bill: a repeated request returns the first bill instead of making another */
+  idempotencyKey?: string
 }
 
 type CreatedOrder = {
@@ -77,6 +79,7 @@ export const createOrderWithStock = async (input: CreateOrderInput): Promise<Cre
       split_details: splitDetails,
       total_gst: totalGst,
       gst_enabled: gstEnabled,
+      ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
     },
     branchId: branch,
   })

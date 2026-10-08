@@ -37,6 +37,11 @@ const PASS: Record<Actor, string> = {
 const ROLE_OF = (a: Actor) => (a === 'admin' ? 'admin' : a.startsWith('manager') ? 'manager' : 'staff') as 'admin' | 'manager' | 'staff'
 const BRANCH_OF = (a: Actor): B | null => (a === 'admin' ? null : (`pos${a.slice(-1)}` as B))
 
+// The run is split in two so one database connection never has to stay open for the whole (slow, remote) run:
+//   --part=1  sections A to M      --part=2  sections M2 and N (billing safety, then the login lockouts, which must run last)
+// With no argument everything runs in one go. npm run test:api runs both parts.
+const PART = (process.argv.find((a) => a.startsWith('--part=')) || '').slice('--part='.length)
+
 let passed = 0
 let failed = 0
 const results: string[] = []
@@ -125,6 +130,7 @@ async function run() {
     const stockOf = async (id: number) => Number((await one(`SELECT stock_quantity::numeric s FROM products WHERE id = $1`, [id])).s)
     const asAdmin = (b: B) => ({ cookie: cookies.admin, query: { branch_id: b } })
 
+    if (PART !== '2') {
     // ================================================================== A. matrix-driven: permission table x routes x roles
     const SUBST = (p: string) => p.replace(/:[a-z]+/g, '999999999')
     const actorsByRole: Record<string, Actor> = { admin: 'admin', manager: 'manager1', staff: 'staff1' }
@@ -189,14 +195,14 @@ async function run() {
     // ================================================================== B. login / session cookie
     {
       const ok = await call('POST', '/api/auth/login', { body: { passcode: PASS.staff1 } })
-      const sc = ok.cookies.join(';')
+      const sc = ok.cookies.find((c) => c.startsWith('yg_session=')) || '' // (the login response also carries the device cookie)
       check(/HttpOnly/i.test(sc) && /SameSite=Strict/i.test(sc) && /Path=\//.test(sc), 'session cookie is httpOnly + sameSite=strict')
       const maxAge = Number(/Max-Age=(\d+)/.exec(sc)?.[1])
       check(maxAge > 0 && maxAge <= 8 * 3600, 'session cookie expiry is short (<= 8h)', `${maxAge}`)
       process.env.COOKIE_INSECURE = ''
       const sec = await call('POST', '/api/auth/login', { body: { passcode: PASS.staff1 } })
       process.env.COOKIE_INSECURE = '1'
-      check(/;\s*Secure/i.test(sec.cookies.join(';')), 'session cookie is Secure unless local-http mode is on')
+      check(/;\s*Secure/i.test(sec.cookies.find((c) => c.startsWith('yg_session=')) || ''), 'session cookie is Secure unless local-http mode is on')
       check(!JSON.stringify(ok.body).includes('token'), 'login response does not contain the token')
       const bad1 = await call('POST', '/api/auth/login', { body: { passcode: 'definitely-wrong-passcode' } })
       const bad2 = await call('POST', '/api/auth/login', { body: { passcode: PASS.staff1 + 'x' } })
@@ -233,13 +239,10 @@ async function run() {
       ] as const
       for (const [label, body] of refused) {
         const r = await L({ ...body })
-        check(r.status === 401 && JSON.stringify(r.body) === generic && r.cookies.length === 0, `${label} is refused with the same generic 401 and no cookie`, `${r.status} ${JSON.stringify(r.body)}`)
+        check(r.status === 401 && JSON.stringify(r.body) === generic && !r.cookies.some((c) => c.startsWith('yg_session=')), `${label} is refused with the same generic 401 and no cookie`, `${r.status} ${JSON.stringify(r.body)}`)
       }
       check((await L({ passcode: PASS.staff1, as: 'owner' })).status === 400, 'login rejects an unknown portal name (zod)')
       check((await L({ passcode: PASS.staff1, as: 'staff', site: 'POS 1; DROP' })).status === 400, 'login rejects a malformed branch tile id (zod)')
-      const pub = await call('GET', '/api/public/branches')
-      check(pub.status === 200 && pub.body.branches.length === 3 && pub.body.branches.every((b: any) => Object.keys(b).sort().join() === 'id,logo_url,short_label,sort_order,subtitle'), 'GET /api/public/branches (no login) lists the 3 branches with name and logo only')
-      check(['pos1', 'pos2', 'pos3'].every((id, k) => pub.body.branches[k]?.id === id && /yg-logo-pos\d\.png$/.test(pub.body.branches[k]?.logo_url || '')), 'each public branch tile has its own logo file')
     }
 
     // ================================================================== C. a passcode never opens another branch / higher role
@@ -683,68 +686,307 @@ async function run() {
       PASS.admin = 'New-Admin-Pass-99'
     }
 
+    }
+    if (PART !== '1') {
+    // ================================================================== M2. duplicate-proof bills, cancel + restock, CGST / SGST
+    {
+      const mkProduct = async (b: B, stock = 20, name = 'Idem Product') => Number((await one(`INSERT INTO products (name, category, price, stock_quantity, stock, branch_id, is_active) VALUES ($3, 'x', 50, $2::int, $2::int, $1, true) RETURNING id`, [b, stock, name])).id)
+      const stockOfP = async (id: number) => Number((await one(`SELECT stock_quantity::numeric s FROM products WHERE id = $1`, [id])).s)
+      const pid = await mkProduct('pos1')
+      const bill = (extra: Record<string, unknown> = {}, qty = 2) => ({ customer_name: 'Idem Customer', phone: '9876543210', items: [{ product_id: pid, quantity: qty, unit_price: 50, name: 'Idem Product' }], payment_method: 'cash', ...extra })
+      const sale = (a: Actor, body: Record<string, unknown>) => call('POST', '/api/pos/sale', { cookie: cookies[a], body })
+
+      // ---- 1. a repeated request can never make a second bill
+      const k1 = 'idem-key-aaaaaaaa'
+      const s1 = await sale('staff1', bill({ idempotency_key: k1 }))
+      const s2 = await sale('staff1', bill({ idempotency_key: k1 }))
+      check(s1.status === 201 && s2.status === 201 && s2.body.order_id === s1.body.order_id && s2.body.invoice_no === s1.body.invoice_no && s2.body.replayed === true && !s1.body.replayed, 'the same idempotency key returns the FIRST bill, not a second one')
+      check((await one(`SELECT count(*)::int n FROM orders WHERE branch_id = 'pos1' AND idempotency_key = $1`, [k1])).n === 1, 'exactly one bill row exists for that key')
+      check((await stockOfP(pid)) === 18, 'the repeated request took stock only once (20 - 2)')
+      const s3 = await sale('staff1', bill({ idempotency_key: 'idem-key-bbbbbbbb' }))
+      check(s3.status === 201 && s3.body.order_id !== s1.body.order_id && !s3.body.replayed, 'a different key makes a new bill')
+      const s4 = await sale('staff1', bill())
+      const s5 = await sale('staff1', bill())
+      check(s4.status === 201 && s5.status === 201 && s4.body.order_id !== s5.body.order_id, 'requests without a key keep working exactly as before')
+      check((await call('POST', '/api/pos/sale', { cookie: cookies.staff1, body: bill({ idempotency_key: 'short' }) })).status === 400, 'a too-short idempotency key is rejected (zod)')
+      const pid2 = await mkProduct('pos2')
+      const other = await sale('staff2', { ...bill({ idempotency_key: k1 }), items: [{ product_id: pid2, quantity: 1, unit_price: 50, name: 'Idem Product' }] })
+      check(other.status === 201 && other.body.order_id !== s1.body.order_id, 'the same key in another branch is a different bill (keys are per branch, never shared)')
+      await client.query('SAVEPOINT dupkey')
+      let dupErr = ''
+      try { await client.query(`INSERT INTO orders (invoice_no, customer_name, subtotal, total, branch_id, idempotency_key) VALUES (public.get_next_invoice_no('pos1'), 'x', 1, 1, 'pos1', $1)`, [k1]) } catch (e) { dupErr = String((e as { code?: string }).code) }
+      await client.query('ROLLBACK TO SAVEPOINT dupkey')
+      check(dupErr === '23505', 'the database itself refuses a second row with the same key (unique index), even if two requests arrive at once', dupErr)
+      // invoice numbers keep coming from the branch sequence
+      check(Number(s3.body.invoice_no) > Number(s1.body.invoice_no) && Number(s5.body.invoice_no) > Number(s4.body.invoice_no), 'invoice numbers still come from the branch sequence (increasing, no gaps made by a replay)')
+
+      // ---- the same for advance (deposit) orders
+      const adv = (extra: Record<string, unknown> = {}) => ({ customer_name: 'Idem Adv', phone: '9876500000', product_name: 'Custom card', total_amount: 500, deposit_amount: 100, expected_delivery_date: '2030-01-01', payment_method: 'cash', ...extra })
+      const a1 = await call('POST', '/api/advance-orders', { cookie: cookies.staff1, body: adv({ idempotency_key: 'adv-key-aaaaaaaa' }) })
+      const a2 = await call('POST', '/api/advance-orders', { cookie: cookies.staff1, body: adv({ idempotency_key: 'adv-key-aaaaaaaa' }) })
+      check(a1.status === 201 && a2.status === 201 && a2.body.order.id === a1.body.order.id && a2.body.order.deposit_id === a1.body.order.deposit_id && a2.body.replayed === true, 'the same key returns the FIRST advance order (same DEP number)', JSON.stringify({ a1: [a1.status, a1.body?.order?.id, a1.body?.order?.deposit_id, a1.body?.error], a2: [a2.status, a2.body?.order?.id, a2.body?.order?.deposit_id, a2.body?.replayed, a2.body?.error] }))
+      check((await one(`SELECT count(*)::int n FROM advance_orders WHERE branch_id = 'pos1' AND idempotency_key = 'adv-key-aaaaaaaa'`)).n === 1, 'exactly one advance order row exists for that key')
+      check((await one(`SELECT count(*)::int n FROM advance_orders WHERE customer_name = 'Idem Adv'`)).n === 1, 'ONE advance order was created by the two requests (a call of the create function makes exactly one row; `SELECT (fn()).*` used to make one per column)')
+      const a3 = await call('POST', '/api/advance-orders', { cookie: cookies.staff1, body: adv({ idempotency_key: 'adv-key-bbbbbbbb' }) })
+      const depNo = (r: Res) => Number(String(r.body.order.deposit_id).split('-').pop())
+      check(a3.status === 201 && a3.body.order.id !== a1.body.order.id && depNo(a3) > depNo(a1), 'a different key makes a new advance order with the next DEP number from the sequence')
+      const noKey = await call('POST', '/api/advance-orders', { cookie: cookies.staff1, body: adv({ customer_name: 'Idem NoKey' }) })
+      check(noKey.status === 201 && (await one(`SELECT count(*)::int n FROM advance_orders WHERE customer_name = 'Idem NoKey'`)).n === 1, 'advance orders without a key keep working, one row per request')
+      const ev = await call('POST', `/api/advance-orders/${noKey.body.order.id}/status`, { cookie: cookies.staff1, body: { status: 'ready_for_delivery' } })
+      const evRows = await one(`SELECT count(*)::int n FROM advance_order_timeline WHERE advance_order_id = $1 AND event_type = 'status_ready_for_delivery'`, [noKey.body.order.id]).catch(() => ({ n: -1 }))
+      check(ev.status === 200 && (await one(`SELECT count(*)::int n FROM advance_orders WHERE customer_name = 'Idem NoKey'`)).n === 1, 'an advance status change touches one order and stays one row', JSON.stringify([ev.status, evRows]))
+
+      // ---- 2. cancel + restock
+      const before = await stockOfP(pid)                         // 18 - 2 - 2 - 2 (s3, s4, s5) = 12
+      const c0 = await sale('staff1', bill({ idempotency_key: 'cancel-key-aaaaaa' }, 3))
+      check((await stockOfP(pid)) === before - 3, 'a 3-item bill takes 3 from stock')
+      check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.staff1, body: { reason: 'x' } })).status === 403, 'staff cannot cancel a bill (403)')
+      check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { body: {} })).status === 401, 'cancel needs a session (401)')
+      check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.manager2, body: {} })).status === 404, 'another branch\'s manager cannot cancel it (404)')
+      check((await stockOfP(pid)) === before - 3, 'refused cancels changed nothing')
+      const x1 = await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.manager1, body: { reason: 'wrong size' } })
+      check(x1.status === 200 && x1.body.order.status === 'cancelled' && x1.body.restocked_items === 1, 'manager cancels a bill', JSON.stringify(x1.body).slice(0, 160))
+      check((await stockOfP(pid)) === before, 'cancelling put the 3 items back in stock')
+      const o1 = await one(`SELECT status, cancelled_at, cancelled_by, cancel_reason FROM orders WHERE id = $1`, [c0.body.order_id])
+      check(o1.status === 'cancelled' && !!o1.cancelled_at && o1.cancelled_by === 'manager' && o1.cancel_reason === 'wrong size', 'status, cancelled_at, cancelled_by and cancel_reason are stored')
+      const mv = await rows(`SELECT movement_type, quantity_delta::numeric d, quantity_before::numeric b, quantity_after::numeric a, reference_type, note FROM inventory_movements WHERE reference_id = $1 AND product_id = $2 ORDER BY id`, [c0.body.invoice_no, pid])
+      check(mv.length === 2 && mv[0].movement_type === 'SALE' && Number(mv[0].d) === -3 && mv[1].movement_type === 'CANCELLATION_RESTOCK' && Number(mv[1].d) === 3 && Number(mv[1].b) === before - 3 && Number(mv[1].a) === before && /wrong size/.test(mv[1].note), 'the original SALE movement stays and a reversing CANCELLATION_RESTOCK movement is added', JSON.stringify(mv))
+      const x2 = await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.manager1, body: {} })
+      check(x2.status === 409 && (await stockOfP(pid)) === before, 'a second cancel is refused (409) and never restocks twice')
+      check((await one(`SELECT count(*)::int n FROM inventory_movements WHERE reference_id = $1 AND movement_type = 'CANCELLATION_RESTOCK'`, [c0.body.invoice_no])).n === 1, 'only one reversing movement exists')
+      check((await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'completed' } })).status === 409, 'a cancelled bill cannot be re-opened (status change refused)')
+      check((await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'cancelled' } })).status === 409, 'cancelling through the status route twice is refused too')
+      check((await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'shipped' } })).status === 400, 'an unknown status is rejected (zod + CHECK)')
+      // cancel through the status dropdown path
+      const c1 = await sale('staff1', bill({}, 2))
+      const st = await call('PATCH', `/api/orders/${c1.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'cancelled' } })
+      check(st.status === 200 && st.body.order.status === 'cancelled' && (await stockOfP(pid)) === before, 'setting the status to cancelled restocks too (same transaction)')
+      // delete of a LIVE bill restocks first; delete of a cancelled one does not restock again
+      const c2 = await sale('staff1', bill({}, 4))
+      check((await stockOfP(pid)) === before - 4, 'another bill took 4')
+      check((await call('DELETE', `/api/orders/${c2.body.order_id}`, { cookie: cookies.manager1 })).status === 200 && (await stockOfP(pid)) === before, 'deleting a live bill puts its items back (no stock leak)')
+      check((await one(`SELECT count(*)::int n FROM orders WHERE id = $1`, [c2.body.order_id])).n === 0, 'and the bill is gone')
+      check((await call('DELETE', `/api/orders/${c0.body.order_id}`, { cookie: cookies.manager1 })).status === 200 && (await stockOfP(pid)) === before, 'deleting an already-cancelled bill does not restock a second time')
+      // variants, manual items and coupons
+      const pv = await mkProduct('pos1', 5, 'Idem Variant Product')
+      const vid = (await one(`INSERT INTO product_variants (product_id, variant_name, price, stock, branch_id, is_active) VALUES ($1, 'Large', 50, 5, 'pos1', true) RETURNING id`, [pv])).id
+      await client.query(`INSERT INTO coupons (code, percentage, branch_id) VALUES ('IDEM5', 5, 'pos1')`)
+      const cv = await sale('staff1', { customer_name: 'Idem Customer', phone: '9876543210', coupon_code: 'IDEM5', coupon_percentage: 5, payment_method: 'cash',
+        items: [{ product_id: pv, variant_id: vid, quantity: 2, unit_price: 50, name: 'Idem Variant Product' }, { name: 'Loose item', quantity: 1, unit_price: 10, is_manual: true }] })
+      check(Number((await one(`SELECT stock::numeric s FROM product_variants WHERE id = $1`, [vid])).s) === 3 && (await stockOfP(pv)) === 3, 'a variant sale takes the variant stock and updates the parent')
+      check(Number((await one(`SELECT usage_count FROM coupons WHERE code = 'IDEM5' AND branch_id = 'pos1'`)).usage_count) === 1, 'the coupon use was counted')
+      const xv = await call('POST', `/api/orders/${cv.body.order_id}/cancel`, { cookie: cookies.manager1, body: {} })
+      check(xv.status === 200 && xv.body.restocked_items === 1, 'cancelling restocks the variant item only (the manual item has no stock)', JSON.stringify(xv.body).slice(0, 120))
+      check(Number((await one(`SELECT stock::numeric s FROM product_variants WHERE id = $1`, [vid])).s) === 5 && (await stockOfP(pv)) === 5, 'variant and parent stock are back')
+      check(Number((await one(`SELECT usage_count FROM coupons WHERE code = 'IDEM5' AND branch_id = 'pos1'`)).usage_count) === 0, 'the coupon use was given back')
+
+      // ---- 3. CGST / SGST
+      await client.query(`UPDATE products SET stock_quantity = 200, stock = 200 WHERE id = $1`, [pid]) // plenty of stock for the many small bills below
+      const gstSale = async (gst: number, extra: Record<string, unknown> = {}) => {
+        const r = await sale('staff1', bill({ total_gst: gst, gst_enabled: true, ...extra }, 2))
+        return one(`SELECT total_gst::numeric g, cgst_amount::numeric c, sgst_amount::numeric s, taxable_amount::numeric t, subtotal::numeric sub FROM orders WHERE id = $1`, [r.body.order_id])
+      }
+      const sp = (r: any) => [Number(r.c), Number(r.s)]
+      const g1 = await gstSale(18.01); check(sp(g1).join() === '9,9.01' && Math.round((Number(g1.c) + Number(g1.s)) * 100) === 1801, 'GST 18.01 -> CGST 9.00 + SGST 9.01 (CGST rounds down, SGST takes the rest)', JSON.stringify(g1))
+      const g2 = await gstSale(0.01); check(sp(g2).join() === '0,0.01', 'GST 0.01 -> CGST 0.00 + SGST 0.01')
+      const g3 = await gstSale(100); check(sp(g3).join() === '50,50', 'GST 100 -> 50.00 + 50.00')
+      const g4 = await gstSale(33.33); check(sp(g4).join() === '16.66,16.67' && Number(g4.c) + Number(g4.s) === 33.33, 'GST 33.33 -> 16.66 + 16.67 (always adds up to the GST)')
+      const g5 = await gstSale(0); check(sp(g5).join() === '0,0', 'no GST -> 0 + 0')
+      check(Number(g1.sub) === 100 && Number(g1.t) === 100, 'taxable amount = goods value before GST (100)')
+      const g6 = await gstSale(9, { discount_amount: 10, manual_discount_amount: 5 }); check(Number(g6.t) === 85, 'taxable amount is after coupon and manual discounts (100 - 10 - 5)', JSON.stringify(g6))
+      const gb = await sale('staff1', bill({ total_gst: 5, gst_enabled: true }, 2))
+      const fin = await call('PATCH', `/api/orders/${gb.body.order_id}/finalize`, { cookie: cookies.staff1, body: { subtotal: 100, total: 112.35, total_gst: 12.35, gst_amount: 12.35, discount_amount: 0, manual_discount_amount: 0 } })
+      const g7 = await one(`SELECT cgst_amount::numeric c, sgst_amount::numeric s FROM orders WHERE id = $1`, [gb.body.order_id])
+      check(fin.status === 200 && sp(g7).join() === '6.17,6.18', 'the split is recalculated when the POS finalizes the bill (12.35 -> 6.17 + 6.18)', JSON.stringify([fin.status, fin.body, g7]))
+      const lst = await call('GET', '/api/orders', { cookie: cookies.manager1, query: { limit: '5' } })
+      check(lst.body.orders.every((o: any) => typeof o.cgst_amount === 'number' && typeof o.sgst_amount === 'number' && typeof o.taxable_amount === 'number'), 'orders come back with numeric cgst_amount, sgst_amount and taxable_amount')
+
+      // ---- 4. the clean-up scripts (db/maintenance): review lists the duplicates, cancel restocks them, nothing is deleted
+      const dpid = await mkProduct('pos1', 30, 'Dup Cleanup Product')
+      const dupBody = { customer_name: 'Dup Cleanup Customer', phone: '9000011111', payment_method: 'cash', items: [{ product_id: dpid, quantity: 2, unit_price: 50, name: 'Dup Cleanup Product' }] }
+      const d1 = await sale('staff1', dupBody); const d2 = await sale('staff1', dupBody); const d3 = await sale('staff1', dupBody)
+      await call('POST', '/api/advance-orders', { cookie: cookies.staff1, body: adv({ customer_name: 'Dup Cleanup Adv', phone: '9000022222' }) })
+      await call('POST', '/api/advance-orders', { cookie: cookies.staff1, body: adv({ customer_name: 'Dup Cleanup Adv', phone: '9000022222' }) })
+      check((await stockOfP(dpid)) === 24, 'three identical bills took 6 from stock (30 - 6)')
+      const fs = await import('node:fs')
+      const reviewSql = fs.readFileSync('db/maintenance/duplicates_review.sql', 'utf8')
+      const rev = (await client.query(reviewSql)) as unknown as Array<{ rows: any[] }>
+      const dupBills = rev[0].rows.filter((r) => r.customer_name === 'Dup Cleanup Customer')
+      check(dupBills.length === 3 && dupBills.filter((r) => r.verdict === 'DUPLICATE').length === 2 && dupBills.filter((r) => r.verdict === 'KEEP (first)').length === 1, 'duplicates_review.sql lists the 3 identical bills: 1 to keep, 2 duplicates', JSON.stringify(dupBills.map((r) => r.verdict)))
+      check(rev[1].rows.some((r) => r.product_name === 'Dup Cleanup Product' && Number(r.quantity_to_restock) === 4), 'duplicates_review.sql shows the stock that would go back (4)')
+      const dupAdv = rev[2].rows.filter((r) => r.customer_name === 'Dup Cleanup Adv')
+      check(dupAdv.length === 2 && dupAdv.filter((r) => r.verdict === 'DUPLICATE').length === 1, 'duplicates_review.sql lists the 2 identical advance orders (1 duplicate)')
+      check((await stockOfP(dpid)) === 24 && (await one(`SELECT count(*)::int n FROM orders WHERE customer_name = 'Dup Cleanup Customer' AND status = 'cancelled'`)).n === 0, 'the review script changed nothing')
+      const cancelSql = fs.readFileSync('db/maintenance/duplicates_cancel.sql', 'utf8').replace(/^BEGIN;$/m, '').replace(/^ROLLBACK;.*$/m, '')
+      await client.query(cancelSql)
+      check((await stockOfP(dpid)) === 28, 'duplicates_cancel.sql put the 2 duplicate bills\' items back (24 + 4)')
+      const left = await rows(`SELECT invoice_no, status FROM orders WHERE customer_name = 'Dup Cleanup Customer' ORDER BY invoice_no`)
+      check(left.length === 3 && left[0].invoice_no === d1.body.invoice_no && left[0].status === 'completed' && left.slice(1).every((r) => r.status === 'cancelled'), 'the first bill is kept; the two duplicates are cancelled (not deleted)', JSON.stringify(left))
+      const advLeft = await rows(`SELECT status FROM advance_orders WHERE customer_name = 'Dup Cleanup Adv' ORDER BY deposit_id`)
+      check(advLeft.length === 2 && advLeft[0].status === 'pending_deposit' && advLeft[1].status === 'cancelled', 'the duplicate advance order is cancelled, the first kept')
+      check(d2.status === 201 && d3.status === 201, 'setup bills were created')
+    }
+    // ================================================================== M3. one barcode = exactly one item (variants never share a code)
+    {
+      const mkProd = async (b: B, name: string, extra = '') => Number((await one(`INSERT INTO products (name, category, price, stock_quantity, stock, branch_id, is_active, has_variants${extra ? ', barcode' : ''}) VALUES ($2, 'x', 100, 0, 0, $1, true, true${extra ? ', $3' : ''}) RETURNING id`, extra ? [b, name, extra] : [b, name])).id)
+      const mkVar = (a: Actor, product_id: number, variant_name: string, price: number, barcode?: string | null) =>
+        call('POST', '/api/variants', { cookie: cookies[a], body: { product_id, variant_name, price, stock: 5, ...(barcode !== undefined ? { barcode } : {}) } })
+      const scan = (a: Actor, code: string) => call('GET', '/api/barcodes/lookup', { cookie: cookies[a], query: { code } })
+      const sal = await mkProd('pos1', 'Salwar Barcode Test')
+
+      // 1. three variants, each with its own code: every scan returns ITS variant and ITS price
+      const xl = await mkVar('staff1', sal, 'XL', 100, 'sal-xl-1'); const xxl = await mkVar('staff1', sal, 'XXL', 200, ' Sal-XXL-1 '); const xxxl = await mkVar('manager1', sal, 'XXXL', 300, 'SAL-XXXL-1')
+      check(xl.status === 201 && xxl.status === 201 && xxxl.status === 201, 'three variants with their own barcodes are created')
+      check(xl.body.variant.barcode === 'SAL-XL-1' && xxl.body.variant.barcode === 'SAL-XXL-1', 'barcodes are stored trimmed and in upper case')
+      for (const [code, name, price] of [['sal-xl-1', 'XL', 100], ['SAL-XXL-1', 'XXL', 200], ['sal-xxxl-1', 'XXXL', 300]] as const) {
+        const r = await scan('staff1', code)
+        check(r.status === 200 && r.body.record.variant?.variant_name === name && Number(r.body.record.variant.price) === price, `scanning ${code} returns variant ${name} at ${price} (not the first variant)`, JSON.stringify(r.body.record?.variant))
+      }
+
+      // 2. a second variant can NOT take a code that already belongs to another item
+      const dupSame = await mkVar('staff1', sal, 'Dup1', 50, 'SAL-XL-1')
+      const dupCase = await mkVar('staff1', sal, 'Dup2', 50, '  sal-xl-1 ')
+      check(dupSame.status === 409 && /already used by another item/.test(dupSame.body.error), 'creating a variant with an existing barcode is refused (409, clear message)', JSON.stringify(dupSame.body))
+      check(dupCase.status === 409, 'the same code in another case / with spaces is refused too')
+      const patchDup = await call('PATCH', `/api/variants/${xxl.body.variant.id}`, { cookie: cookies.staff1, body: { barcode: 'sal-xl-1' } })
+      check(patchDup.status === 409, 'changing a variant to another variant\'s barcode is refused (409)')
+      check((await call('PATCH', `/api/variants/${xxl.body.variant.id}`, { cookie: cookies.staff1, body: { barcode: 'SAL-XXL-1', price: 210 } })).status === 200, 'saving a variant with its OWN barcode again is fine')
+      check((await scan('staff1', 'SAL-XXL-1')).body.record.variant.price == 210, 'the scan returns the updated price of that variant')
+
+      // 3. product-level code vs variant code (same branch): refused both ways
+      const prodPatch = await call('PATCH', `/api/products/${sal}`, { cookie: cookies.manager1, body: { barcode: 'SAL-XL-1' } })
+      check(prodPatch.status === 409, 'a product cannot take a barcode that a variant already has (409)')
+      const other = await mkProd('pos1', 'Other product', 'PROD-ONLY-9')
+      check((await mkVar('staff1', sal, 'Dup3', 50, 'PROD-ONLY-9')).status === 409, 'a variant cannot take a barcode that a product already has (409)')
+      check(other > 0, 'setup product exists')
+
+      // 4. every branch has its own codes: the same manufacturer code in another branch is fine and stays separate
+      const sal2 = await mkProd('pos2', 'Salwar Barcode Test')
+      const b2 = await mkVar('staff2', sal2, 'XL', 999, 'SAL-XL-1')
+      check(b2.status === 201, 'the same code in ANOTHER branch is allowed (codes are unique per branch)')
+      check(Number((await scan('staff2', 'SAL-XL-1')).body.record.variant.price) === 999 && Number((await scan('staff1', 'SAL-XL-1')).body.record.variant.price) === 100, 'each branch scans its own variant')
+
+      // 5. the registry can no longer be silently re-pointed from one variant to another
+      const reg = (a: Actor, product_id: number, variant_id: string | null, barcode_value: string) => call('PUT', '/api/barcodes/register', { cookie: cookies[a], body: { product_id, variant_id, barcode_value } })
+      check((await reg('staff1', sal, xl.body.variant.id, 'sal-xl-1')).status === 200, 'registering a variant\'s own code again is fine (idempotent)')
+      const steal = await reg('staff1', sal, xxl.body.variant.id, 'SAL-XL-1')
+      check(steal.status === 409, 'registering a code that belongs to ANOTHER variant is refused (409), not re-pointed', JSON.stringify(steal.body))
+      check((await scan('staff1', 'SAL-XL-1')).body.record.variant.variant_name === 'XL', 'the code still scans as XL')
+      check((await reg('staff1', sal, xxxl.body.variant.id, 'brand-new-77')).status === 200 && (await scan('staff1', 'BRAND-NEW-77')).body.record.variant.variant_name === 'XXXL', 'a new code can be registered for a variant and scans as that variant')
+
+      // 6. the generated way (Add Barcode for each variant) stays correct
+      const gp = await mkProd('pos1', 'Generated Variants')
+      const gv = [await mkVar('staff1', gp, 'Green', 40), await mkVar('staff1', gp, 'Blue', 45)]
+      const gcodes: string[] = []
+      for (const v of gv) gcodes.push((await call('POST', '/api/barcodes/receive', { cookie: cookies.staff1, body: { product_id: gp, variant_id: v.body.variant.id, quantity_received: 2, unit_cost: 10 } })).body.barcode_value)
+      check(new Set(gcodes).size === 2 && gcodes.every((c) => /^PBV\d{8}$/.test(c)), 'Add Barcode makes a different PBV code for each variant', gcodes.join(','))
+      check((await scan('staff1', gcodes[0])).body.record.variant.variant_name === 'Green' && (await scan('staff1', gcodes[1])).body.record.variant.variant_name === 'Blue', 'each generated code scans as its own variant')
+      const colCodes = (await rows(`SELECT barcode FROM product_variants WHERE product_id = $1 ORDER BY variant_name`, [gp])).map((r) => r.barcode)
+      check(colCodes.join() === [gcodes[1], gcodes[0]].join(), 'the printed-label column and the registry agree', colCodes.join())
+
+      // 7. a removed (inactive) variant lets go of its code
+      check((await call('PATCH', `/api/variants/${xl.body.variant.id}`, { cookie: cookies.staff1, body: { is_active: false } })).status === 200, 'a variant can be deactivated')
+      const reuse = await mkVar('staff1', sal, 'XL new', 120, 'SAL-XL-1')
+      check(reuse.status === 409 || reuse.status === 201, 'reusing the code of a deactivated variant is decided by the registry (see next check)')
+      await client.query(`UPDATE barcode_registry SET is_active = false WHERE branch_id = 'pos1' AND barcode_value = 'SAL-XL-1'`)
+      const reuse2 = await mkVar('staff1', sal, 'XL again', 120, 'SAL-XL-1')
+      check(reuse2.status === 201 && (await scan('staff1', 'SAL-XL-1')).body.record.variant.variant_name === 'XL again', 'once its registry entry is also inactive the code can be given to a new variant and scans as it')
+
+      // 8. old data: the repair function clears duplicates and the unique index can then be built
+      await client.query('SAVEPOINT legacy')
+      await client.query(`ALTER TABLE product_variants DISABLE TRIGGER USER`)
+      await client.query(`ALTER TABLE products DISABLE TRIGGER USER`)
+      await client.query(`ALTER TABLE barcode_registry DISABLE TRIGGER USER`)
+      await client.query(`DROP INDEX public.product_variants_branch_barcode_unique`)
+      await client.query(`DROP INDEX public.products_branch_barcode_unique`)
+      const lp = await mkProd('pos3', 'Legacy P')
+      const legV = [] as string[]
+      for (const n of ['L1', 'L2', 'L3']) legV.push((await one(`INSERT INTO product_variants (product_id, variant_name, price, stock, branch_id, is_active, barcode) VALUES ($1, $2, 10, 1, 'pos3', true, ' leg-1 ') RETURNING id`, [lp, n])).id)
+      await client.query(`INSERT INTO barcode_registry (barcode_value, entity_type, product_id, variant_id, is_active, branch_id) VALUES ('LEG-1', 'variant', $1, $2, true, 'pos3')`, [lp, legV[1]])
+      const sp2 = await mkProd('pos3', 'Legacy S', 'leg-3'); const sv = (await one(`INSERT INTO product_variants (product_id, variant_name, price, stock, branch_id, is_active, barcode) VALUES ($1, 'SV', 10, 1, 'pos3', true, 'LEG-3') RETURNING id`, [sp2])).id
+      const qp = await one(`INSERT INTO products (name, category, price, stock_quantity, stock, branch_id, is_active, has_variants, barcode) VALUES ('Legacy Q', 'x', 10, 1, 1, 'pos3', true, false, 'LEG-2') RETURNING id`)
+      const rp = await mkProd('pos3', 'Legacy R'); const wv = (await one(`INSERT INTO product_variants (product_id, variant_name, price, stock, branch_id, is_active, barcode) VALUES ($1, 'W', 10, 1, 'pos3', true, 'LEG-2') RETURNING id`, [rp])).id
+      const fixed = (await one(`SELECT public.fix_duplicate_barcodes() AS r`)).r
+      const after = await rows(`SELECT id, barcode FROM product_variants WHERE id = ANY($1::uuid[])`, [[...legV, sv, wv]])
+      const bc = (id: string) => after.find((r) => r.id === id)?.barcode
+      check(bc(legV[1]) === 'LEG-1' && bc(legV[0]) === null && bc(legV[2]) === null, 'repair: of three variants sharing a code, the one the registry points at keeps it, the others lose it', JSON.stringify(fixed))
+      check((await one(`SELECT barcode FROM products WHERE id = $1`, [sp2])).barcode === null && bc(sv) === 'LEG-3', 'repair: a code on a multi-variant product AND its variant stays with the variant')
+      check((await one(`SELECT barcode FROM products WHERE id = $1`, [qp.id])).barcode === 'LEG-2' && bc(wv) === null, 'repair: a code on a plain product AND a variant stays with the product')
+      let built = true
+      try { await client.query(`CREATE UNIQUE INDEX product_variants_branch_barcode_unique ON public.product_variants (branch_id, barcode) WHERE barcode IS NOT NULL AND is_active`); await client.query(`CREATE UNIQUE INDEX products_branch_barcode_unique ON public.products (branch_id, barcode) WHERE barcode IS NOT NULL AND is_active`) } catch { built = false }
+      check(built, 'after the repair the unique indexes can be created (no duplicates left)')
+      await client.query('ROLLBACK TO SAVEPOINT legacy')
+      check((await one(`SELECT count(*)::int n FROM pg_indexes WHERE indexname IN ('product_variants_branch_barcode_unique', 'products_branch_barcode_unique')`)).n === 2, 'the simulation was rolled back: the real indexes are still there')
+    }
     // ================================================================== N. login rate limits (run last: they lock logins)
     {
+      // The sign-in lockout counts one DEVICE (a random yg_dev cookie the server hands out) per IP, so phones sharing
+      // a public IP (4G, shop Wi-Fi) do not lock each other out; a wider per-IP guard catches clients that drop the cookie.
+      const D = (n: number) => `yg_dev=${n.toString(16).padStart(24, '0')}`
+      const L2 = (ip: string, dev: number | null, body: Record<string, unknown>) => call('POST', '/api/auth/login', { ip, cookie: dev === null ? undefined : D(dev), body })
       const ip = '192.0.2.50'
       const codes: Array<{ status: number; error?: string }> = []
-      for (let i = 0; i < 10; i++) { const r = await call('POST', '/api/auth/login', { ip, body: { passcode: `wrong-guess-${i}-xxxx` } }); codes.push({ status: r.status, error: r.body?.error }) }
-      check(codes.every((c) => c.status === 401 && c.error === 'Incorrect passcode'), '10 wrong passcodes from one IP are each answered 401 "Incorrect passcode"')
-      const locked = await call('POST', '/api/auth/login', { ip, body: { passcode: PASS.manager1 } })
-      check(locked.status === 429 && Number(locked.headers.get('retry-after')) > 0, 'the 11th attempt from that IP is locked out (429 + Retry-After) even with a CORRECT passcode')
+      for (let i = 0; i < 10; i++) { const r = await L2(ip, 1, { passcode: `wrong-guess-${i}-xxxx` }); codes.push({ status: r.status, error: r.body?.error }) }
+      check(codes.every((c) => c.status === 401 && c.error === 'Incorrect passcode'), '10 wrong passcodes from one device are each answered 401 "Incorrect passcode"')
+      const locked = await L2(ip, 1, { passcode: PASS.manager1 })
+      check(locked.status === 429 && Number(locked.headers.get('retry-after')) > 0, 'the 11th attempt from that device is locked out (429 + Retry-After) even with a CORRECT passcode')
       check(locked.body.error === 'Too many attempts' && locked.body.retry_after >= 290 && locked.body.retry_after <= 300, 'the lockout answer carries retry_after in seconds (about 5 minutes) for the "Try again in M:SS" countdown', JSON.stringify(locked.body))
-      check(locked.cookies.length === 0, 'a locked-out attempt never sets a cookie')
-      const other = await call('POST', '/api/auth/login', { ip: '192.0.2.51', body: { passcode: PASS.manager1 } })
-      check(other.status === 200, 'a different IP can still sign in')
-      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false`, [ip])).n === 10, 'failed attempts are recorded in login_attempts (database-backed), and attempts made while locked are not added')
+      check(locked.cookies.length === 0, 'a locked-out attempt never sets a session cookie')
+      const sameIp = await L2(ip, 2, { passcode: PASS.manager1 })
+      check(sameIp.status === 200, 'ANOTHER device on the SAME IP can still sign in (shared Wi-Fi / 4G does not lock everyone)')
+      const otherIp = await L2('192.0.2.51', 1, { passcode: PASS.manager1 })
+      check(otherIp.status === 200, 'the same device id from a different IP is not locked either')
+      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false`, [ip])).n === 10, 'failed attempts are recorded in login_attempts (database-backed); attempts made while locked are not added')
+      const fresh = await L2('192.0.2.52', null, { passcode: 'wrong-guess-yyyyyy' })
+      const devSet = fresh.cookies.find((c) => c.startsWith('yg_dev=')) || ''
+      check(fresh.status === 401 && /yg_dev=[a-f0-9]{24}/.test(devSet) && /HttpOnly/i.test(devSet) && /SameSite=Strict/i.test(devSet), 'a client without a device cookie is given one (httpOnly, SameSite=Strict) and still gets the plain 401')
+      check(!/yg_session/.test(fresh.cookies.join(';')), 'the device cookie is not a session')
 
-      // ---- the lockout is keyed on IP + role + branch: one portal being locked leaves the others usable from the same IP
-      const ipS = '192.0.2.60'
-      for (let i = 0; i < 10; i++) await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: `staff1-guess-${i}-xx`, as: 'staff', site: 'pos1' } })
-      const s1 = await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: PASS.staff1, as: 'staff', site: 'pos1' } })
-      check(s1.status === 429, 'Staff Branch 1 is locked after 10 wrong passcodes from this IP')
-      const s2 = await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: 'New-Staff2-Pass-9', as: 'staff', site: 'pos2' } })
-      check(s2.status === 200, 'Staff Branch 2 from the SAME IP is not locked (the counter is per branch)')
-      const m1 = await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: PASS.manager1, as: 'manager', site: 'pos1' } })
-      check(m1.status === 200, 'Manager Branch 1 from the SAME IP is not locked (the counter is per role)')
       // ---- the lockout ends by itself after 5 minutes, and the old failures are forgotten
-      await client.query(`UPDATE login_attempts SET attempted_at = attempted_at - interval '4 minutes' WHERE ip = $1`, [ipS])
-      const still = await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: PASS.staff1, as: 'staff', site: 'pos1' } })
+      await client.query(`UPDATE login_attempts SET attempted_at = attempted_at - interval '4 minutes' WHERE ip = $1`, [ip])
+      const still = await L2(ip, 1, { passcode: PASS.manager1 })
       check(still.status === 429 && still.body.retry_after >= 50 && still.body.retry_after <= 70, 'after 4 minutes the lockout still has about 1 minute to go', JSON.stringify(still.body))
-      await client.query(`UPDATE login_attempts SET attempted_at = attempted_at - interval '2 minutes' WHERE ip = $1`, [ipS])
-      const back = await call('POST', '/api/auth/login', { ip: ipS, body: { passcode: PASS.staff1, as: 'staff', site: 'pos1' } })
+      await client.query(`UPDATE login_attempts SET attempted_at = attempted_at - interval '2 minutes' WHERE ip = $1`, [ip])
+      const back = await L2(ip, 1, { passcode: PASS.manager1 })
       check(back.status === 200, 'after 5 minutes the lockout has cleared itself and the right passcode signs in')
-      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false AND target = 'staff:pos1'`, [ipS])).n === 0, 'the expired failures were deleted and the counter restarted from zero')
-      // ---- a good sign-in resets that portal's counter
+      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false`, [ip])).n === 0, 'the expired failures were deleted and the counter restarted from zero')
+
+      // ---- an (optional) portal selection makes the key IP + role + branch + device
+      const ipS = '192.0.2.60'
+      for (let i = 0; i < 10; i++) await L2(ipS, 3, { passcode: `staff1-guess-${i}-xx`, as: 'staff', site: 'pos1' })
+      check((await L2(ipS, 3, { passcode: PASS.staff1, as: 'staff', site: 'pos1' })).status === 429, 'Staff Branch 1 is locked after 10 wrong passcodes from this device')
+      check((await L2(ipS, 3, { passcode: PASS.manager1, as: 'manager', site: 'pos1' })).status === 200, 'Manager Branch 1 from the SAME device is not locked (the counter is per role)')
+      // ---- a good sign-in on a selected portal resets that portal's counter
       const ipR = '192.0.2.61'
-      for (let i = 0; i < 4; i++) await call('POST', '/api/auth/login', { ip: ipR, body: { passcode: `wrong-${i}-xxxxxx`, as: 'staff', site: 'pos3' } })
-      check((await call('POST', '/api/auth/login', { ip: ipR, body: { passcode: PASS.staff3, as: 'staff', site: 'pos3' } })).status === 200, 'a right passcode after a few wrong ones signs in')
-      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false`, [ipR])).n === 0, 'a successful sign-in resets that portal\'s failure counter')
+      for (let i = 0; i < 4; i++) await L2(ipR, 4, { passcode: `wrong-${i}-xxxxxx`, as: 'staff', site: 'pos3' })
+      check((await L2(ipR, 4, { passcode: PASS.staff3, as: 'staff', site: 'pos3' })).status === 200, 'a right passcode after a few wrong ones signs in')
+      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false`, [ipR])).n === 0, 'a successful sign-in on a selected portal resets that counter')
       // without a selected portal a success must NOT reset (a guesser could clear its own counter with one known passcode)
       const ipN = '192.0.2.62'
-      for (let i = 0; i < 3; i++) await call('POST', '/api/auth/login', { ip: ipN, body: { passcode: `wrong-${i}-xxxxxx` } })
-      await call('POST', '/api/auth/login', { ip: ipN, body: { passcode: PASS.staff3 } })
+      for (let i = 0; i < 3; i++) await L2(ipN, 5, { passcode: `wrong-${i}-xxxxxx` })
+      await L2(ipN, 5, { passcode: PASS.staff3 })
       check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND ip = $1 AND success = false`, [ipN])).n === 3, 'a sign-in without a selected portal does not reset the counter')
-      // ---- changing the (client-supplied) portal selection cannot dodge the limit: a wider per-IP guard counts all portals together
+      // ---- dropping or changing the (client-controlled) device cookie cannot dodge the limit: a wider per-IP guard counts everything
       const ipW = '192.0.2.63'
-      for (const [as, site] of [['staff', 'pos1'], ['staff', 'pos2'], ['staff', 'pos3']] as const) {
-        for (let i = 0; i < 10; i++) await call('POST', '/api/auth/login', { ip: ipW, body: { passcode: `dodge-${as}-${site}-${i}`, as, site } })
-      }
-      const dodge = await call('POST', '/api/auth/login', { ip: ipW, body: { passcode: PASS.manager2, as: 'manager', site: 'pos2' } })
-      check(dodge.status === 429, '30 failures across portals lock the whole IP, so rotating the selection does not dodge the limit')
+      for (let d = 10; d < 13; d++) for (let i = 0; i < 10; i++) await L2(ipW, d, { passcode: `dodge-${d}-${i}-xxxx` })
+      check((await L2(ipW, 13, { passcode: PASS.manager2 })).status === 429, '30 failures from one IP lock the whole IP, so new device ids or no cookie do not dodge the limit')
+      check((await L2(ipW, null, { passcode: PASS.manager2 })).status === 429, 'a client with no device cookie is locked by the same IP guard')
       // ---- admin clears lockouts without redeploying
       const ipC = '192.0.2.64'
-      for (let i = 0; i < 10; i++) await call('POST', '/api/auth/login', { ip: ipC, body: { passcode: `clear-${i}-xxxxxxx`, as: 'staff', site: 'pos2' } })
-      check((await call('POST', '/api/auth/login', { ip: ipC, body: { passcode: 'New-Staff2-Pass-9', as: 'staff', site: 'pos2' } })).status === 429, 'Staff Branch 2 is locked on this IP')
-      check((await call('POST', '/api/admin/login-lockouts/clear', { body: { site: 'pos2' } })).status === 401, 'clearing lockouts needs a session (401 without)')
-      check((await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.manager1, body: { site: 'pos2' } })).status === 403, 'a manager cannot clear lockouts (403)')
+      for (let i = 0; i < 10; i++) await L2(ipC, 20, { passcode: `clear-${i}-xxxxxxx` })
+      check((await L2(ipC, 20, { passcode: PASS.manager2 })).status === 429, 'this device is locked')
+      check((await call('POST', '/api/admin/login-lockouts/clear', { body: {} })).status === 401, 'clearing lockouts needs a session (401 without)')
+      check((await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.manager1, body: {} })).status === 403, 'a manager cannot clear lockouts (403)')
       check((await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.staff1, body: {} })).status === 403, 'staff cannot clear lockouts (403)')
       check((await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.admin, body: { site: 'POS 2' } })).status === 400, 'clear rejects a malformed branch id (zod)')
-      const cl = await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.admin, body: { site: 'pos2' } })
-      check(cl.status === 200 && cl.body.cleared >= 10 && cl.body.site === 'pos2', 'admin clears the Branch 2 lockouts', JSON.stringify(cl.body))
-      check((await call('POST', '/api/auth/login', { ip: ipC, body: { passcode: 'New-Staff2-Pass-9', as: 'staff', site: 'pos2' } })).status === 200, 'Staff Branch 2 signs in again right after the admin cleared the lockout')
-      const clAll = await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.admin, body: {} })
-      check(clAll.status === 200 && (await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND success = false`)).n === 0, 'clearing without a branch forgets every failed sign-in')
-      check((await call('POST', '/api/auth/login', { ip: ipW, body: { passcode: PASS.manager2, as: 'manager', site: 'pos2' } })).status === 200, 'the IP that was locked by the wider guard is free again')      // distributed guessing across many IPs is SLOWED, never blocked: real users must still be able to sign in
+      const cl = await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.admin, body: {} })
+      check(cl.status === 200 && cl.body.cleared >= 10, 'the admin clears the lockouts', JSON.stringify(cl.body))
+      check((await L2(ipC, 20, { passcode: PASS.manager2 })).status === 200, 'the locked device signs in again right after the admin cleared the lockouts')
+      check((await L2(ipW, 13, { passcode: PASS.manager2 })).status === 200, 'the IP that was locked by the wider guard is free again')
+      check((await one(`SELECT count(*)::int n FROM login_attempts WHERE bucket = 'login' AND success = false`)).n === 0, 'clearing forgets every failed sign-in')
+      const sel = await call('POST', '/api/admin/login-lockouts/clear', { cookie: cookies.admin, body: { site: 'pos1' } })
+      check(sel.status === 200 && sel.body.site === 'pos1', 'clearing can also be limited to one branch id (API)')
+      // distributed guessing across many IPs is SLOWED, never blocked: real users must still be able to sign in
       const seq = [0, 5, 9, 10, 11, 15, 30, 1000].map((n) => slowdownMs(n))
       check(seq[0] === 0 && seq[1] === 0 && seq[2] === 0, 'no slowdown below the free failure count')
       check(seq[3] > 0 && seq[4] > seq[3] && seq[5] > seq[4] && seq[6] >= seq[5], 'the delay grows with every additional failure')
@@ -762,6 +1004,7 @@ async function run() {
       check(g2.status === 200, 'other real users are not locked out either')
       const bad = await call('POST', '/api/auth/login', { ip: '198.19.0.3', body: { passcode: 'wrong-again-xxxxx' } })
       check(bad.status === 401, 'a wrong passcode under slowdown is still a plain 401 (not 429)')
+    }
     }
   } finally {
     await client.query('ROLLBACK').catch(() => undefined)

@@ -164,6 +164,11 @@ export default function Pos(props: PosProps = {}) {
   const [splitP1Amount, setSplitP1Amount] = useState<string>('')
   const [splitP2Type, setSplitP2Type] = useState<'cash' | 'qr' | 'card'>('qr')
   const [saving, setSaving] = useState(false)
+  // double-tap protection (set synchronously, unlike state) and the idempotency keys of the bill / deposit being saved
+  const submitLock = useRef(false)
+  // a key is only reused for a retry of the SAME bill: it is bound to a fingerprint of what is being billed, so a changed cart gets a new key
+  const saleKey = useRef<{ key: string; fp: string } | null>(null)
+  const depositKey = useRef<{ key: string; fp: string } | null>(null)
   const [shipping, setShipping] = useState<string>('0')
   const [couponInput, setCouponInput] = useState('')
   const [couponLoading, setCouponLoading] = useState(false)
@@ -739,6 +744,10 @@ export default function Pos(props: PosProps = {}) {
     const depositAmount = Number(depositForm.amount)
     if (!Number.isFinite(depositAmount) || depositAmount <= 0 || depositAmount >= total) { setError(`Deposit must be greater than ${formatCurrency(0)} and less than ${formatCurrency(total)}.`); return }
     if (!depositForm.expectedDeliveryDate) { setError('Select the expected delivery date.'); return }
+    if (submitLock.current) return // a second tap while the first is still saving
+    submitLock.current = true
+    const depositFp = JSON.stringify([items.map(i => [i.id, i.variantId ?? null, i.qty, i.basePrice]), total, depositAmount, customer.phone.trim(), depositForm.expectedDeliveryDate])
+    if (!depositKey.current || depositKey.current.fp !== depositFp) depositKey.current = { key: crypto.randomUUID(), fp: depositFp }
     setSaving(true); setError('')
     try {
       const allocationBase = items.reduce((sum, item) => sum + item.lineTotal, 0)
@@ -766,13 +775,16 @@ export default function Pos(props: PosProps = {}) {
         remarks: depositForm.remarks, referenceNumber: depositForm.referenceNumber, paymentMethod: depositForm.paymentMethod, createdByName: role || 'Staff',
         products: productsSnapshot,
         branch,
+        idempotencyKey: depositKey.current.key,
       })
+      depositKey.current = null // saved: the next deposit order is a new one
       setDepositCreated(created)
       setDepositOpen(false)
       clearAll()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create deposit order')
     } finally {
+      submitLock.current = false
       setSaving(false)
     }
   }
@@ -793,6 +805,10 @@ export default function Pos(props: PosProps = {}) {
       if (p1Amt >= total) { setError('Payment 1 amount must be less than the total — use a single payment method instead'); return }
       if (splitP1Type === splitP2Type) { setError('Payment 1 and Payment 2 must use different methods for split payment'); return }
     }
+    if (submitLock.current) return // a second tap while the first is still saving
+    submitLock.current = true
+    const saleFp = JSON.stringify([items.map(i => [i.id, i.variantId ?? null, i.qty, i.basePrice]), total, customer.phone.trim(), paymentType])
+    if (!saleKey.current || saleKey.current.fp !== saleFp) saleKey.current = { key: crypto.randomUUID(), fp: saleFp } // same key only for a retry of THIS bill
     setSaving(true); setError('')
     try {
       const labelFor = (t: 'cash' | 'qr' | 'card') => t === 'qr' ? 'QR' : t === 'card' ? 'Card' : 'Cash'
@@ -836,6 +852,7 @@ export default function Pos(props: PosProps = {}) {
         gstEnabled: billGstEnabled,
         paymentMethod: paymentMode,
         branch,
+        idempotencyKey: saleKey.current.key,
       })
 
       // ── CRITICAL: immediately fix totals in DB, independent of PDF upload ──
@@ -901,6 +918,7 @@ export default function Pos(props: PosProps = {}) {
         paymentMethod: paymentMode,
       }
       setInvoice(createdInvoice)
+      saleKey.current = null // the whole bill is done: the next one is a new bill (until then a retry returns THIS bill, never a second one)
       void persistInvoicePdf(createdInvoice)
       setItems([])
       setCustomer({ name: '', phone: '', address: '' })
@@ -908,6 +926,7 @@ export default function Pos(props: PosProps = {}) {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to generate bill')
     } finally {
+      submitLock.current = false
       setSaving(false)
     }
   }

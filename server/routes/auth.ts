@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
-import { clearSessionCookie, setSessionCookie, signSession, targetLabel, type Role } from '../lib/auth.js'
+import { clearSessionCookie, deviceId, setSessionCookie, signSession, targetLabel, type Role } from '../lib/auth.js'
 import { ApiError } from '../lib/errors.js'
 import { validatePasscodeStrength } from '../lib/passcodePolicy.js'
 import { route } from '../lib/route.js'
@@ -32,9 +32,9 @@ export const authRoutes = [
       as: z.enum(['admin', 'manager', 'staff']).optional(),
       site: z.string().regex(/^[a-z0-9_]{2,32}$/).optional(),
     }).strict(),
-    async handler({ db, body, ip, res }) {
+    async handler({ req, db, body, ip, res }) {
       // lockout counter: this IP + the portal picked on the login screen (role + branch); expires by itself (see LIMITS)
-      const key = loginKey(body.as, body.site)
+      const key = loginKey(body.as, body.site, deviceId(req, res, () => randomBytes(12).toString('hex')))
       await enforceLogin(db, ip, key)
       // system-wide slowdown (never a block): many failures anywhere make every attempt slower, real users still get in
       const delay = await loginDelayMs(db)

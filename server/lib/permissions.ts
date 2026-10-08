@@ -54,6 +54,7 @@ export const PERMISSIONS = {
   'orders.read':           { roles: AMS, scope: 'branch' as Scope },
   'orders.status':         { roles: AM, scope: 'branch' as Scope },
   'orders.delete':         { roles: AM, scope: 'branch' as Scope },
+  'orders.cancel':         { roles: AM, scope: 'branch' as Scope },
   // advance orders (row 21)
   'advance.read':          { roles: AMS, scope: 'branch' as Scope },
   'advance.write':         { roles: AMS, scope: 'branch' as Scope },
@@ -72,8 +73,6 @@ export const PERMISSIONS = {
   'uploads.avatars':       { roles: AM, scope: 'branch' as Scope },
   // polling replacement for realtime (row 36)
   'poll.stamps':           { roles: AMS, scope: 'branch' as Scope },
-  // login screen branch tiles: shop name + logo only
-  'public.branches':       { roles: 'public' as Allowed, scope: 'none' as Scope },
   // deploy smoke test / uptime monitor: DB ping + missing setting NAMES only, never a secret
   'health.check':          { roles: 'public' as Allowed, scope: 'none' as Scope },
   // public invoice lookup (row 35): rate limited, no auth

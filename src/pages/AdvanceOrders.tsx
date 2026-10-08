@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { CalendarDays, CheckCircle2, Clock3, Download, Eye, FileText, MessageCircle, PackageCheck, Printer, RefreshCw, Search, X, Trash2 } from 'lucide-react'
 import { api } from '../lib/apiClient'
@@ -9,6 +9,7 @@ import { buildAdvanceDepositWhatsAppMessage, buildProfessionalWhatsAppMessage, p
 import { formatPhoneForDisplay, toWhatsAppUrl } from '../lib/phone'
 import { advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/advanceReceipt'
 import { useAdminAuthStore, useProductStore, resolveBranch } from '../store/store'
+import { fetchVariantsByProduct, type ProductVariant } from '../services/variantService'
 import { getPeriodBounds } from '../lib/dateRanges'
 import {
   addAdvanceEvent, completeAdvanceOrder, createAdvanceOrder, getAdvanceOrderHistory, listAdvanceOrders, updateAdvanceStatus, deleteAdvanceOrder,
@@ -54,6 +55,15 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
   const [createOpen, setCreateOpen] = useState(false)
   const [form, setForm] = useState(initialForm)
   const [saving, setSaving] = useState(false)
+  const [variantChoices, setVariantChoices] = useState<ProductVariant[]>([])
+  const [variantId, setVariantId] = useState('')
+  const variantReq = useRef(0)
+  const pickProduct = (product?: { id: string | number; hasVariants?: boolean }) => {
+    const req = ++variantReq.current
+    setVariantId(''); setVariantChoices([])
+    if (!product?.hasVariants) return
+    void fetchVariantsByProduct(String(product.id), branch).then(list => { if (req === variantReq.current) setVariantChoices(list.filter(v => v.isActive)) })
+  }
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [dateFilter, setDateFilter] = useState<DateFilter>('all')
@@ -177,13 +187,28 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
     return true
   }), [periodOrders, search, statusFilter])
 
+  // Double-tap protection: `createLock` is set synchronously (state would only change after the next render, so a quick
+  // second tap on a slow phone could still get through) and `createKey` is the idempotency key of THIS form: a retry
+  // after a slow or lost response returns the first advance order instead of creating another.
+  const createLock = useRef(false)
+  const createKey = useRef<{ key: string; fp: string } | null>(null) // bound to the form's content: an edited form gets a new key
+
   const create = async (event: FormEvent) => {
-    event.preventDefault(); setSaving(true); setError(''); setNotice('')
+    event.preventDefault()
+    if (createLock.current) return
+    setError(''); setNotice('')
     const total = Number(form.totalAmount); const deposit = Number(form.depositAmount)
-    if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(deposit) || deposit <= 0 || deposit >= total) { setError('Deposit must be greater than ₹0 and less than the total order amount.'); setSaving(false); return }
+    if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(deposit) || deposit <= 0 || deposit >= total) { setError('Deposit must be greater than ₹0 and less than the total order amount.'); return }
+    // a product with sizes/variants must say which one, so stock is taken from the right variant at completion
+    const chosenVariant = variantChoices.find(v => v.id === variantId)
+    if (variantChoices.length > 0 && !chosenVariant) { setError('Select the variant (size) for this product.'); return }
+    createLock.current = true; setSaving(true)
+    const createFp = JSON.stringify([variantId, form.customerName, form.phone, form.productName, total, deposit, form.expectedDeliveryDate, form.address, form.remarks])
+    if (!createKey.current || createKey.current.fp !== createFp) createKey.current = { key: crypto.randomUUID(), fp: createFp }
     try {
-      const created = await createAdvanceOrder({ ...form, totalAmount: total, depositAmount: deposit, referenceNumber: form.reference_number, createdByName: role || 'Staff', products: [{ name: form.productName, category: form.category, description: form.description, quantity: 1, base_price: total, line_total: total, unit: 'piece', unit_type: 'unit', source: 'advance_order' }], branch })
-      setOrders(current => [created, ...current]); setForm(initialForm); setCreateOpen(false); setNotice(`${created.deposit_id} created. Deposit is tracked separately and has not been added to revenue.`)
+      const created = await createAdvanceOrder({ ...form, totalAmount: total, depositAmount: deposit, referenceNumber: form.reference_number, createdByName: role || 'Staff', products: [{ ...(chosenVariant ? { product_id: Number(chosenVariant.productId), variant_id: chosenVariant.id, variant_name: chosenVariant.variantName } : {}), name: form.productName, category: form.category, description: form.description, quantity: 1, base_price: total, line_total: total, unit: 'piece', unit_type: 'unit', source: 'advance_order' }], branch, idempotencyKey: createKey.current.key })
+      createKey.current = null // saved: the next advance order is a new one
+      setOrders(current => current.some(o => o.id === created.id) ? current : [created, ...current]); setForm(initialForm); pickProduct(undefined); setCreateOpen(false); setNotice(`${created.deposit_id} created. Deposit is tracked separately and has not been added to revenue.`)
 
       // Redirect to WhatsApp with advance deposit receipt
       const advanceMsg = buildAdvanceDepositWhatsAppMessage({
@@ -198,7 +223,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
         branch: created.branch,
       })
       window.open(toWhatsAppUrl(created.phone, advanceMsg), '_blank', 'noopener,noreferrer')
-    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to create advance order') } finally { setSaving(false) }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to create advance order') } finally { createLock.current = false; setSaving(false) }
   }
 
   const changeStatus = async (order: AdvanceOrder, status: AdvanceStatus) => {
@@ -461,7 +486,10 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
             <Field label="Customer Name *"><input required className={inputClass} value={form.customerName} onChange={e=>setForm({...form,customerName:e.target.value})}/></Field>
             <Field label="Phone Number *"><input required className={inputClass} value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></Field>
             <Field label="Address"><textarea className={inputClass} value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/></Field>
-            <Field label="Product Name *"><input required list="advance-products" className={inputClass} value={form.productName} onChange={e=>{const product=products.find(p=>p.name===e.target.value);setForm({...form,productName:e.target.value,category:product?.category||form.category})}}/><datalist id="advance-products">{products.map(p=><option key={p.id} value={p.name}/>)}</datalist></Field>
+            <Field label="Product Name *"><input required list="advance-products" className={inputClass} value={form.productName} onChange={e=>{const product=products.find(p=>p.name===e.target.value);setForm({...form,productName:e.target.value,category:product?.category||form.category});pickProduct(product)}}/><datalist id="advance-products">{products.map(p=><option key={p.id} value={p.name}/>)}</datalist></Field>
+            {variantChoices.length > 0 && (
+              <Field label="Variant / Size *"><select required className={inputClass} value={variantId} onChange={e=>setVariantId(e.target.value)}><option value="">Select variant</option>{variantChoices.map(v=><option key={v.id} value={v.id}>{v.variantName}{v.sizeLabel && v.sizeLabel!==v.variantName ? ` (${v.sizeLabel})` : ''} - in stock: {v.stock}</option>)}</select></Field>
+            )}
             <Field label="Category"><input className={inputClass} value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/></Field>
             <Field label="Description"><textarea className={inputClass} value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></Field>
             <Field label="Total Order Amount *"><input required min="0.01" step="0.01" type="number" className={inputClass} value={form.totalAmount} onChange={e=>setForm({...form,totalAmount:e.target.value})}/></Field>

@@ -1,6 +1,6 @@
 import { BRAND_EN } from './brand'
 import { thermalLogoFor } from './branchLogo'
-import { formatCurrency, formatInvoiceNo } from './retail'
+import { formatCurrency, formatInvoiceNo, splitGst } from './retail'
 import { formatPhoneForDisplay } from './phone'
 import type { PosBranch } from '../store/store'
 import { getBranchProfile } from './branchProfile'
@@ -168,8 +168,12 @@ export function printThermalReceipt(data: ThermalReceiptData) {
             ` : ''}
             ${(data.totalGst || 0) > 0 ? `
               <tr style="font-size: 10px;">
-                <td class="text-left">GST</td>
-                <td class="text-right">+${formatCurrency(data.totalGst || 0)}</td>
+                <td class="text-left">CGST</td>
+                <td class="text-right">+${formatCurrency(splitGst(data.totalGst).cgst)}</td>
+              </tr>
+              <tr style="font-size: 10px;">
+                <td class="text-left">SGST</td>
+                <td class="text-right">+${formatCurrency(splitGst(data.totalGst).sgst)}</td>
               </tr>
             ` : ''}
             ${data.shipping > 0 ? `

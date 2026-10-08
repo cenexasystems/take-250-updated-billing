@@ -17,6 +17,7 @@ export function mapDbError(err: unknown): ApiError | null {
       const c = String(e.constraint || '')
       if (c === 'products_category_name_unique') return new ApiError(409, 'A product with this name already exists in the selected category.')
       if (c === 'product_variants_product_name_unique') return new ApiError(409, 'A variant with this name already exists for this product.')
+      if (c === 'barcode_in_use' || c === 'product_variants_branch_barcode_unique' || c === 'products_branch_barcode_unique') return new ApiError(409, 'This barcode is already used by another item in this branch.')
       if (c.startsWith('barcode_registry') || c.includes('barcode')) return new ApiError(409, 'This barcode is already registered to another item.')
       if (c === 'categories_branch_name_unique') return new ApiError(409, 'A category with this name already exists.')
       if (c === 'coupons_branch_code_upper_unique') return new ApiError(409, 'That coupon code already exists.')

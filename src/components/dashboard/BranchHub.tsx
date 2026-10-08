@@ -54,7 +54,7 @@ export default function BranchHub({ onNavigate }: BranchHubProps) {
         </div>
 
         <div className="mt-4 pt-4 border-t border-gray-100">
-          <p className="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">Quick Branch Operations</p>
+          <p className="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">Quick Operations</p>
           <div className="flex flex-wrap gap-2">
             {quickOps.map((op) => (
               <button
@@ -77,14 +77,14 @@ export default function BranchHub({ onNavigate }: BranchHubProps) {
           <div>
             <p className="text-xs font-black text-amber-900">Inventory Alerts</p>
             <p className="text-xs text-amber-700 font-semibold mt-0.5">
-              {lowStockCount} item{lowStockCount === 1 ? '' : 's'} at or below minimum stock threshold in this branch.{' '}
+              {lowStockCount} item{lowStockCount === 1 ? '' : 's'} at or below minimum stock threshold in this store.{' '}
               <button onClick={() => onNavigate('inventory')} className="underline font-black cursor-pointer">Open Stock Control</button>
             </p>
           </div>
         </div>
       )}
       <p className="text-[10px] text-gray-400 font-semibold flex items-center gap-1.5">
-        <Store size={11} /> Branch-scoped data — isolated stock ledger and invoice sequence for this POS counter.
+        <Store size={11} /> Isolated stock ledger and invoice sequence for this POS counter.
       </p>
     </div>
   )

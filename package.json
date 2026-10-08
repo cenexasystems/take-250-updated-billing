@@ -14,7 +14,7 @@
     "db:reset": "tsx scripts/db-reset.ts",
     "db:reset-dev": "tsx scripts/db-reset-dev.ts",
     "test:isolation": "tsx scripts/test-isolation.ts",
-    "test:api": "tsx scripts/test-api.ts",
+    "test:api": "tsx scripts/test-api.ts --part=1 && tsx scripts/test-api.ts --part=2",
     "test:e2e": "tsx scripts/e2e.ts",
     "dev:full": "npm run build && tsx scripts/dev-server.ts",
     "typecheck:server": "tsc -p tsconfig.server.json"

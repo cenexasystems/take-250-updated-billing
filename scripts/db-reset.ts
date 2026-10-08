@@ -3,7 +3,7 @@
  * For fresh/dev databases only. Requires --yes.
  *   npm run db:reset -- --yes
  */
-import 'dotenv/config'
+import './admin-env'
 import { spawnSync } from 'node:child_process'
 import { getPool } from '../server/lib/db'
 

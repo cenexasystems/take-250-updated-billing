@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { notFound } from '../lib/errors.js'
+import type { Db } from '../lib/db.js'
+import { ApiError, notFound } from '../lib/errors.js'
 import { route } from '../lib/route.js'
 import { insertRow, updateRow } from '../lib/sql.js'
 
@@ -32,7 +33,34 @@ const saleBody = z.object({
   remarks: z.string().max(1000).nullish(),
   reference_number: z.string().max(100).nullish(),
   billing_date: date.nullish(),
+  // one random key per bill from the browser: a repeated request (double tap, retry after a slow network) returns the
+  // first bill instead of creating another (see orders_branch_idempotency_key)
+  idempotency_key: z.string().trim().min(8).max(100).optional(),
 }).strict()
+
+const isKeyConflict = (e: unknown) => {
+  const x = e as { code?: string; constraint?: string }
+  return x?.code === '23505' && String(x.constraint || '').includes('idempotency_key')
+}
+
+/** The bill already made for this key (same shape the sale function returns), or null. */
+async function saleForKey(db: Db, branch: string, key: string) {
+  const r = await db.query(`SELECT id, invoice_no, total FROM public.orders WHERE branch_id = $1 AND idempotency_key = $2`, [branch, key])
+  const o = r.rows[0]
+  return o ? { order_id: o.id, invoice_no: o.invoice_no, total: Number(o.total), replayed: true } : null
+}
+
+/** Cancel a bill in ONE transaction: lock it, refuse a second cancel, restock every item, write reversing stock movements. */
+async function cancelOrderTx(db: Db, branch: string, id: string, by: string, reason: string) {
+  return db.tx(async (t) => {
+    const cur = (await t.query(`SELECT status FROM public.orders WHERE id = $1 AND branch_id = $2 FOR UPDATE`, [id, branch])).rows[0]
+    if (!cur) throw notFound()
+    if (cur.status === 'cancelled') throw new ApiError(409, 'This order is already cancelled')
+    const r = await t.query(`SELECT public.cancel_order($1, $2, $3, $4) AS r`, [id, branch, by, reason])
+    const order = (await t.query(`SELECT * FROM public.orders WHERE id = $1 AND branch_id = $2`, [id, branch])).rows[0]
+    return { order, restocked_items: Number(r.rows[0].r.restocked_items) }
+  })
+}
 
 const couponFields = {
   code: z.string().trim().min(1).max(60),
@@ -47,27 +75,35 @@ export const salesRoutes = [
   route({
     method: 'post', path: '/api/pos/sale', perm: 'pos.sale', status: 201, body: saleBody,
     async handler({ db, branch, body, session }) {
-      const b = body
-      return db.tx(async (t) => {
-      const r = await t.query(
-        `SELECT public.complete_pos_sale_with_inventory(
-           p_customer_name => $1, p_phone => $2, p_address => $3, p_items => $4::jsonb, p_shipping => $5, p_status => $6,
-           p_order_mode => $7, p_order_type => $8, p_delivery_charge => $9, p_discount_amount => $10,
-           p_manual_discount_amount => $11, p_manual_discount_type => $12, p_manual_discount_value => $13,
-           p_coupon_code => $14, p_coupon_percentage => $15, p_payment_method => $16, p_split_details => $17::jsonb,
-           p_total_gst => $18, p_gst_enabled => $19, p_remarks => $20, p_reference_number => $21, p_billing_date => $22, p_branch => $23) AS r`,
-        [b.customer_name, b.phone, b.address, JSON.stringify(b.items), b.shipping, b.status, b.order_mode, b.order_type, b.delivery_charge,
-         b.discount_amount, b.manual_discount_amount, b.manual_discount_type, b.manual_discount_value, b.coupon_code ?? null, b.coupon_percentage,
-         b.payment_method, JSON.stringify(b.split_details), b.total_gst, b.gst_enabled, b.remarks ?? null, b.reference_number ?? null,
-         b.billing_date ?? null, branch])
-      const sale = r.rows[0].r as { order_id: string }
-      // remember who made the bill: only this login session may re-save its totals (finalize)
-      await t.query(`UPDATE public.orders SET created_by_role = $1, created_by_sid = $2 WHERE id = $3 AND branch_id = $4`, [session!.role, session!.sid, sale.order_id, branch])
-      return r.rows[0].r
-      })
+      const { idempotency_key: key, ...b } = body
+      const again = key ? await saleForKey(db, branch!, key) : null
+      if (again) return again
+      try {
+        return await db.tx(async (t) => {
+          const r = await t.query(
+            `SELECT public.complete_pos_sale_with_inventory(
+               p_customer_name => $1, p_phone => $2, p_address => $3, p_items => $4::jsonb, p_shipping => $5, p_status => $6,
+               p_order_mode => $7, p_order_type => $8, p_delivery_charge => $9, p_discount_amount => $10,
+               p_manual_discount_amount => $11, p_manual_discount_type => $12, p_manual_discount_value => $13,
+               p_coupon_code => $14, p_coupon_percentage => $15, p_payment_method => $16, p_split_details => $17::jsonb,
+               p_total_gst => $18, p_gst_enabled => $19, p_remarks => $20, p_reference_number => $21, p_billing_date => $22, p_branch => $23) AS r`,
+            [b.customer_name, b.phone, b.address, JSON.stringify(b.items), b.shipping, b.status, b.order_mode, b.order_type, b.delivery_charge,
+             b.discount_amount, b.manual_discount_amount, b.manual_discount_type, b.manual_discount_value, b.coupon_code ?? null, b.coupon_percentage,
+             b.payment_method, JSON.stringify(b.split_details), b.total_gst, b.gst_enabled, b.remarks ?? null, b.reference_number ?? null,
+             b.billing_date ?? null, branch])
+          const sale = r.rows[0].r as { order_id: string }
+          // remember who made the bill (only this login session may re-save its totals: finalize) and its idempotency key.
+          // Two identical requests at the same instant: the second one fails on the unique key here and its whole
+          // transaction (stock deduction included) is rolled back; it then returns the first bill below.
+          await t.query(`UPDATE public.orders SET created_by_role = $1, created_by_sid = $2, idempotency_key = $3 WHERE id = $4 AND branch_id = $5`, [session!.role, session!.sid, key ?? null, sale.order_id, branch])
+          return r.rows[0].r
+        })
+      } catch (e) {
+        if (key && isKeyConflict(e)) { const first = await saleForKey(db, branch!, key); if (first) return first }
+        throw e
+      }
     },
   }),
-
   // POS "add unregistered item": same steps as the original (find/create the 'Unregistered' category and product)
   route({
     method: 'post', path: '/api/pos/unregistered-product', perm: 'pos.unregistered',
@@ -228,15 +264,35 @@ export const salesRoutes = [
   }),
   route({
     method: 'patch', path: '/api/orders/:id/status', perm: 'orders.status',
-    body: z.object({ status: statusWord }).strict(),
-    async handler({ db, branch, body, params }) {
-      return { order: await updateRow(db, 'orders', params.id, branch!, { status: body.status }) }
+    body: z.object({ status: z.enum(['pending', 'completed', 'cancelled']) }).strict(),
+    async handler({ db, branch, body, params, session }) {
+      // "cancelled" is not just a label: it restocks the items (see cancel_order), so it takes the cancel path
+      if (body.status === 'cancelled') return cancelOrderTx(db, branch!, params.id, session!.role, '')
+      return db.tx(async (t) => {
+        const cur = (await t.query(`SELECT status FROM public.orders WHERE id = $1 AND branch_id = $2 FOR UPDATE`, [params.id, branch])).rows[0]
+        if (!cur) throw notFound()
+        // the stock of a cancelled bill has already gone back to the shelf: it cannot be revived
+        if (cur.status === 'cancelled') throw new ApiError(409, 'A cancelled order cannot be changed')
+        return { order: await updateRow(t, 'orders', params.id, branch!, { status: body.status }) }
+      })
+    },
+  }),
+  // Cancel a bill: one transaction, stock back on the shelf, reversing stock movements, never a second time.
+  route({
+    method: 'post', path: '/api/orders/:id/cancel', perm: 'orders.cancel',
+    body: z.object({ reason: z.string().trim().max(300).default('') }).strict(),
+    async handler({ db, branch, body, params, session }) {
+      return cancelOrderTx(db, branch!, params.id, session!.role, body.reason)
     },
   }),
   route({
     method: 'delete', path: '/api/orders/:id', perm: 'orders.delete',
-    async handler({ db, branch, params }) {
+    async handler({ db, branch, params, session }) {
       return db.tx(async (t) => {
+        // deleting a live bill must not leak stock: it is cancelled (restocked, ledger reversed) first, then removed
+        const cur = (await t.query(`SELECT status FROM public.orders WHERE id = $1 AND branch_id = $2 FOR UPDATE`, [params.id, branch])).rows[0]
+        if (!cur) throw notFound()
+        if (cur.status !== 'cancelled') await t.query(`SELECT public.cancel_order($1, $2, $3, $4)`, [params.id, branch, session!.role, 'Order deleted'])
         // same sequence the history screen ran: release a linked advance order, then delete the bill (items cascade)
         await t.query(`UPDATE public.advance_orders SET completed_order_id = NULL, invoice_number = NULL, status = 'cancelled' WHERE completed_order_id = $1 AND branch_id = $2`, [params.id, branch])
         const r = await t.query(`DELETE FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])
@@ -246,3 +302,4 @@ export const salesRoutes = [
     },
   }),
 ]
+

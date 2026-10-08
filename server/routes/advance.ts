@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { actorName } from '../lib/auth.js'
 import { notFound } from '../lib/errors.js'
 import { route } from '../lib/route.js'
 
@@ -32,24 +33,40 @@ export const advanceRoutes = [
       total_amount: z.number().finite().gt(0), deposit_amount: z.number().finite().gt(0), expected_delivery_date: day,
       remarks: z.string().max(1000).default(''), payment_method: z.enum(['cash', 'upi', 'card']),
       products: z.array(z.object({}).passthrough()).max(200).default([]), reference_number: z.string().trim().max(100).optional(),
+      // one random key per form from the browser: a repeated request (double tap, slow-network retry) returns the first
+      // advance order instead of creating another (see advance_orders_branch_idempotency_key)
+      idempotency_key: z.string().trim().min(8).max(100).optional(),
     }).strict(),
     async handler({ db, branch, body, session }) {
-      return db.tx(async (t) => {
-        const r = await t.query(
-          `SELECT (public.create_advance_order($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)).* `,
-          [body.customer_name, body.phone, body.address, body.product_name, body.category, body.description, body.total_amount, body.deposit_amount,
-           body.expected_delivery_date, body.remarks, body.payment_method, session!.role, JSON.stringify(body.products), branch])
-        // reference_number is accepted but not stored: the original database had no such column on advance orders
-        // (its update call failed silently), so an exact copy keeps ignoring it.
-        return { order: r.rows[0] }
-      })
+      // NOTE: `SELECT * FROM fn()`, never `SELECT (fn()).*`: Postgres expands the second form into one call of fn() PER COLUMN,
+      // which made a single tap insert 25 identical advance orders (one per column of the table).
+      const key = body.idempotency_key
+      const existing = async () => (key ? (await db.query(`SELECT * FROM public.advance_orders WHERE branch_id = $1 AND idempotency_key = $2`, [branch, key])).rows[0] : undefined)
+      const again = await existing()
+      if (again) return { order: again, replayed: true }
+      try {
+        return await db.tx(async (t) => {
+          const r = await t.query(
+            `SELECT * FROM public.create_advance_order($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)`,
+            [body.customer_name, body.phone, body.address, body.product_name, body.category, body.description, body.total_amount, body.deposit_amount,
+             body.expected_delivery_date, body.remarks, body.payment_method, session!.role, JSON.stringify(body.products), branch])
+          // reference_number is accepted but not stored: the original database had no such column on advance orders
+          // (its update call failed silently), so an exact copy keeps ignoring it.
+          if (key) await t.query(`UPDATE public.advance_orders SET idempotency_key = $1 WHERE id = $2 AND branch_id = $3`, [key, r.rows[0].id, branch])
+          return { order: { ...r.rows[0], ...(key ? { idempotency_key: key } : {}) } }
+        })
+      } catch (e) {
+        // the same key at the same instant: the second transaction fails on the unique key and is rolled back
+        const x = e as { code?: string; constraint?: string }
+        if (key && x?.code === '23505' && String(x.constraint || '').includes('idempotency_key')) { const first = await existing(); if (first) return { order: first, replayed: true } }
+        throw e
+      }
     },
-  }),
-  route({
+  }),  route({
     method: 'post', path: '/api/advance-orders/:id/status', perm: 'advance.write',
     body: z.object({ status, remarks: z.string().max(1000).default('') }).strict(),
     async handler({ db, branch, body, params }) {
-      const r = await db.query(`SELECT (public.update_advance_order_status($1, $2, $3, $4)).*`, [params.id, body.status, body.remarks, branch])
+      const r = await db.query(`SELECT * FROM public.update_advance_order_status($1, $2, $3, $4)`, [params.id, body.status, body.remarks, branch])
       return { order: r.rows[0] }
     },
   }),
@@ -91,10 +108,17 @@ export const advanceRoutes = [
   }),
   route({
     method: 'delete', path: '/api/advance-orders/:id', perm: 'advance.delete',
-    async handler({ db, branch, params }) {
+    async handler({ db, branch, params, session }) {
       return db.tx(async (t) => {
         const adv = await t.query(`SELECT completed_order_id FROM public.advance_orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])
         if (!adv.rows[0]) throw notFound()
+        // a completed deposit already took stock out: put it back (with reversing ledger rows) before its bill disappears
+        if (adv.rows[0].completed_order_id) {
+          const bill = await t.query(`SELECT status FROM public.orders WHERE id = $1 AND branch_id = $2`, [adv.rows[0].completed_order_id, branch])
+          if (bill.rows[0] && bill.rows[0].status !== 'cancelled') {
+            await t.query(`SELECT public.cancel_order($1, $2, $3, $4)`, [adv.rows[0].completed_order_id, branch, actorName(session!), 'Completed deposit deleted'])
+          }
+        }
         await t.query(`DELETE FROM public.advance_orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])
         if (adv.rows[0].completed_order_id) await t.query(`DELETE FROM public.orders WHERE id = $1 AND branch_id = $2`, [adv.rows[0].completed_order_id, branch])
         return { ok: true }

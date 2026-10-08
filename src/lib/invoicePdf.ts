@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf'
 import html2canvas from 'html2canvas'
 import { BRAND_EN, THEME_PALETTE } from './brand'
-import { formatCurrency, formatQuantityValue, normalizeStructuredOrderItem, normalizeUnitLabel, formatInvoiceNo } from './retail'
+import { formatCurrency, formatQuantityValue, normalizeStructuredOrderItem, normalizeUnitLabel, formatInvoiceNo, splitGst } from './retail'
 import { printLogoFor } from './branchLogo'
 import type { PosBranch } from '../store/store'
 import { getBranchProfile } from './branchProfile'
@@ -155,7 +155,10 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   const rows: Array<[string, string, string, number]> = [['Subtotal', money(data.subtotal), ink, 9]]
   if ((data.discountAmount || 0) > 0) rows.push([`Coupon${data.couponCode ? ` (${data.couponCode})` : ''}`, `-${money(data.discountAmount || 0)}`, THEME_PALETTE.accentDark, 11])
   if ((data.manualDiscountAmount || 0) > 0) rows.push(['Discount', `-${money(data.manualDiscountAmount || 0)}`, THEME_PALETTE.accentDark, 9])
-  if ((data.gstAmount || 0) > 0) rows.push(['GST', money(data.gstAmount || 0), ink, 7])
+  if ((data.gstAmount || 0) > 0) {
+    const { cgst, sgst } = splitGst(data.gstAmount)
+    rows.push(['CGST', money(cgst), ink, 7], ['SGST', money(sgst), ink, 7])
+  }
   rows.push(['Delivery', (data.shipping || 0) > 0 ? money(data.shipping) : 'FREE', ink, 9])
   rows.forEach(([label, value, color, fontSize]) => {
     doc.setFont('helvetica', 'normal')

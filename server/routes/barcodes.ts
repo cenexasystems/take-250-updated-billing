@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { Db } from '../lib/db.js'
 import { actorName } from '../lib/auth.js'
-import { notFound } from '../lib/errors.js'
+import { ApiError, notFound } from '../lib/errors.js'
 import { route } from '../lib/route.js'
 
 const REGISTRY_SELECT = `
@@ -24,7 +24,8 @@ export async function lookupBarcode(db: Db, branch: string, raw: string) {
     `SELECT v.id, v.product_id, v.variant_name, v.price, v.stock, v.sku,
             json_build_object('id', p.id, 'name', p.name, 'name_ta', p.name_ta, 'price', p.price, 'offer_price', p.offer_price, 'image_url', p.image_url, 'category', p.category) AS product
      FROM public.product_variants v JOIN public.products p ON p.id = v.product_id AND p.branch_id = v.branch_id
-     WHERE v.branch_id = $1 AND upper(v.barcode) = $2 LIMIT 1`, [branch, code])
+     WHERE v.branch_id = $1 AND v.is_active AND upper(btrim(v.barcode)) = $2
+     ORDER BY v.created_at, v.id LIMIT 1`, [branch, code]) // a code belongs to exactly one active variant (migration 0008); ORDER BY only keeps old data deterministic
   if (v.rows[0]) {
     const x = v.rows[0]
     return {
@@ -35,7 +36,8 @@ export async function lookupBarcode(db: Db, branch: string, raw: string) {
   }
   const p = await db.query(
     `SELECT id, name, name_ta, price, offer_price, image_url, category, barcode, stock_quantity FROM public.products
-     WHERE branch_id = $1 AND upper(barcode) = $2 LIMIT 1`, [branch, code])
+     WHERE branch_id = $1 AND upper(btrim(barcode)) = $2
+     ORDER BY is_active DESC, created_at, id LIMIT 1`, [branch, code])
   if (p.rows[0]) {
     const x = p.rows[0]
     return {
@@ -96,7 +98,9 @@ export const barcodeRoutes = [
     },
   }),
 
-  // the product editor's "barcode" field: upsert on (branch, value), exactly as the original did
+  // the product editor's "barcode" field: register a code for an item. The SAME item can register it again (idempotent);
+  // a code that already belongs to ANOTHER item is refused (409) instead of silently re-pointing it, which used to leave
+  // the first variant's label scanning as the second variant. A deactivated code can be given to a new item.
   route({
     method: 'put', path: '/api/barcodes/register', perm: 'barcodes.write',
     body: z.object({
@@ -110,7 +114,10 @@ export const barcodeRoutes = [
          VALUES ($1, $2, $3, $4, true, $5)
          ON CONFLICT (branch_id, barcode_value) DO UPDATE
            SET entity_type = EXCLUDED.entity_type, product_id = EXCLUDED.product_id, variant_id = EXCLUDED.variant_id, is_active = true, updated_at = now()
-         RETURNING id, barcode_value, entity_type, product_id, variant_id`, [body.barcode_value, entity, body.product_id, body.variant_id ?? null, branch])
+           WHERE NOT barcode_registry.is_active
+              OR (barcode_registry.product_id = EXCLUDED.product_id AND barcode_registry.variant_id IS NOT DISTINCT FROM EXCLUDED.variant_id)
+         RETURNING id, barcode_value, entity_type, product_id, variant_id`, [body.barcode_value.trim().toUpperCase(), entity, body.product_id, body.variant_id ?? null, branch])
+      if (!r.rows[0]) throw new ApiError(409, 'This barcode is already used by another item in this branch.')
       return { record: r.rows[0] }
     },
   }),

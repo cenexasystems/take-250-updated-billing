@@ -6,6 +6,7 @@ import { insertRow, updateRow } from '../lib/sql.js'
 
 const money = z.number().finite().min(0)
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}([T ][0-9:.+Z-]+)?$/)
+const splitPart = z.object({ method: z.enum(['cash', 'qr', 'upi', 'card']), amount: z.number().finite().positive().max(10_000_000) }).strict()
 const statusWord = z.string().trim().toLowerCase().regex(/^[a-z_]{3,30}$/)
 
 /** Billing maths lives in SQL (complete_pos_sale_with_inventory). The API only validates the shape,
@@ -27,7 +28,8 @@ const saleBody = z.object({
   coupon_code: z.string().max(60).nullish(),
   coupon_percentage: z.number().finite().min(0).max(100).default(0),
   payment_method: z.string().max(30).default('cash'),
-  split_details: z.object({}).passthrough().default({}),
+  // a split bill keeps payment_method = 'split' and the breakdown here: { payments: [{ method, amount }, ...] }
+  split_details: z.object({ payments: z.array(splitPart).min(2).max(3).optional() }).strict().default({}),
   total_gst: money.default(0),
   gst_enabled: z.boolean().default(false),
   remarks: z.string().max(1000).nullish(),
@@ -91,7 +93,26 @@ export const salesRoutes = [
              b.discount_amount, b.manual_discount_amount, b.manual_discount_type, b.manual_discount_value, b.coupon_code ?? null, b.coupon_percentage,
              b.payment_method, JSON.stringify(b.split_details), b.total_gst, b.gst_enabled, b.remarks ?? null, b.reference_number ?? null,
              b.billing_date ?? null, branch])
-          const sale = r.rows[0].r as { order_id: string }
+          const sale = r.rows[0].r as { order_id: string; total?: number }
+          // The sale function only knows the coupon discount and counts delivery twice (shipping + delivery_charge); the grand total
+          // is subtotal - coupon - manual discount + GST + delivery (never below zero), exactly what the POS shows. Set it here, in the
+          // same transaction, so the bill is right even if the POS's follow-up "finalize" call never arrives.
+          const fixed = (await t.query(
+            `UPDATE public.orders
+                SET total = GREATEST(0, ROUND(GREATEST(0, subtotal - discount_amount - manual_discount_amount) + total_gst
+                                              + CASE WHEN delivery_charge > 0 THEN delivery_charge ELSE shipping END, 2))
+              WHERE id = $1 AND branch_id = $2 RETURNING total`, [sale.order_id, branch])).rows[0]
+          sale.total = Number(fixed.total)
+          // Split payment: the parts must add up to the bill (an error here rolls the whole sale back, stock included)
+          const parts = b.split_details.payments
+          if (b.payment_method === 'split') {
+            if (!parts) throw new ApiError(400, 'A split payment needs its payment breakdown')
+            if (new Set(parts.map((p) => (p.method === 'upi' ? 'qr' : p.method))).size !== parts.length) throw new ApiError(400, 'Use a different payment method for each part of a split payment')
+            const paid = Math.round(parts.reduce((s, p) => s + p.amount, 0) * 100) / 100
+            if (Math.abs(paid - sale.total) > 0.01) throw new ApiError(400, `Split amounts (₹${paid.toFixed(2)}) must add up to the grand total (₹${sale.total.toFixed(2)})`)
+          } else if (parts) {
+            throw new ApiError(400, 'A payment breakdown is only allowed for a split payment')
+          }
           // remember who made the bill (only this login session may re-save its totals: finalize) and its idempotency key.
           // Two identical requests at the same instant: the second one fails on the unique key here and its whole
           // transaction (stock deduction included) is rolled back; it then returns the first bill below.

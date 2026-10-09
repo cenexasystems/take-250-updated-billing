@@ -52,9 +52,9 @@ export const PERMISSIONS = {
   'coupons.write':         { roles: AM, scope: 'branch' as Scope },
   // orders (rows 18-20)
   'orders.read':           { roles: AMS, scope: 'branch' as Scope },
-  'orders.status':         { roles: AM, scope: 'branch' as Scope },
+  'orders.status':         { roles: AMS, scope: 'branch' as Scope },
   'orders.delete':         { roles: AM, scope: 'branch' as Scope },
-  'orders.cancel':         { roles: AM, scope: 'branch' as Scope },
+  'orders.cancel':         { roles: AMS, scope: 'branch' as Scope },
   // advance orders (row 21)
   'advance.read':          { roles: AMS, scope: 'branch' as Scope },
   'advance.write':         { roles: AMS, scope: 'branch' as Scope },

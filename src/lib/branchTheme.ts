@@ -32,11 +32,21 @@ export const combinedBranchSubtitle = () => {
   return [...new Set(lines.filter(Boolean))].join(' + ')
 }
 
+const pickLogo = (branch: string, saved?: string | null, row?: string | null) =>
+  (saved && saved.trim()) || (row && row.trim()) || FALLBACK_LOGO[branch] || '/branch-placeholder.svg'
+
+/** Non-reactive read (use in handlers / non-React code). Order: the logo saved in that branch's Store Settings,
+ *  then the branch row's logo, then the built-in logo of the branch. */
 export const branchLogo = (branch: PosBranch) =>
-  useSettingsStore.getState().settingsByBranch[branch]?.logoUrl ||
-  branchRow(branch)?.logo_url ||
-  FALLBACK_LOGO[branch] ||
-  '/branch-placeholder.svg'
+  pickLogo(branch, useSettingsStore.getState().settingsByBranch[branch]?.logoUrl, branchRow(branch)?.logo_url)
+
+/** Reactive version for components: re-renders the moment that branch's Store Settings (or branch rows) load or change,
+ *  so a logo saved in Store Settings replaces the built-in one without a reload. */
+export const useBranchLogo = (branch: PosBranch) => {
+  const saved = useSettingsStore((s) => s.settingsByBranch[branch]?.logoUrl)
+  const row = useBranchStore((s) => s.branches.find((b) => b.id === branch)?.logo_url)
+  return pickLogo(branch, saved, row)
+}
 /** Per-branch palette. All branches point at the SAME shared palette today; give a branch its own object here
  * (or just save a colour in Store Settings) to retheme it later without touching any component. */
 export interface BranchPalette { primary: string }

@@ -4,6 +4,9 @@ import pg from 'pg'
 pg.types.setTypeParser(20, (v) => Number(v))
 // numeric columns (prices, totals, stock) too: the screens do arithmetic on them and the original client received numbers
 pg.types.setTypeParser(1700, (v) => Number(v))
+// date columns (expected_delivery_date, coupon expiry, ...) stay plain 'YYYY-MM-DD' text like the original client received, instead of
+// becoming JS Dates that serialise as full timestamps (the screens appended 'T00:00:00' to them and showed "Invalid Date").
+pg.types.setTypeParser(1082, (v) => v)
 
 // Server-only. DATABASE_URL must never be exposed to the browser (no VITE_ prefix) or written to logs.
 let pool: pg.Pool | null = null

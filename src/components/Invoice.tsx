@@ -72,7 +72,6 @@ export const Invoice: React.FC<InvoiceProps> = ({
   const statusColor = status === 'completed' ? THEME_PALETTE.accentDark : status === 'cancelled' ? '#b91c1c' : '#b45309'
   const effectiveDelivery = deliveryCharge || shipping
   const profile = getBranchProfile(branch)
-  const instagramUrls = profile.instagramUrls
 
   return (
     <div
@@ -96,7 +95,6 @@ export const Invoice: React.FC<InvoiceProps> = ({
         <div style={{ fontSize: 11, color: '#4b5563', marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
           <span>📞 {profile.phone}</span>
           <span>✉️ {profile.email}</span>
-          {instagramUrls && <span>📷 Instagram</span>}
         </div>
       </div>
 
@@ -255,11 +253,6 @@ export const Invoice: React.FC<InvoiceProps> = ({
         <div style={{ fontSize: 12, fontWeight: 800, color: THEME_PALETTE.primary, letterSpacing: 0.5 }}>
           Thank you for shopping at {profile.name}!
         </div>
-        {instagramUrls && (
-          <div style={{ fontSize: 10, color: '#666', marginTop: 3, fontWeight: 500, whiteSpace: 'pre-line' }}>
-            Follow us on Instagram:{'\n'}{instagramUrls}
-          </div>
-        )}
       </div>
     </div>
   )

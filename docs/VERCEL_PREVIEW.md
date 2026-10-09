@@ -109,7 +109,7 @@ Let `URL` be the preview address, e.g. `https://yg-billing-git-xyz.vercel.app`.
 - [ ] As Admin (Branch 1): Add / Edit Products → create "Preview Test Item", then Stock → Add Barcode / receive 10. The barcode starts `PB`.
 - [ ] As Admin switched to Branch 2: the item is **not** there. Create one; its barcode starts `P2`. Branch 3 → `P3`.
 - [ ] As Staff Branch 1 on POS: scan the Branch 2 barcode → "not found". Scan the Branch 1 barcode → added. Complete a sale (name, 10-digit mobile, cash) → "Bill Generated Successfully". Stock drops by 1.
-- [ ] Print Receipt opens the thermal preview: black logo on white (no solid black badge), shop name, address, `Ph:` both numbers, email and `instagram.com/take.250shop`. Branch 1 = Karanthai address, Branch 2 = Kinathukadavu (Coimbatore 642109), Branch 3 = women's wear logo and "No. 853, Bhagvati Palayam, Pollachi - 642109".
+- [ ] Print Receipt opens the thermal preview: black logo on white (no solid black badge), shop name, address, `Ph:` both numbers, email. Branch 1 = Karanthai address, Branch 2 = Kinathukadavu (Coimbatore 642109), Branch 3 = women's wear logo and "No. 853, Bhagvati Palayam, Pollachi - 642109".
 - [ ] Open the bill (`/invoice/<number>`): total is a real amount (not NaN), **PDF Invoice** downloads and opens.
 - [ ] Order History (Branch 1) shows that bill; Branch 2's staff session does not.
 - [ ] Advance Orders: create one (deposit less than total), it appears in the list.

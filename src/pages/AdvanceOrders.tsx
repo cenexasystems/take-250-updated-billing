@@ -10,6 +10,7 @@ import { formatPhoneForDisplay, toWhatsAppUrl } from '../lib/phone'
 import { advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/advanceReceipt'
 import { useAdminAuthStore, useProductStore, resolveBranch } from '../store/store'
 import { fetchVariantsByProduct, type ProductVariant } from '../services/variantService'
+import { formatDateDMY } from '../lib/formatDate'
 import { getPeriodBounds } from '../lib/dateRanges'
 import {
   addAdvanceEvent, completeAdvanceOrder, createAdvanceOrder, getAdvanceOrderHistory, listAdvanceOrders, updateAdvanceStatus, deleteAdvanceOrder,
@@ -226,6 +227,14 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to create advance order') } finally { createLock.current = false; setSaving(false) }
   }
 
+  // Every time the payment window opens it starts clean: a manual adjustment / split typed for another order (or left in
+  // the window after closing it) must never carry over into the next bill.
+  const openPayment = (order: AdvanceOrder) => {
+    setManualDiscount(''); setManualDiscountType('rm'); setAppliedCoupon(null); setCouponInput(''); setCouponError('')
+    setPaymentForm({ method: 'cash', remarks: '' }); setSplitP1Amount(''); setError('')
+    setPaymentOrder(order)
+  }
+
   const changeStatus = async (order: AdvanceOrder, status: AdvanceStatus) => {
     if (order.status === 'cancelled') {
       setError('A cancelled order cannot be modified.')
@@ -235,7 +244,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
       setError('This order is already completed and has an official invoice.')
       return
     }
-    if (status === 'completed') { setPaymentOrder(order); return }
+    if (status === 'completed') { openPayment(order); return }
     try { const updated = await updateAdvanceStatus(order.id, status); setOrders(rows => rows.map(row => row.id === order.id ? updated : row)); if (selected?.id === order.id) void openDetails(updated) } catch (err) { setError(err instanceof Error ? err.message : 'Unable to update status') }
   }
 
@@ -376,7 +385,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
                   <td className="px-4 py-3.5 align-middle whitespace-nowrap">
                     <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-700">
                       <CalendarDays size={14} className="text-gray-400 shrink-0" />
-                      <span>{new Date(`${order.expected_delivery_date}T00:00:00`).toLocaleDateString('en-IN')}</span>
+                      <span>{formatDateDMY(order.expected_delivery_date)}</span>
                     </div>
                   </td>
                   <td className="px-4 py-3.5 align-middle whitespace-nowrap">
@@ -403,7 +412,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
                         ['pending_deposit', 'waiting_final_payment', 'ready_for_delivery'].includes(order.status) && (
                         <button
                           type="button"
-                          onClick={() => setPaymentOrder(order)}
+                          onClick={() => openPayment(order)}
                           className="flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 text-xs font-black shadow-xs transition-all active:scale-95 cursor-pointer whitespace-nowrap"
                           title="Receive Remaining Balance"
                         >
@@ -675,7 +684,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
                 ['Total', formatCurrency(selected.total_amount)],
                 ['Deposit Paid', formatCurrency(selected.deposit_amount)],
                 ['Remaining Balance', formatCurrency(selected.remaining_balance)],
-                ['Delivery Date', new Date(`${selected.expected_delivery_date}T00:00:00`).toLocaleDateString('en-IN')],
+                ['Delivery Date', formatDateDMY(selected.expected_delivery_date)],
                 ['Created Date', new Date(selected.created_at).toLocaleDateString('en-IN')],
                 ['Created Time', new Date(selected.created_at).toLocaleTimeString('en-IN')],
                 ['Created By', selected.created_by_name || '-'],

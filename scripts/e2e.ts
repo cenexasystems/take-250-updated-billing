@@ -270,7 +270,7 @@ async function main() {
       check(bill.includes(`#INV${invNo}`) && bill.includes(me.name) && new RegExp(`TOTAL\\s*₹${me.price}\\.00`).test(bill) && !/NaN/.test(bill), `bill view shows #INV${invNo}, the item and TOTAL ₹${me.price}.00 (no NaN)`)
       await shot(page, `staff-${b}-bill-view`)
       check(bill.includes(ADDRESS_HINT[b]) && !Object.entries(ADDRESS_HINT).some(([k, h]) => k !== b && bill.includes(h)), `bill view shows ${b}'s own address and no other branch's`)
-      check(/take\.250shop/i.test(bill) && /73358/.test(bill.replace(/\s/g, '')) && /take250shop@gmail\.com/i.test(bill), 'bill view shows the shared Instagram, phone and email')
+      check(!/instagram/i.test(bill) && /73358/.test(bill.replace(/\s/g, '')) && /take250shop@gmail\.com/i.test(bill), 'bill view shows the phone and email and no Instagram link')
       check((await page.locator(`img[src*='yg-logo-pos${i + 1}']`).count()) > 0, `bill view shows ${b}'s logo (yg-logo-pos${i + 1})`)
       check(!/YG ENTERPRISES|Jute|Fireworks|Wedding/i.test(bill), 'bill view has no trace of the old business name')
       if (i === 0) {

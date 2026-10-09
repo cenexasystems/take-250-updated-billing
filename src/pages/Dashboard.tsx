@@ -47,7 +47,7 @@ import { useAlarmStore } from '../store/alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
 import { uploadProductImage } from '../lib/storage'
 import { formatCurrency, normalizeOrderMode, normalizeUnitType, toNumber, type UnitType } from '../lib/retail'
-import { normalizeStructuredOrderItem, formatInvoiceNo } from '../lib/retail'
+import { normalizeStructuredOrderItem, formatInvoiceNo, formatPaymentMode } from '../lib/retail'
 import { Invoice } from '../components/Invoice'
 import { printThermalReceipt } from '../lib/thermalPrint'
 import { buildProfessionalWhatsAppMessage } from '../lib/whatsappMessage'
@@ -72,7 +72,7 @@ import { useHardwareBarcodeScanner } from '../hooks/useHardwareBarcodeScanner'
 import { BarcodeRedirectDialog } from '../components/pos/BarcodeRedirectDialog'
 import { exportAnalyticsToCSV, exportAnalyticsToPDF } from '../services/analyticsExport'
 import { BRAND_EN, BRAND_LOGO, BRAND_ICON } from '../lib/brand'
-import { branchName, branchShortLabel, posAccent } from '../lib/branchTheme'
+import { branchName, branchShortLabel, posAccent, useBranchLogo } from '../lib/branchTheme'
 import { getPeriodRange, toLocalDateKey } from '../lib/dateRanges'
 import { buildCsv, downloadCsvFile } from '../lib/csv'
 import {
@@ -91,7 +91,7 @@ type DashboardOrder = {
   id: string; invoice_no: string; customer_name: string; phone: string; address: string
   created_at: string; total: number; status: string; order_mode: string; order_type: string; user_id: string | null; items: unknown
   coupon_code: string; discount_amount: number; manual_discount_amount: number; delivery_charge: number
-  total_gst: number; payment_mode: string; payment_method?: string; invoice_pdf_url: string; remarks?: string; reference_number?: string
+  total_gst: number; payment_mode: string; payment_method?: string; split_details?: unknown; invoice_pdf_url: string; remarks?: string; reference_number?: string
   branch?: PosBranch
 }
 type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null }
@@ -202,6 +202,17 @@ export default function Dashboard() {
   const activeBranch = useAdminAuthStore(state => state.activeBranch)
   const setActiveBranch = useAdminAuthStore(state => state.setActiveBranch)
   const branch = resolveBranch(activeBranch)
+  const headerLogo = useBranchLogo(branch) // the logo saved in this branch's Store Settings (built-in logo only if none)
+  // cancel-bill dialog (optional reason) and the success / error toast shown after changing a bill's status
+  const [cancelDialog, setCancelDialog] = useState<{ id: string; invoice: string } | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelBusy, setCancelBusy] = useState(false)
+  const [orderToast, setOrderToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  useEffect(() => {
+    if (!orderToast) return
+    const t = setTimeout(() => setOrderToast(null), 4500)
+    return () => clearTimeout(t)
+  }, [orderToast])
   const [tab, setTab] = useState<TabKey>(() => {
     const params = new URLSearchParams(location.search)
     const tabParam = params.get('tab') as TabKey | null
@@ -409,6 +420,7 @@ export default function Dashboard() {
     delivery_charge: toNumber(row.delivery_charge, 0),
     total_gst: toNumber(row.total_gst ?? row.gst_amount, 0),
     payment_mode: String(row.payment_mode || row.payment_method || ''),
+    split_details: row.split_details,
     invoice_pdf_url: String(row.invoice_pdf_url || ''),
     remarks: row.remarks ? String(row.remarks) : undefined,
     reference_number: row.reference_number ? String(row.reference_number) : undefined,
@@ -885,32 +897,41 @@ export default function Dashboard() {
 
   // Cancelling a bill is not just a label: the server puts every item back in stock (one transaction, reversing stock
   // movements) and refuses a second cancel. A cancelled bill cannot be re-opened.
-  const cancelOrder = async (orderId: string) => {
+  const cancelOrder = (orderId: string) => {
     const invoiceNo = orders.find(o => o.id === orderId)?.invoice_no || ''
-    if (!window.confirm(`Cancel bill ${invoiceNo}? Its items go back into stock. This cannot be undone.`)) return
-    const reason = window.prompt('Reason for cancelling (optional)', '')
-    if (reason === null) return
+    setCancelReason('')
+    setCancelDialog({ id: orderId, invoice: invoiceNo })
+  }
+
+  const confirmCancelOrder = async () => {
+    if (!cancelDialog || cancelBusy) return
+    setCancelBusy(true)
     try {
-      await api('POST', `/api/orders/${orderId}/cancel`, { body: { reason: reason.trim() }, branchId: branch })
+      const res = await api<{ restocked_items?: number }>('POST', `/api/orders/${cancelDialog.id}/cancel`, { body: { reason: cancelReason.trim() }, branchId: branch })
+      const id = cancelDialog.id
+      setOrders(prev => prev.map(o => o.id === id ? { ...o, status: 'cancelled' } : o))
+      setSearchResults(prev => prev.map(o => o.id === id ? { ...o, status: 'cancelled' } : o))
+      void fetchProducts(branch, true) // the stock just changed
+      setOrderToast({ kind: 'ok', text: `Bill ${cancelDialog.invoice} cancelled${res?.restocked_items ? `; ${res.restocked_items} item(s) went back into stock` : ''}.` })
+      setCancelDialog(null)
     } catch (error) {
-      alert(`Could not cancel the bill: ${error instanceof Error ? error.message : 'Request failed'}`)
-      return
+      setOrderToast({ kind: 'err', text: `Could not cancel the bill: ${error instanceof Error ? error.message : 'Request failed'}` })
+    } finally {
+      setCancelBusy(false)
     }
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelled' } : o))
-    setSearchResults(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelled' } : o))
-    void fetchProducts(branch, true) // the stock just changed
   }
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
-    if (newStatus === 'cancelled') { await cancelOrder(orderId); return }
+    if (newStatus === 'cancelled') { cancelOrder(orderId); return }
     try {
       await api('PATCH', `/api/orders/${orderId}/status`, { body: { status: newStatus }, branchId: branch })
     } catch (error) {
-      alert(`Could not change the status: ${error instanceof Error ? error.message : 'Request failed'}`)
+      setOrderToast({ kind: 'err', text: `Could not change the status: ${error instanceof Error ? error.message : 'Request failed'}` })
       return
     }
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o))
     setSearchResults(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o))
+    setOrderToast({ kind: 'ok', text: 'Status updated.' })
   }
   const deleteOrder = async (orderId: string, invoiceNo: string) => {
     if (!window.confirm(`Are you sure you want to completely delete order ${invoiceNo}? This cannot be undone.`)) return
@@ -963,7 +984,7 @@ export default function Dashboard() {
   const handlePrintReceipt = (order: DashboardOrder) => {
     const preview = getOrderWhatsAppPreview(order)
     if (!preview) { alert('This order has no invoice details available.'); return }
-    const subtotal = order.total - (order.delivery_charge || 0) + (order.discount_amount || 0)
+    const subtotal = preview.subtotal // the bill's own line items, so Subtotal - Coupon - Discount + GST + Delivery = Total
 
     printThermalReceipt({
       invoiceNo: order.invoice_no || order.id,
@@ -990,8 +1011,10 @@ export default function Dashboard() {
       subtotal,
       shipping: order.delivery_charge || 0,
       couponDiscount: order.discount_amount || 0,
+      manualDiscount: order.manual_discount_amount || 0,
       totalGst: order.total_gst || 0,
-      total: order.total
+      total: order.total,
+      paymentMode: formatPaymentMode(order.payment_mode, order.split_details),
     })
   }
 
@@ -1025,7 +1048,7 @@ export default function Dashboard() {
       discountAmount: order.discount_amount,
       manualDiscountAmount: order.manual_discount_amount,
       gstAmount: order.total_gst,
-      paymentMode: order.payment_mode,
+      paymentMode: formatPaymentMode(order.payment_mode, order.split_details),
       total: order.total,
     })
     const url = URL.createObjectURL(file)
@@ -1613,6 +1636,25 @@ export default function Dashboard() {
 
   return (
     <div className="admin-shell h-[100dvh] max-h-[100dvh] min-h-[100dvh] bg-bgMain flex flex-col lg:flex-row overflow-hidden">
+      {cancelDialog && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Cancel bill">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl border border-[#E8D399]">
+            <h3 className="text-base font-black text-[#111111]">Cancel bill {cancelDialog.invoice}?</h3>
+            <p className="mt-1 text-xs font-semibold text-[#6B7280]">Every item on this bill goes back into this store's stock and a stock movement is recorded. This cannot be undone, and the bill cannot be set back to Completed.</p>
+            <label className="mt-3 block text-[10px] font-black uppercase tracking-wide text-[#6B7280]">Reason (optional)</label>
+            <textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)} maxLength={300} rows={3} placeholder="e.g. customer returned the item" className="mt-1 w-full rounded-xl border border-[#E5E7EB] px-3 py-2 text-sm outline-none focus:border-[#D4AF37]" />
+            <div className="mt-4 flex gap-2">
+              <button type="button" disabled={cancelBusy} onClick={() => setCancelDialog(null)} className="h-11 flex-1 rounded-xl border border-[#E5E7EB] text-sm font-black text-[#111111] cursor-pointer disabled:opacity-60">Keep bill</button>
+              <button type="button" disabled={cancelBusy} onClick={() => void confirmCancelOrder()} className="h-11 flex-1 rounded-xl bg-red-600 text-sm font-black text-white cursor-pointer hover:bg-red-700 disabled:opacity-60">{cancelBusy ? 'Cancelling…' : 'Cancel bill'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {orderToast && (
+        <div role="status" className={`fixed bottom-5 left-1/2 z-[130] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-xl px-4 py-3 text-sm font-bold shadow-xl ${orderToast.kind === 'ok' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
+          {orderToast.text}
+        </div>
+      )}
       {/* Sidebar */}
       <aside
         className={[
@@ -1625,7 +1667,7 @@ export default function Dashboard() {
         <div className={`hidden lg:flex items-center relative transition-all duration-300 shrink-0 ${sidebarCollapsed ? 'flex-col items-center pt-4 pb-3 px-2 gap-2' : 'px-4 py-3.5 justify-between border-b border-white/5'}`}>
           <Link to="/pos" title="Go to Billing Panel" className={`flex items-center gap-2.5 min-w-0 transition-all duration-300 ${sidebarCollapsed ? 'justify-center' : 'flex-1'}`}>
             <div className="flex items-center justify-center shrink-0 w-9 h-9 rounded-xl bg-[var(--theme-primary-dark)] border border-[#D4AF37]/50 shadow-sm hover:scale-105 transition-transform p-0.5 overflow-hidden">
-              <img src={BRAND_ICON} alt={BRAND_EN} className="w-full h-full object-contain" />
+              <img src={isGlobalView ? BRAND_ICON : headerLogo} alt={BRAND_EN} className="w-full h-full object-contain" />
             </div>
             {!sidebarCollapsed && (
               <div className="flex flex-col min-w-0 gap-1">
@@ -1657,7 +1699,7 @@ export default function Dashboard() {
         <div className="flex lg:hidden items-center justify-between px-3 py-2 border-b border-white/10 bg-[#7A1220] shrink-0 gap-2">
           <Link to="/pos" title="Go to Billing Panel" className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--theme-primary-dark)] border border-[#D4AF37]/50 shrink-0 shadow-sm hover:scale-105 transition-transform p-0.5 overflow-hidden">
-              <img src={BRAND_ICON} alt={BRAND_EN} className="w-full h-full object-contain" />
+              <img src={isGlobalView ? BRAND_ICON : headerLogo} alt={BRAND_EN} className="w-full h-full object-contain" />
             </div>
             <div className="flex flex-col min-w-0 flex-1 overflow-hidden gap-0.5">
               <span className="text-[13px] sm:text-[14px] font-black text-white tracking-wide leading-tight">
@@ -2134,7 +2176,7 @@ export default function Dashboard() {
                           })),
                           subtotal: normalizedItems.reduce((sum, item) => sum + item.line_total, 0),
                           total: getOrderTotal(order),
-                          paymentMode: order.payment_mode || order.payment_method,
+                          paymentMode: formatPaymentMode(order.payment_mode || order.payment_method, order.split_details),
                           branch: branch, // Branch passed through for branch-specific receipt details
                         })
 
@@ -3651,7 +3693,7 @@ export default function Dashboard() {
                                             ? 'bg-blue-100 text-blue-700'
                                             : 'bg-amber-100 text-amber-700'
                                     }`}>
-                                      {o.payment_mode}
+                                      {formatPaymentMode(o.payment_mode, o.split_details)}
                                     </span>
                                   ) : (
                                     <span className="text-[#374151] font-semibold">—</span>
@@ -4553,7 +4595,7 @@ export default function Dashboard() {
                     discountAmount={invoicePreviewOrder.discount_amount}
                     manualDiscountAmount={invoicePreviewOrder.manual_discount_amount}
                     gstAmount={invoicePreviewOrder.total_gst}
-                    paymentMode={invoicePreviewOrder.payment_mode}
+                    paymentMode={formatPaymentMode(invoicePreviewOrder.payment_mode, invoicePreviewOrder.split_details)}
                     total={invoicePreviewOrder.total}
                     status={invoicePreviewOrder.status}
                   />

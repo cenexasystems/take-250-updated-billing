@@ -37,7 +37,6 @@ export function printThermalReceipt(data: ThermalReceiptData) {
     const profile = getBranchProfile(data.branch)
     // Embedded black-on-white logo prints instantly; a custom logo from Store Settings is used when one is uploaded
     const logoSrc = thermalLogoFor(data.branch)
-    const instagramUrls = profile.instagramUrls
     // Create an isolated print iframe protected from third-party extension observers
     const iframe = document.createElement('iframe')
     iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0.01;pointer-events:none;z-index:-1;'
@@ -104,7 +103,6 @@ export function printThermalReceipt(data: ThermalReceiptData) {
           <div style="font-size: 10px; margin-top: 2px;">${data.storeAddress || profile.address}</div>
           <div class="mt-1" style="font-size: 10px;">Ph: ${data.storePhone || profile.phone}</div>
           <div style="font-size: 9px; color: #333;">${data.storeEmail || profile.email}</div>
-          ${instagramUrls ? `<div style="font-size: 9px; color: #333; margin-top: 2px;">Insta: ${instagramUrls.split('\\n').join(' | ')}</div>` : ''}
         </div>
 
         <div class="border-bottom border-top" style="font-size: 11px;">
@@ -191,7 +189,6 @@ export function printThermalReceipt(data: ThermalReceiptData) {
 
         <div class="text-center mt-2" style="font-size: 11px;">
           <div class="font-bold">Thank you for shopping at ${getBranchProfile(data.branch).name || BRAND_EN}!</div>
-          ${instagramUrls ? `<div style="font-size: 10px; margin-top: 2px;">Follow us on Instagram:<br/>${instagramUrls.split('\n').join('<br/>')}</div>` : ''}
         </div>
       </body>
     </html>

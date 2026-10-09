@@ -264,7 +264,7 @@ async function run() {
       const sv = await call('PUT', '/api/admin/passcodes', { cookie: cookies.staff1, body: { target_role: 'staff', target_branch: 'pos1', new_passcode: 'Another-Pass-123', current_admin_passcode: PASS.admin } })
       check(sv.status === 403, 'staff cannot manage passcodes even with the admin passcode in the body')
       check((await call('DELETE', '/api/inventory/items', { cookie: cookies.staff1, query: { product_id: String(prod.pos1) } })).status === 403, 'staff cannot delete inventory items')
-      check((await call('PATCH', `/api/orders/${'00000000-0000-4000-8000-000000000000'}/status`, { cookie: cookies.staff1, body: { status: 'completed' } })).status === 403, 'staff cannot change order status')
+      check((await call('PATCH', `/api/orders/${'00000000-0000-4000-8000-000000000000'}/status`, { cookie: cookies.staff1, body: { status: 'completed' } })).status === 404, 'staff may change order status (an unknown bill is a plain 404, not 403)')
       check((await call('DELETE', `/api/orders/${'00000000-0000-4000-8000-000000000000'}`, { cookie: cookies.staff1 })).status === 403, 'staff has no order-delete endpoint (403)')
     }
 
@@ -740,7 +740,9 @@ async function run() {
       const before = await stockOfP(pid)                         // 18 - 2 - 2 - 2 (s3, s4, s5) = 12
       const c0 = await sale('staff1', bill({ idempotency_key: 'cancel-key-aaaaaa' }, 3))
       check((await stockOfP(pid)) === before - 3, 'a 3-item bill takes 3 from stock')
-      check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.staff1, body: { reason: 'x' } })).status === 403, 'staff cannot cancel a bill (403)')
+      check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.staff2, body: { reason: 'x' } })).status === 404, "another branch's staff cannot cancel it (404)")
+      { const sb = await sale('staff1', bill({}, 1)); const before = await stockOfP(pid); const sc = await call('POST', `/api/orders/${sb.body.order_id}/cancel`, { cookie: cookies.staff1, body: { reason: 'staff cancel' } })
+        check(sc.status === 200 && sc.body.order.status === 'cancelled' && (await stockOfP(pid)) === before + 1, 'staff can cancel a bill of their own branch: stock goes back', JSON.stringify([sc.status, sc.body?.error])) }
       check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { body: {} })).status === 401, 'cancel needs a session (401)')
       check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.manager2, body: {} })).status === 404, 'another branch\'s manager cannot cancel it (404)')
       check((await stockOfP(pid)) === before - 3, 'refused cancels changed nothing')
@@ -825,6 +827,43 @@ async function run() {
       const advLeft = await rows(`SELECT status FROM advance_orders WHERE customer_name = 'Dup Cleanup Adv' ORDER BY deposit_id`)
       check(advLeft.length === 2 && advLeft[0].status === 'pending_deposit' && advLeft[1].status === 'cancelled', 'the duplicate advance order is cancelled, the first kept')
       check(d2.status === 201 && d3.status === 201, 'setup bills were created')
+
+      // ---- 5. bill totals, split payments, the deposit-order bill and plain delivery dates
+      const tpid = await mkProduct('pos1', 100, 'Totals Product')
+      const tb = (extra: Record<string, unknown> = {}) => ({ customer_name: 'Totals Customer', phone: '9876543211', items: [{ product_id: tpid, quantity: 2, unit_price: 50, name: 'Totals Product' }], payment_method: 'cash', ...extra }) // goods value 100
+      const made = async (extra: Record<string, unknown>) => {
+        const r = await sale('staff1', tb(extra))
+        const o = r.status === 201 ? await one(`SELECT total::numeric t, subtotal::numeric s, discount_amount::numeric d, manual_discount_amount::numeric m, payment_method pm, split_details sd FROM orders WHERE id = $1`, [r.body.order_id]) : null
+        return { r, o }
+      }
+      const n0 = await made({})
+      check(n0.r.status === 201 && Number(n0.o.t) === 100 && Number(n0.o.d) === 0 && Number(n0.o.m) === 0, 'no discount: total 100, no coupon, no manual discount', JSON.stringify(n0.o))
+      const n1 = await made({ discount_amount: 10 }); check(Number(n1.o.t) === 90 && Number(n1.o.d) === 10 && Number(n1.o.m) === 0, 'coupon only: 100 - 10 = 90', JSON.stringify(n1.o))
+      const n2 = await made({ manual_discount_amount: 15 }); check(Number(n2.o.t) === 85 && Number(n2.o.d) === 0 && Number(n2.o.m) === 15, 'manual discount only: 100 - 15 = 85', JSON.stringify(n2.o))
+      const n3 = await made({ shipping: 20, delivery_charge: 20 }); check(Number(n3.o.t) === 120, 'delivery is added once (120), even though the POS sends it as shipping and delivery charge', JSON.stringify(n3.o))
+      const n4 = await made({ discount_amount: 10, manual_discount_amount: 5, total_gst: 9, shipping: 20, delivery_charge: 20 }); check(Number(n4.o.t) === 134, 'coupon + manual + GST + delivery: 100 - 10 - 5 + 9 + 20 = 134', JSON.stringify(n4.o))
+      const stockBefore = await stockOfP(tpid); const billsBefore = (await one(`SELECT count(*)::int n FROM orders WHERE customer_name = 'Totals Customer'`)).n
+      const sOk = await made({ payment_method: 'split', split_details: { payments: [{ method: 'cash', amount: 40 }, { method: 'qr', amount: 60 }] } })
+      check(sOk.r.status === 201 && sOk.o.pm === 'split' && sOk.o.sd.payments.length === 2 && sOk.o.sd.payments[0].method === 'cash' && sOk.o.sd.payments[1].amount === 60, 'split payment (cash 40 + QR 60): payment_method stays "split", the breakdown is saved as structured data', JSON.stringify([sOk.r.status, sOk.r.body, sOk.o]))
+      const sBad = await sale('staff1', tb({ payment_method: 'split', split_details: { payments: [{ method: 'cash', amount: 40 }, { method: 'qr', amount: 50 }] } }))
+      check(sBad.status === 400 && /add up to the grand total/.test(String(sBad.body.error)), 'split amounts that do not add up to the total are refused', JSON.stringify([sBad.status, sBad.body]))
+      check((await stockOfP(tpid)) === stockBefore - 2 && (await one(`SELECT count(*)::int n FROM orders WHERE customer_name = 'Totals Customer'`)).n === billsBefore + 1, 'the refused split made no bill and took no stock (only the good split did)')
+      check((await sale('staff1', tb({ payment_method: 'split' }))).status === 400, 'a split without its breakdown is refused')
+      check((await sale('staff1', tb({ payment_method: 'split', split_details: { payments: [{ method: 'cash', amount: 40 }, { method: 'cash', amount: 60 }] } }))).status === 400, 'a split must use two different methods')
+      check((await sale('staff1', tb({ payment_method: 'cash', split_details: { payments: [{ method: 'cash', amount: 40 }, { method: 'qr', amount: 60 }] } }))).status === 400, 'a payment breakdown on a non-split bill is refused')
+      check((await sale('staff1', tb({ payment_method: 'Split (Cash ₹40.00 + QR ₹60.00)' }))).status === 400, 'a long text in payment_method is still refused (30 characters) - the breakdown now travels as structured data')
+      // the deposit-order bill: completing it must not invent a coupon or a doubled discount
+      const dep = (extra: Record<string, unknown> = {}) => call('POST', '/api/advance-orders', { cookie: cookies.staff1, body: adv({ customer_name: 'Totals Deposit', phone: '9876500111', product_name: 'Totals Product', total_amount: 500, deposit_amount: 100, ...extra }) })
+      const dA = await dep(); const dB = await dep()
+      const doneA = await call('POST', `/api/advance-orders/${dA.body.order.id}/complete`, { cookie: cookies.staff1, body: { payment_method: 'cash', final_amount: 400 } })
+      const billA = await one(`SELECT total::numeric t, subtotal::numeric s, discount_amount::numeric d, manual_discount_amount::numeric m FROM orders WHERE invoice_no = $1 AND branch_id = 'pos1'`, [doneA.body.result.invoice_no])
+      check(doneA.status === 200 && Number(billA.t) === 500 && Number(billA.s) === 500 && Number(billA.d) === 0 && Number(billA.m) === 0, 'deposit order, no adjustment: bill total 500, no coupon, no manual discount', JSON.stringify([doneA.status, billA]))
+      const doneB = await call('POST', `/api/advance-orders/${dB.body.order.id}/complete`, { cookie: cookies.staff1, body: { payment_method: 'cash', final_amount: 350, manual_discount: 50 } })
+      const billB = await one(`SELECT total::numeric t, discount_amount::numeric d, manual_discount_amount::numeric m FROM orders WHERE invoice_no = $1 AND branch_id = 'pos1'`, [doneB.body.result.invoice_no])
+      check(doneB.status === 200 && Number(billB.t) === 450 && Number(billB.d) === 0 && Number(billB.m) === 50, 'deposit order with a 50 manual adjustment: stored once (coupon 0, manual 50, total 450), not shown as coupon AND discount', JSON.stringify(billB))
+      const advList = await call('GET', '/api/advance-orders', { cookie: cookies.staff1 })
+      const listed = (advList.body.orders as any[]).find((o) => o.id === dA.body.order.id)
+      check(listed && /^\d{4}-\d{2}-\d{2}$/.test(String(listed.expected_delivery_date)), 'a delivery date comes back as plain YYYY-MM-DD (it used to become a full timestamp that the screen showed as "Invalid Date")', JSON.stringify(listed?.expected_delivery_date))
     }
     // ================================================================== M3. one barcode = exactly one item (variants never share a code)
     {

@@ -2,7 +2,8 @@ import { useEffect } from 'react'
 import { Store, Phone, MapPin, ShoppingCart, Boxes, AlertTriangle, FileText } from 'lucide-react'
 import { useAdminAuthStore, useProductStore, useSettingsStore, resolveBranch, type PosBranch } from '../../store/store'
 import { BRAND_EN } from '../../lib/brand'
-import { branchLogo, branchLabel, posAccent } from '../../lib/branchTheme'
+import { branchLabel, posAccent } from '../../lib/branchTheme'
+import BranchLogo from '../common/BranchLogo'
 import type { TabKey } from '../../pages/Dashboard'
 
 interface BranchHubProps {
@@ -34,7 +35,7 @@ export default function BranchHub({ onNavigate }: BranchHubProps) {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className={`w-14 h-14 rounded-xl ${accent.bgLight} border ${accent.border} p-2 flex items-center justify-center shrink-0`}>
-              <img src={branchLogo(branch)} alt={BRAND_EN} className="w-full h-full object-contain" />
+              <BranchLogo branch={branch} alt={BRAND_EN} className="w-full h-full object-contain" />
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">

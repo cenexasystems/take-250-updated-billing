@@ -8,7 +8,7 @@ import { invoicePdfFile, invoicePdfFileFromElement } from '../lib/invoicePdf'
 import CenexaFooter from '../components/common/CenexaFooter'
 import { THEME_PALETTE } from '../lib/brand'
 import { uploadInvoicePdf } from '../lib/storage'
-import { isUuid, normalizeStructuredOrderItem, formatInvoiceNo } from '../lib/retail'
+import { isUuid, normalizeStructuredOrderItem, formatInvoiceNo, formatPaymentMode } from '../lib/retail'
 import { buildProfessionalWhatsAppMessage } from '../lib/whatsappMessage'
 import { toWhatsAppUrl } from '../lib/phone'
 
@@ -170,6 +170,9 @@ export default function DigitalInvoice() {
   const invoiceItems = (Array.isArray(invoice.items) ? invoice.items : [])
     .map((item: Record<string, unknown>) => normalizeStructuredOrderItem(item))
   const subtotal = invoiceItems.reduce((sum: number, item: ReturnType<typeof normalizeStructuredOrderItem>) => sum + item.line_total, 0)
+  // "Cash ₹100.00 + QR ₹900.00" for a split bill, "Cash" / "QR" / "Card" otherwise
+  const payLabel = formatPaymentMode(invoice.payment_mode || invoice.payment_method, invoice.split_details)
+  const deliveryCharge = Number(invoice.delivery_charge) || Number(invoice.shipping) || 0
 
   const downloadPdf = async () => {
     if (downloadingPdf) return
@@ -214,13 +217,13 @@ export default function DigitalInvoice() {
         branch: invoice.branch as any,
         items: invoice.items || [],
         subtotal: invoiceItems.reduce((sum: number, item: any) => sum + (item.line_total || 0), 0),
-        shipping: invoice.shipping || 0,
+        shipping: deliveryCharge,
         total: invoice.total || 0,
         discountAmount: invoice.discount_amount,
         manualDiscountAmount: invoice.manual_discount_amount,
         gstAmount: invoice.gst_amount,
         couponCode: invoice.coupon_code,
-        paymentMode: invoice.payment_mode,
+        paymentMode: payLabel,
       })
 
       if (!file || file.size === 0) {
@@ -292,7 +295,7 @@ export default function DigitalInvoice() {
       shipping: invoice.delivery_charge,
       gstAmount: invoice.total_gst || invoice.gst_amount || 0,
       total: invoice.total,
-      paymentMode: invoice.payment_mode || invoice.payment_method,
+      paymentMode: payLabel,
     })
 
     const invoiceUrl = window.location.href
@@ -331,13 +334,13 @@ export default function DigitalInvoice() {
             branch: invoice.branch as any,
             items: invoice.items || [],
             subtotal: invoiceItems.reduce((sum: number, item: any) => sum + (item.line_total || 0), 0),
-            shipping: invoice.shipping || 0,
+            shipping: deliveryCharge,
             total: invoice.total || 0,
             discountAmount: invoice.discount_amount,
             manualDiscountAmount: invoice.manual_discount_amount,
             gstAmount: invoice.gst_amount,
             couponCode: invoice.coupon_code,
-            paymentMode: invoice.payment_mode,
+            paymentMode: payLabel,
           })
           await uploadInvoicePdf(file, invoice.invoice_no)
         } catch { /* best-effort background upload */ }
@@ -346,7 +349,6 @@ export default function DigitalInvoice() {
   }
 
   const printReceipt = () => {
-    const subtotal = invoice.total - (invoice.delivery_charge || 0) + (invoice.discount_amount || 0)
     printThermalReceipt({
       invoiceNo: invoice.invoice_no,
       date: invoice.created_at,
@@ -361,11 +363,12 @@ export default function DigitalInvoice() {
         line_total: item.line_total
       })),
       subtotal,
-      shipping: invoice.delivery_charge || 0,
+      shipping: deliveryCharge,
       couponDiscount: invoice.discount_amount || 0,
+      manualDiscount: invoice.manual_discount_amount || 0,
       totalGst: invoice.total_gst || invoice.gst_amount || 0,
       total: invoice.total > 0 ? invoice.total : (subtotal + (invoice.delivery_charge || 0) + (invoice.total_gst || invoice.gst_amount || 0) - (invoice.discount_amount || 0) - (invoice.manual_discount_amount || 0)),
-      paymentMode: invoice.payment_mode || invoice.payment_method,
+      paymentMode: payLabel,
     })
   }
 
@@ -414,14 +417,14 @@ export default function DigitalInvoice() {
             branch={invoice.branch}
             items={invoice.items || []}
             subtotal={subtotal}
-            shipping={invoice.delivery_charge || 0}
+            shipping={deliveryCharge}
             discountAmount={invoice.discount_amount || 0}
             manualDiscountAmount={invoice.manual_discount_amount || 0}
             gstAmount={invoice.total_gst || invoice.gst_amount || 0}
             couponCode={invoice.coupon_code}
             total={invoice.total > 0 ? invoice.total : (subtotal + (invoice.delivery_charge || 0) + (invoice.total_gst || invoice.gst_amount || 0) - (invoice.discount_amount || 0) - (invoice.manual_discount_amount || 0))}
             status={invoice.status}
-            paymentMode={invoice.payment_mode || invoice.payment_method}
+            paymentMode={payLabel}
           />
         </div>
       </div>

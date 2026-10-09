@@ -2,7 +2,8 @@ import { useEffect, useState, useCallback } from 'react'
 import { RefreshCw, TrendingUp, Receipt, Boxes, AlertTriangle, Store } from 'lucide-react'
 import { api } from '../../lib/apiClient'
 import type { PosBranch } from '../../store/store'
-import { posAccent, branchLabel, branchLogo, branchShortLabel } from '../../lib/branchTheme'
+import { posAccent, branchLabel, branchShortLabel } from '../../lib/branchTheme'
+import BranchLogo from '../common/BranchLogo'
 import { formatCurrency } from '../../lib/retail'
 import { BRAND_EN } from '../../lib/brand'
 import type { TabKey } from '../../pages/Dashboard'
@@ -131,7 +132,7 @@ export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) 
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2.5">
                     <div className={`w-10 h-10 rounded-xl ${accent.bgLight} p-1.5 flex items-center justify-center`}>
-                      <img src={branchLogo(b)} alt={BRAND_EN} className="w-full h-full object-contain" />
+                      <BranchLogo branch={b} alt={BRAND_EN} className="w-full h-full object-contain" />
                     </div>
                     <div>
                       <p className="text-sm font-black text-[#1A0E0E]">{branchLabel(b)}</p>

@@ -56,29 +56,35 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   doc.line(left, y, right, y)
   y += 10
 
+  // header block: a 26 mm logo, the shop name / address / phone beside it. The block's height follows the address
+  // (it can wrap to several lines) so the phone never runs into the BILL TO box below.
+  const profile = getBranchProfile(data.branch)
+  const logoSize = 26
+  const textX = left + logoSize + 6
+  const addressLines = doc.splitTextToSize(profile.address, 80) as string[]
+  const shopPhoneY = y + 14 + addressLines.length * 3.6 + 1.5
   try {
-    doc.addImage(printLogoFor(data.branch), 'PNG', left, y, 30, 30)
+    doc.addImage(printLogoFor(data.branch), 'PNG', left, y - 3, logoSize, logoSize)
   } catch {
     doc.setTextColor(primaryColor)
     doc.setFontSize(16)
-    doc.text(BRAND_EN, left, y + 15)
+    doc.text(BRAND_EN, left, y + 10)
   }
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(13)
   doc.setTextColor(THEME_PALETTE.primary)
-  doc.text(BRAND_EN, left + 35, y + 10)
+  doc.text(BRAND_EN, textX, y + 7)
   doc.setFontSize(8)
   doc.setTextColor('#555')
   doc.setFont('helvetica', 'normal')
-  const profile = getBranchProfile(data.branch)
-  doc.text(profile.address, left + 35, y + 17, { maxWidth: 80 })
-  doc.text(`Phone: ${profile.phone}`, left + 35, y + 25)
+  doc.text(addressLines, textX, y + 14)
+  doc.text(`Phone: ${profile.phone}`, textX, shopPhoneY)
   doc.setTextColor(THEME_PALETTE.primary)
   doc.setFont('helvetica', 'bold')
   doc.text(`Date: ${new Date(data.date).toLocaleDateString('en-IN')}`, right - 2, y + 2, { align: 'right' })
   const paymentText = `Payment: ${data.paymentMode || 'POS'}`.replace(/[₹\u20b9]/g, 'Rs. ')
-  doc.text(paymentText, right - 2, y + 8, { align: 'right', maxWidth: 100 })
-  y += 28
+  doc.text(paymentText, right - 2, y + 8, { align: 'right', maxWidth: 70 })
+  y = Math.max(y + logoSize + 3, shopPhoneY + 4) + 4
 
   const customerName = String(data.customerName || 'Walk-in Customer').trim()
   const customerPhone = formatPhoneForDisplay(data.phone) || '—'
@@ -152,21 +158,22 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   })
 
   y = Math.max(y + 6, 150)
+  // Subtotal - Coupon - Discount + GST + Delivery = Total. A row is only drawn when its value is above zero.
   const rows: Array<[string, string, string, number]> = [['Subtotal', money(data.subtotal), ink, 9]]
-  if ((data.discountAmount || 0) > 0) rows.push([`Coupon${data.couponCode ? ` (${data.couponCode})` : ''}`, `-${money(data.discountAmount || 0)}`, THEME_PALETTE.accentDark, 11])
+  if ((data.discountAmount || 0) > 0) rows.push([`Coupon${data.couponCode ? ` (${data.couponCode})` : ''}`, `-${money(data.discountAmount || 0)}`, THEME_PALETTE.accentDark, 9])
   if ((data.manualDiscountAmount || 0) > 0) rows.push(['Discount', `-${money(data.manualDiscountAmount || 0)}`, THEME_PALETTE.accentDark, 9])
   if ((data.gstAmount || 0) > 0) {
     const { cgst, sgst } = splitGst(data.gstAmount)
-    rows.push(['CGST', money(cgst), ink, 7], ['SGST', money(sgst), ink, 7])
+    rows.push(['CGST', money(cgst), ink, 8], ['SGST', money(sgst), ink, 8])
   }
-  rows.push(['Delivery', (data.shipping || 0) > 0 ? money(data.shipping) : 'FREE', ink, 9])
+  if ((data.shipping || 0) > 0) rows.push(['Delivery', money(data.shipping), ink, 9])
   rows.forEach(([label, value, color, fontSize]) => {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(fontSize)
     doc.setTextColor(color === THEME_PALETTE.accentDark ? THEME_PALETTE.accentDark : '#18202a')
     doc.text(label, 142, y, { align: 'right' })
     doc.text(value, right - 3, y, { align: 'right' })
-    y += 7
+    y += 8 // one fixed row height for every row, so no row can overlap the next
   })
   doc.setDrawColor('#D4AF37')
   doc.setLineWidth(1)

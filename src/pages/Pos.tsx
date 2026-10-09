@@ -32,6 +32,7 @@ import {
   buildStructuredOrderItem,
   calculateLineTotal,
   formatCurrency,
+  formatPaymentMode,
   formatQuantityDisplay,
   formatInvoiceNo,
 } from '../lib/retail'
@@ -811,11 +812,13 @@ export default function Pos(props: PosProps = {}) {
     if (!saleKey.current || saleKey.current.fp !== saleFp) saleKey.current = { key: crypto.randomUUID(), fp: saleFp } // same key only for a retry of THIS bill
     setSaving(true); setError('')
     try {
-      const labelFor = (t: 'cash' | 'qr' | 'card') => t === 'qr' ? 'QR' : t === 'card' ? 'Card' : 'Cash'
-      const splitP1Amt = Number(splitP1Amount) || 0
-      const splitP2Amt = Math.max(0, total - splitP1Amt)
-      const splitModeLabel = `Split (${labelFor(splitP1Type)} ${formatCurrency(splitP1Amt)} + ${labelFor(splitP2Type)} ${formatCurrency(splitP2Amt)})`
-      const paymentMode = ordermode === 'online' ? 'online' : paymentType === 'split' ? splitModeLabel : paymentType
+      // A split keeps payment_method short ('split') and sends the breakdown as structured data the server checks against the total.
+      const splitP1Amt = Math.round((Number(splitP1Amount) || 0) * 100) / 100
+      const splitP2Amt = Math.round(Math.max(0, total - splitP1Amt) * 100) / 100
+      const isSplit = paymentType === 'split' && ordermode !== 'online'
+      const splitDetails = isSplit ? { payments: [{ method: splitP1Type, amount: splitP1Amt }, { method: splitP2Type, amount: splitP2Amt }] } : {}
+      const splitModeLabel = formatPaymentMode('split', splitDetails) // "Cash ₹100.00 + QR ₹900.00"
+      const paymentMode = ordermode === 'online' ? 'online' : paymentType
       const created = await createOrderWithStock({
         customerName: customer.name.trim() || 'Walk-in Customer',
         phone: normalizedPhone,
@@ -851,6 +854,7 @@ export default function Pos(props: PosProps = {}) {
         totalGst,
         gstEnabled: billGstEnabled,
         paymentMethod: paymentMode,
+        splitDetails,
         branch,
         idempotencyKey: saleKey.current.key,
       })
@@ -914,7 +918,7 @@ export default function Pos(props: PosProps = {}) {
         address: customer.address.trim() || 'POS Counter',
         amountReceived: cashReceivedNum,
         balanceReturned: balanceToReturn,
-        paymentMode: ordermode === 'online' ? 'Online' : paymentType === 'split' ? splitModeLabel : paymentType === 'qr' ? 'QR' : paymentType === 'card' ? 'Card' : 'Cash',
+        paymentMode: ordermode === 'online' ? 'Online' : isSplit ? splitModeLabel : paymentType === 'qr' ? 'QR' : paymentType === 'card' ? 'Card' : 'Cash',
         paymentMethod: paymentMode,
       }
       setInvoice(createdInvoice)

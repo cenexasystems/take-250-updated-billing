@@ -55,7 +55,7 @@ export type Feature =
 
 export const FEATURE_ACCESS: Record<Feature, Role[]> = {
   'inventory.delete': ['admin', 'manager'],
-  'orders.status': ['admin', 'manager'],
+  'orders.status': ['admin', 'manager', 'staff'],
   'orders.delete': ['admin', 'manager'],
   'settings.write': ['admin', 'manager'],
   'coupons.manage': ['admin', 'manager'],

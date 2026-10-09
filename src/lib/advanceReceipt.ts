@@ -2,6 +2,7 @@ import { jsPDF } from 'jspdf'
 import { BRAND_EN, THEME_PALETTE } from './brand'
 import { printLogoFor, thermalLogoFor } from './branchLogo'
 import { formatCurrency } from './retail'
+import { formatDateDMY } from './formatDate'
 import type { AdvanceOrder } from '../services/advanceOrderService'
 import { getBranchProfile } from './branchProfile'
 import { formatPhoneForDisplay } from './phone'
@@ -30,7 +31,7 @@ export function advanceReceiptPdf(order: AdvanceOrder) {
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor('#6b7280'); doc.text(`Created: ${new Date(order.created_at).toLocaleString('en-IN')}`, 194, 51, { align: 'right' })
   const rows = [
     ['Customer', order.customer_name], ['Phone', formatPhoneForDisplay(order.phone)], ['Address', order.address || '-'], ['Product', order.product_name],
-    ['Category', order.category || '-'], ['Expected delivery', new Date(`${order.expected_delivery_date}T00:00:00`).toLocaleDateString('en-IN')],
+    ['Category', order.category || '-'], ['Expected delivery', formatDateDMY(order.expected_delivery_date)],
   ]
   let y = 66
   rows.forEach(([label, value]) => { doc.setFont('helvetica', 'bold'); doc.setTextColor('#6b7280'); doc.text(label.toUpperCase(), 16, y); doc.setFont('helvetica', 'normal'); doc.setTextColor('#111827'); doc.text(String(value), 64, y, { maxWidth: 126 }); y += 10 })
@@ -113,7 +114,7 @@ export function printAdvanceReceipt(order: AdvanceOrder) {
 ${order.address ? `<div class="r"><span class="label">Address</span><span>${esc(order.address)}</span></div>` : ''}
 <div class="r"><span class="label">Product</span><span>${esc(order.product_name)}</span></div>
 ${order.category ? `<div class="r"><span class="label">Category</span><span>${esc(order.category)}</span></div>` : ''}
-<div class="r"><span class="label">Delivery</span><span>${esc(new Date(`${order.expected_delivery_date}T00:00:00`).toLocaleDateString('en-IN'))}</span></div>
+<div class="r"><span class="label">Delivery</span><span>${esc(formatDateDMY(order.expected_delivery_date))}</span></div>
 <div class="r"><span class="label">Payment</span><span>${esc(depositPayment)}</span></div>
 <div class="line"></div>
 <div class="r"><span>Total Amount</span><span class="bold">${esc(formatCurrency(order.total_amount))}</span></div>

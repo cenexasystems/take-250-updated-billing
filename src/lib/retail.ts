@@ -70,6 +70,40 @@ export const splitGst = (gst: unknown) => {
   return { cgst: cgstPaise / 100, sgst: (paise - cgstPaise) / 100 }
 }
 
+export type PaymentPart = { method: 'cash' | 'qr' | 'card'; amount: number }
+
+const methodName = (m: unknown): PaymentPart['method'] | null => {
+  const k = String(m ?? '').trim().toLowerCase()
+  return k === 'cash' ? 'cash' : k === 'qr' || k === 'upi' ? 'qr' : k === 'card' ? 'card' : null
+}
+const methodLabel = (m: PaymentPart['method']) => (m === 'qr' ? 'QR' : m === 'card' ? 'Card' : 'Cash')
+
+/** The structured split breakdown saved with a bill (orders.split_details = { payments: [{ method, amount }] }). */
+export const paymentParts = (splitDetails: unknown): PaymentPart[] => {
+  const list = (splitDetails as { payments?: unknown } | null | undefined)?.payments
+  if (!Array.isArray(list)) return []
+  const parts: PaymentPart[] = []
+  for (const p of list) {
+    const method = methodName((p as { method?: unknown })?.method)
+    const amount = Number((p as { amount?: unknown })?.amount)
+    if (method && Number.isFinite(amount) && amount > 0) parts.push({ method, amount })
+  }
+  return parts
+}
+
+/** "Cash ₹100.00 + QR ₹900.00" for a split bill, otherwise "Cash" / "QR" / "Card" / what was stored (older bills). */
+export const formatPaymentMode = (mode: unknown, splitDetails?: unknown): string => {
+  const parts = paymentParts(splitDetails)
+  if (parts.length > 1) return parts.map((p) => `${methodLabel(p.method)} ${formatCurrency(p.amount)}`).join(' + ')
+  const raw = String(mode ?? '').trim()
+  const single = methodName(raw)
+  return single ? methodLabel(single) : raw
+}
+
+/** Subtotal - coupon - manual discount + GST + delivery, never below zero (the same rule the POS and the server use). */
+export const billTotal = (b: { subtotal: number; coupon?: number; manual?: number; gst?: number; delivery?: number }) =>
+  roundTo(Math.max(0, b.subtotal - (b.coupon || 0) - (b.manual || 0)) + (b.gst || 0) + (b.delivery || 0))
+
 export const toNumber = (value: unknown, fallback = 0) => {
   if (value === null || value === undefined) return fallback
   const parsed = Number(value)

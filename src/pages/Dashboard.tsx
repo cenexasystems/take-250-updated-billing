@@ -1742,9 +1742,8 @@ export default function Dashboard() {
           </button>
         </div>
         {/* Operating Branch selector (admin picks a scope) / fixed branch badge (staff) */}
-        {/* on a phone the fixed branch badge (staff / manager) is dropped: the branch name is already in the header chip, and the scroll area matters more */}
-        <div className={`px-3 py-1 lg:py-2.5 border-b border-white/10 shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''} ${can(role, 'branch.switch') ? '' : 'max-lg:hidden'}`}>
-          {can(role, 'branch.switch') && <p className="max-lg:sr-only text-[9px] font-black uppercase tracking-widest text-white/50 mb-1.5">Operating Branch</p>}
+                <div className={`px-3 py-2.5 border-b border-white/10 shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
+          {can(role, 'branch.switch') && <p className="text-[9px] font-black uppercase tracking-widest text-white/50 mb-1.5">Operating Branch</p>}
           {can(role, 'branch.switch') ? (
             <select
               value={activeBranch || 'all'}
@@ -1754,7 +1753,7 @@ export default function Dashboard() {
                 setTab(val === 'all' ? 'business_overview' : 'billing')
                 navigate('/dashboard', { replace: true })
               }}
-              className="w-full rounded-xl bg-white/10 border border-white/15 text-white text-[11px] font-bold px-2.5 py-1.5 lg:py-2 outline-none focus:border-[#D4AF37] cursor-pointer"
+              className="w-full rounded-xl bg-white/10 border border-white/15 text-white text-[11px] font-bold px-2.5 py-2 outline-none focus:border-[#D4AF37] cursor-pointer"
             >
               <option value="all" className="text-black">Global Admin (All Branches)</option>
               {(branchRows.length ? branchRows.map((b) => b.id as PosBranch) : (['pos1', 'pos2', 'pos3'] as PosBranch[])).map((id) => (
@@ -1770,7 +1769,7 @@ export default function Dashboard() {
         {/* Nav List - Height safe and scrollable */}
         <nav
           ref={navRef} onScroll={measureNav}
-          className={`flex overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto lg:flex-col gap-1 lg:gap-1 px-2 py-1.5 lg:px-2.5 lg:py-2.5 flex-1 min-h-0 transition-all duration-300 ${navMore ? 'max-lg:[mask-image:linear-gradient(to_right,#000_calc(100%-44px),transparent)]' : ''} ${sidebarCollapsed ? 'lg:px-1.5' : 'lg:px-2.5'}`}
+          className={`flex overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto lg:flex-col gap-1 lg:gap-1 px-2 py-2 lg:px-2.5 lg:py-2.5 flex-1 min-h-0 transition-all duration-300 ${navMore ? 'max-lg:[mask-image:linear-gradient(to_right,#000_calc(100%-44px),transparent)]' : ''} ${sidebarCollapsed ? 'lg:px-1.5' : 'lg:px-2.5'}`}
         >
           {navItems.map(item => (
             <React.Fragment key={item.id}>
@@ -1780,7 +1779,7 @@ export default function Dashboard() {
               className={[
                 'shrink-0 flex flex-col lg:flex-row items-center justify-center lg:justify-start',
                 'gap-1 lg:gap-2.5',
-                'h-[40px] min-w-[52px] lg:min-w-0 lg:w-full lg:h-[38px] xl:h-[40px]',
+                'h-[46px] min-w-[56px] lg:min-w-0 lg:w-full lg:h-[38px] xl:h-[40px]',
                 sidebarCollapsed ? 'lg:w-[42px] lg:justify-center mx-auto' : 'lg:px-3',
                 'px-1 py-1 lg:py-0',
                 'rounded-xl font-medium text-[10px] lg:text-[12.5px] xl:text-[13px] transition-all overflow-hidden cursor-pointer',
@@ -1812,7 +1811,7 @@ export default function Dashboard() {
               className={[
                 'shrink-0 flex flex-col lg:flex-row items-center justify-center lg:justify-start',
                 'gap-1 lg:gap-2.5',
-                'h-[40px] min-w-[52px] lg:min-w-0 lg:w-full lg:h-[38px] xl:h-[40px]',
+                'h-[46px] min-w-[56px] lg:min-w-0 lg:w-full lg:h-[38px] xl:h-[40px]',
                 sidebarCollapsed ? 'lg:w-[42px] lg:justify-center mx-auto' : 'lg:px-3',
                 'px-1 py-1 lg:py-0 mt-1',
                 'rounded-xl font-medium text-[10px] lg:text-[12.5px] xl:text-[13px] transition-all overflow-hidden cursor-pointer text-white/70 hover:bg-white/10 hover:text-[#D4AF37]',
@@ -1850,7 +1849,7 @@ export default function Dashboard() {
 
       {/* Main */}
       <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        <div className="app-scroll flex-1 min-h-0 p-3 sm:p-6 lg:p-8 pb-[calc(env(safe-area-inset-bottom)+24px)] overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div className="app-scroll flex-1 min-h-0 p-4 sm:p-6 lg:p-8 overflow-x-hidden overflow-y-auto overscroll-contain">
 
         {tab === 'branch_hub' && <BranchHub onNavigate={handleTabClick} />}
         {tab === 'business_overview' && <BusinessOverview onNavigate={handleTabClick} />}
@@ -3197,7 +3196,7 @@ export default function Dashboard() {
 
         {/* ── BILLING PANEL ── */}
         {tab === 'billing' && (
-          <div className="-m-3 sm:-m-6 lg:-m-8">
+          <div className="-m-4 sm:-m-6 lg:-m-8">
             <Pos
               isEmbedded
               externalScannedCode={cartItemToInject}
@@ -3232,7 +3231,7 @@ export default function Dashboard() {
                 <h2 className="mt-1 text-xl font-black text-[#111111]">{l('Order Management', 'ஆர்டர் மேலாண்மை')} <span className="text-[11px] font-semibold text-[#374151]">({l('POS + Advance Bills', 'POS பில்கள் மட்டுமே')})</span></h2>
               </div>
               <div className="flex gap-2">
-                <Link to="/pos" className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#111111] px-4 py-2 text-[13px] font-bold text-white shadow-sm hover:bg-[#1f281d]">
+                <Link to="/pos" className="inline-flex items-center gap-2 rounded-xl bg-[#111111] px-4 py-2 text-[13px] font-bold text-white shadow-sm hover:bg-[#1f281d]">
                   <ShoppingCart size={14} /> Open POS
                 </Link>
               </div>
@@ -4572,14 +4571,14 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={() => handlePrintReceipt(invoicePreviewOrder)}
-                    className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[#E5E7EB]/70 px-3 text-xs font-black text-[#111111] hover:bg-[#F9FAFB]"
+                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#E5E7EB]/70 px-3 text-xs font-black text-[#111111] hover:bg-[#F9FAFB]"
                   >
                     <Printer size={15} /> Print
                   </button>
                   <button
                     type="button"
                     onClick={() => void openOrderInvoice(invoicePreviewOrder, 'download')}
-                    className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-[#7A1220] px-3 text-xs font-black text-white hover:bg-[#D4AF37]"
+                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#7A1220] px-3 text-xs font-black text-white hover:bg-[#D4AF37]"
                   >
                     <Download size={15} /> Download
                   </button>

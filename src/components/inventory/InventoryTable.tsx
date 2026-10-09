@@ -193,7 +193,7 @@ export const InventoryTable: React.FC = () => {
   )
 
   return (
-    <div className="space-y-3 sm:space-y-6">
+    <div className="space-y-6">
       {/* NAVIGATION / HEADER */}
       <div className="bg-white border border-[#E8D399] rounded-2xl p-2 sm:p-2.5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
         <div className="flex items-center gap-1.5 p-1 bg-[#FBFAF6] border border-gray-200 rounded-xl min-w-0 max-w-full overflow-x-auto hide-scrollbar">
@@ -262,46 +262,46 @@ export const InventoryTable: React.FC = () => {
 
       {/* TAB 1: STOCK MANAGEMENT VIEW */}
       {activeTab === 'stock' && (
-        <div className="space-y-3 sm:space-y-6 animate-in fade-in duration-150">
+        <div className="space-y-6 animate-in fade-in duration-150">
           {/* Top KPI Metrics Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4">
-            <div className="bg-white border border-[#E8D399] rounded-xl sm:rounded-2xl p-2.5 sm:p-4 shadow-sm flex items-center gap-2.5 sm:gap-3 min-w-0">
-              <div className="w-9 h-9 sm:w-11 sm:h-11 shrink-0 rounded-xl bg-[#7A1220] text-[#D4AF37] flex items-center justify-center font-black">
-                <Layers size={18} />
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-white border border-[#E8D399] rounded-2xl p-4 shadow-sm flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-[#7A1220] text-[#D4AF37] flex items-center justify-center font-black">
+                <Layers size={20} />
               </div>
               <div>
-                <div className="text-[10px] font-bold text-gray-500 leading-tight">Total SKUs</div>
-                <div className="text-lg sm:text-xl font-black text-black">{totalSkus}</div>
+                <div className="text-[10px] font-bold text-gray-500">Total SKUs</div>
+                <div className="text-xl font-black text-black">{totalSkus}</div>
               </div>
             </div>
 
-            <div className="bg-white border border-[#E8D399] rounded-xl sm:rounded-2xl p-2.5 sm:p-4 shadow-sm flex items-center gap-2.5 sm:gap-3 min-w-0">
-              <div className="w-9 h-9 sm:w-11 sm:h-11 shrink-0 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center font-black">
-                <Package size={18} />
+            <div className="bg-white border border-[#E8D399] rounded-2xl p-4 shadow-sm flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center font-black">
+                <Package size={20} />
               </div>
               <div>
-                <div className="text-[10px] font-bold text-gray-500 leading-tight">Total Stock</div>
-                <div className="text-lg sm:text-xl font-black text-emerald-700">{totalUnits} Units</div>
+                <div className="text-[10px] font-bold text-gray-500">Total Stock</div>
+                <div className="text-xl font-black text-emerald-700">{totalUnits} Units</div>
               </div>
             </div>
 
-            <div className="bg-white border border-[#E8D399] rounded-xl sm:rounded-2xl p-2.5 sm:p-4 shadow-sm flex items-center gap-2.5 sm:gap-3 min-w-0">
-              <div className="w-9 h-9 sm:w-11 sm:h-11 shrink-0 rounded-xl bg-amber-50 text-amber-700 border border-amber-200 flex items-center justify-center font-black">
-                <AlertTriangle size={18} />
+            <div className="bg-white border border-[#E8D399] rounded-2xl p-4 shadow-sm flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-amber-50 text-amber-700 border border-amber-200 flex items-center justify-center font-black">
+                <AlertTriangle size={20} />
               </div>
               <div>
-                <div className="text-[10px] font-bold text-gray-500 leading-tight">Low Stock Items</div>
-                <div className="text-lg sm:text-xl font-black text-amber-700">{lowStockCount}</div>
+                <div className="text-[10px] font-bold text-gray-500">Low Stock Items</div>
+                <div className="text-xl font-black text-amber-700">{lowStockCount}</div>
               </div>
             </div>
 
-            <div className="bg-white border border-[#E8D399] rounded-xl sm:rounded-2xl p-2.5 sm:p-4 shadow-sm flex items-center gap-2.5 sm:gap-3 min-w-0">
-              <div className="w-9 h-9 sm:w-11 sm:h-11 shrink-0 rounded-xl bg-[#FBFAF6] text-[#7A1220] border border-[#E8D399] flex items-center justify-center font-black text-sm">
+            <div className="bg-white border border-[#E8D399] rounded-2xl p-4 shadow-sm flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-[#FBFAF6] text-[#7A1220] border border-[#E8D399] flex items-center justify-center font-black text-sm">
                 ₹
               </div>
               <div>
-                <div className="text-[10px] font-bold text-gray-500 leading-tight">Stock Valuation</div>
-                <div className="text-base sm:text-lg font-black text-[#7A1220] truncate">{formatCurrency(totalValuation)}</div>
+                <div className="text-[10px] font-bold text-gray-500">Stock Valuation</div>
+                <div className="text-lg font-black text-[#7A1220]">{formatCurrency(totalValuation)}</div>
               </div>
             </div>
           </div>
@@ -328,7 +328,7 @@ export const InventoryTable: React.FC = () => {
           )}
 
           {/* Toolbar & Filter Chips */}
-          <div className="bg-white border border-[#E8D399] rounded-xl sm:rounded-2xl p-3 sm:p-4 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3">
+          <div className="bg-white border border-[#E8D399] rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             {/* Search */}
             <div className="relative flex-1 max-w-md">
               <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -342,11 +342,11 @@ export const InventoryTable: React.FC = () => {
             </div>
 
             {/* Filter Chips & Refresh */}
-            <div className="flex flex-nowrap items-center gap-1.5 sm:gap-2 overflow-x-auto hide-scrollbar pb-0.5 sm:pb-0">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
               <button
                 type="button"
                 onClick={() => setFilterStatus('all')}
-                className={`shrink-0 whitespace-nowrap px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   filterStatus === 'all'
                     ? 'bg-[#7A1220] text-[#D4AF37] shadow-xs'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -357,7 +357,7 @@ export const InventoryTable: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setFilterStatus('in_stock')}
-                className={`shrink-0 whitespace-nowrap px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   filterStatus === 'in_stock'
                     ? 'bg-emerald-800 text-white shadow-xs'
                     : 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
@@ -368,7 +368,7 @@ export const InventoryTable: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setFilterStatus('low')}
-                className={`shrink-0 whitespace-nowrap px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   filterStatus === 'low'
                     ? 'bg-amber-800 text-white shadow-xs'
                     : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
@@ -379,7 +379,7 @@ export const InventoryTable: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setFilterStatus('out')}
-                className={`shrink-0 whitespace-nowrap px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   filterStatus === 'out'
                     ? 'bg-red-800 text-white shadow-xs'
                     : 'bg-red-50 text-red-800 border border-red-200 hover:bg-red-100'
@@ -390,7 +390,7 @@ export const InventoryTable: React.FC = () => {
               <button
                 type="button"
                 onClick={loadData}
-                className="shrink-0 p-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer"
+                className="p-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer"
                 title="Refresh stock list"
               >
                 <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />

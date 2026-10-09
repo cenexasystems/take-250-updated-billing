@@ -862,7 +862,7 @@ export const AddEditProductView: React.FC<{
 
         {/* Scrollable Form Body with Pinned Bottom Action Bar */}
         <form onSubmit={handleSaveProduct} className="flex-1 flex flex-col min-h-0 lg:overflow-hidden">
-          <div className="flex-1 lg:overflow-y-auto p-3 sm:p-6 space-y-3 sm:space-y-4 min-h-0">
+          <div className="flex-1 lg:overflow-y-auto p-4 sm:p-6 space-y-4 min-h-0">
             {/* Status message: a toast pinned above the sticky action bar, so it is seen wherever the form is scrolled to */}
             {statusMessage && (
               <div
@@ -1014,7 +1014,7 @@ export const AddEditProductView: React.FC<{
                 Description / Notes <span className="text-gray-400 font-normal ml-1">(Optional)</span>
               </label>
               <textarea
-                rows={3}
+                rows={2}
                 placeholder="Product material, care instructions, or rack location notes..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -1287,7 +1287,7 @@ export const AddEditProductView: React.FC<{
 
           {/* Pinned Bottom Actions */}
           {/* a normal footer at the END of the form: it scrolls with the content (never floats over fields or above the keyboard) */}
-          <div className="shrink-0 px-3 py-3 sm:px-6 sm:py-3.5 border-t border-gray-200 bg-white flex items-center justify-end gap-3 rounded-b-2xl">
+          <div className="shrink-0 px-4 py-3 sm:px-6 sm:py-3.5 border-t border-gray-200 bg-white flex items-center justify-end gap-3">
             <button
               type="button"
               onClick={resetForm}

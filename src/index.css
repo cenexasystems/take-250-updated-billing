@@ -534,24 +534,3 @@ button, a[role="button"] {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
-
-
-
-/* ─── Phones and tablets: compact controls ─── */
-@media (max-width: 1023px) {
-  /* 16px inputs: iOS Safari zooms the page on focus into anything smaller */
-  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
-  select,
-  textarea {
-    font-size: 16px !important;
-  }
-  /* a 16px text area needs a roomier line height than the 12px one it replaces, or its text overflows and it scrolls inside itself */
-  textarea { line-height: 1.4 !important; }
-}
-@media (pointer: coarse) {
-  /* fields are at least 40px tall; buttons keep their own designed size (no blanket minimum, which made chips and tabs bloated) */
-  select,
-  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]) {
-    min-height: 40px;
-  }
-}

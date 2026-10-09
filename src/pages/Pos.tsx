@@ -1224,13 +1224,13 @@ export default function Pos(props: PosProps = {}) {
           <div className="grid grid-cols-2 bg-white rounded-xl border border-gray-200 p-1 shadow-sm flex-1 min-[480px]:flex-none">
             <button
               onClick={() => setOrdermode('offline')}
-              className={`min-h-[44px] px-3 sm:px-4 py-1.5 rounded-lg text-[11px] font-black tracking-wider uppercase transition-colors ${ordermode === 'offline' ? 'bg-brand-black text-[#D4AF37] shadow-sm' : 'text-[#374151] hover:bg-[#F9FAFB]'}`}
+              className={`min-h-[38px] sm:min-h-[42px] px-3 sm:px-4 py-1.5 rounded-lg text-[11px] font-black tracking-wider uppercase transition-colors ${ordermode === 'offline' ? 'bg-brand-black text-[#D4AF37] shadow-sm' : 'text-[#374151] hover:bg-[#F9FAFB]'}`}
             >
               Offline
             </button>
             <button
               onClick={() => setOrdermode('online')}
-              className={`min-h-[44px] px-3 sm:px-4 py-1.5 rounded-lg text-[11px] font-black tracking-wider uppercase transition-colors ${ordermode === 'online' ? 'bg-brand-black text-[#D4AF37] shadow-sm' : 'text-[#374151] hover:bg-[#F9FAFB]'}`}
+              className={`min-h-[38px] sm:min-h-[42px] px-3 sm:px-4 py-1.5 rounded-lg text-[11px] font-black tracking-wider uppercase transition-colors ${ordermode === 'online' ? 'bg-brand-black text-[#D4AF37] shadow-sm' : 'text-[#374151] hover:bg-[#F9FAFB]'}`}
             >
               Online
             </button>
@@ -1239,7 +1239,7 @@ export default function Pos(props: PosProps = {}) {
             <>
               <button
                 onClick={() => navigate('/dashboard')}
-                className="flex items-center justify-center min-h-[44px] px-3 sm:px-4 rounded-xl bg-[#111111] text-white hover:bg-[#3d4f3a] transition-colors text-[11px] font-black tracking-wider uppercase"
+                className="flex items-center justify-center min-h-[38px] sm:min-h-[42px] px-3 sm:px-4 rounded-xl bg-[#111111] text-white hover:bg-[#3d4f3a] transition-colors text-[11px] font-black tracking-wider uppercase"
               >
                 Dashboard
               </button>
@@ -1693,7 +1693,7 @@ export default function Pos(props: PosProps = {}) {
               {/* GST Toggle */}
               <div className="py-1 border-b border-gray-200">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-[12px] font-black text-[#374151]">Enable GST on Bill</span>
+                  <span className="text-[11px] font-black text-[#374151]">Enable GST on Bill</span>
                   <Toggle checked={billGstEnabled} onChange={setBillGstEnabled} label="Enable GST on bill" />
                 </div>
                 <p className="mt-0.5 pb-1 text-[10px] font-medium text-gray-500">Adds CGST + SGST (two equal halves) on this bill.</p>

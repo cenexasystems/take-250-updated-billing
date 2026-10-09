@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import Toggle from '../common/Toggle'
 import {
   Plus,
   Trash2,
@@ -861,12 +862,12 @@ export const AddEditProductView: React.FC<{
 
         {/* Scrollable Form Body with Pinned Bottom Action Bar */}
         <form onSubmit={handleSaveProduct} className="flex-1 flex flex-col min-h-0 lg:overflow-hidden">
-          <div className="flex-1 lg:overflow-y-auto p-4 sm:p-6 space-y-4 min-h-0 pb-6">
+          <div className="flex-1 lg:overflow-y-auto p-3 sm:p-6 space-y-3 sm:space-y-4 min-h-0">
             {/* Status message: a toast pinned above the sticky action bar, so it is seen wherever the form is scrolled to */}
             {statusMessage && (
               <div
                 role={statusMessage.type === 'error' ? 'alert' : 'status'}
-                className={`fixed left-1/2 z-[130] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+112px)] p-3 rounded-xl text-sm font-bold flex items-start justify-between gap-3 shadow-xl ${
+                className={`fixed left-1/2 z-[130] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+16px)] p-3 rounded-xl text-sm font-bold flex items-start justify-between gap-3 shadow-xl ${
                   statusMessage.type === 'success'
                     ? 'bg-emerald-600 text-white'
                     : 'bg-red-600 text-white'
@@ -1032,17 +1033,7 @@ export const AddEditProductView: React.FC<{
                     Enable if this product comes in multiple sizes (e.g. S, M, L, XL) or colors
                   </p>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={hasVariants}
-                    onChange={(e) => {
-                      setHasVariants(e.target.checked)
-                    }}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--theme-primary)]" />
-                </label>
+                <Toggle checked={hasVariants} onChange={setHasVariants} label="Multi-variant product" />
               </div>
 
               {hasVariants && (
@@ -1295,7 +1286,8 @@ export const AddEditProductView: React.FC<{
           </div>
 
           {/* Pinned Bottom Actions */}
-          <div className="shrink-0 sticky bottom-0 z-10 px-4 pt-3 sm:px-6 sm:pt-3.5 pb-[calc(env(safe-area-inset-bottom)+12px)] border-t border-gray-200 bg-white flex items-center justify-end gap-3 rounded-b-2xl shadow-[0_-6px_12px_-8px_rgba(0,0,0,0.15)]">
+          {/* a normal footer at the END of the form: it scrolls with the content (never floats over fields or above the keyboard) */}
+          <div className="shrink-0 px-3 py-3 sm:px-6 sm:py-3.5 border-t border-gray-200 bg-white flex items-center justify-end gap-3 rounded-b-2xl">
             <button
               type="button"
               onClick={resetForm}

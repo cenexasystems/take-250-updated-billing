@@ -186,11 +186,11 @@ export const InventoryAnalyticsView: React.FC = () => {
       {/* Top Controls & Date Filters */}
       <div className="bg-white border border-[#E8D399] rounded-2xl p-4 shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
         {/* Date Range Selector Pills */}
-        <div className="flex items-center gap-1.5 p-1 bg-[#FBFAF6] border border-gray-200 rounded-xl overflow-x-auto">
+        <div className="flex items-center gap-1.5 p-1 bg-[#FBFAF6] border border-gray-200 rounded-xl overflow-x-auto hide-scrollbar max-w-full">
           <button
             type="button"
             onClick={() => setRange('all')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${
+            className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${
               range === 'all'
                 ? 'bg-[#7A1220] text-[#D4AF37] shadow-xs'
                 : 'text-gray-600 hover:text-black'
@@ -201,7 +201,7 @@ export const InventoryAnalyticsView: React.FC = () => {
           <button
             type="button"
             onClick={() => setRange('today')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${
+            className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${
               range === 'today'
                 ? 'bg-[#7A1220] text-[#D4AF37] shadow-xs'
                 : 'text-gray-600 hover:text-black'
@@ -212,7 +212,7 @@ export const InventoryAnalyticsView: React.FC = () => {
           <button
             type="button"
             onClick={() => setRange('week')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${
+            className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${
               range === 'week'
                 ? 'bg-[#7A1220] text-[#D4AF37] shadow-xs'
                 : 'text-gray-600 hover:text-black'
@@ -223,7 +223,7 @@ export const InventoryAnalyticsView: React.FC = () => {
           <button
             type="button"
             onClick={() => setRange('month')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${
+            className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${
               range === 'month'
                 ? 'bg-[#7A1220] text-[#D4AF37] shadow-xs'
                 : 'text-gray-600 hover:text-black'
@@ -234,7 +234,7 @@ export const InventoryAnalyticsView: React.FC = () => {
           <button
             type="button"
             onClick={() => setRange('year')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${range === 'year' ? 'bg-[#7A1220] text-[#D4AF37] shadow-xs' : 'text-gray-600 hover:text-black'}`}
+            className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${range === 'year' ? 'bg-[#7A1220] text-[#D4AF37] shadow-xs' : 'text-gray-600 hover:text-black'}`}
           >
             This Year
           </button>

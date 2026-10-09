@@ -537,7 +537,7 @@ button, a[role="button"] {
 
 
 
-/* ─── Touch-friendly controls on phones and tablets ─── */
+/* ─── Phones and tablets: compact controls ─── */
 @media (max-width: 1023px) {
   /* 16px inputs: iOS Safari zooms the page on focus into anything smaller */
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
@@ -549,21 +549,9 @@ button, a[role="button"] {
   textarea { line-height: 1.4 !important; }
 }
 @media (pointer: coarse) {
-  /* tap targets of at least 44 x 44 px (checkboxes / radios keep their size but their label is the target) */
-  button,
-  [role="button"],
+  /* fields are at least 40px tall; buttons keep their own designed size (no blanket minimum, which made chips and tabs bloated) */
   select,
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]) {
-    min-height: 44px;
-  }
-  button,
-  [role="button"] {
-    min-width: 44px;
-  }
-  label:has(> input[type="checkbox"]),
-  label:has(> input[type="radio"]) {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
+    min-height: 40px;
   }
 }

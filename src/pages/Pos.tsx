@@ -28,6 +28,7 @@ import { isCouponExpired } from '../services/couponService'
 import { createAdvanceOrder, type AdvanceOrder, type AdvancePaymentMethod } from '../services/advanceOrderService'
 import { printAdvanceReceipt } from '../lib/advanceReceipt'
 import { printThermalReceipt } from '../lib/thermalPrint'
+import Toggle from '../components/common/Toggle'
 import {
   buildStructuredOrderItem,
   calculateLineTotal,
@@ -1690,15 +1691,12 @@ export default function Pos(props: PosProps = {}) {
               </div>
 
               {/* GST Toggle */}
-              <div className="flex items-center justify-between py-1 border-b border-gray-200">
-                <span className="text-[11px] font-black text-[#374151]">Enable GST on Bill</span>
-                <button
-                  type="button"
-                  onClick={() => setBillGstEnabled(!billGstEnabled)}
-                  className={`w-9 h-5 rounded-full p-0.5 transition-colors ${billGstEnabled ? 'bg-brand-black' : 'bg-gray-200'}`}
-                >
-                  <div className={`w-4 h-4 rounded-full bg-white transition-transform ${billGstEnabled ? 'translate-x-4' : 'translate-x-0'}`}></div>
-                </button>
+              <div className="py-1 border-b border-gray-200">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[12px] font-black text-[#374151]">Enable GST on Bill</span>
+                  <Toggle checked={billGstEnabled} onChange={setBillGstEnabled} label="Enable GST on bill" />
+                </div>
+                <p className="mt-0.5 pb-1 text-[10px] font-medium text-gray-500">Adds CGST + SGST (two equal halves) on this bill.</p>
               </div>
 
               {billGstEnabled && (

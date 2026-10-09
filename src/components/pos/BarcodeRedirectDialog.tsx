@@ -39,7 +39,7 @@ export const BarcodeRedirectDialog: React.FC<BarcodeRedirectDialogProps> = ({
       }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 animate-in fade-in duration-150"
     >
-      <div className="bg-white rounded-3xl w-full max-w-sm border border-[#E8D399] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+      <div className="bg-white rounded-3xl w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain border border-[#E8D399] shadow-2xl flex flex-col animate-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="bg-[#7A1220] p-4 border-b border-[#D4AF37]/30 flex items-center justify-between text-white">
           <div className="flex items-center gap-3">

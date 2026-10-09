@@ -203,6 +203,18 @@ export default function Dashboard() {
   const setActiveBranch = useAdminAuthStore(state => state.setActiveBranch)
   const branch = resolveBranch(activeBranch)
   const headerLogo = useBranchLogo(branch) // the logo saved in this branch's Store Settings (built-in logo only if none)
+  // phones: the tab bar scrolls sideways; the right edge fades while more tabs are hidden, so it is clear there is more
+  const navRef = useRef<HTMLElement | null>(null)
+  const [navMore, setNavMore] = useState(false)
+  const measureNav = useCallback(() => {
+    const el = navRef.current
+    setNavMore(!!el && el.scrollWidth - el.clientWidth - el.scrollLeft > 4)
+  }, [])
+  useEffect(() => {
+    measureNav()
+    window.addEventListener('resize', measureNav)
+    return () => window.removeEventListener('resize', measureNav)
+  }, [measureNav, role])
   // cancel-bill dialog (optional reason) and the success / error toast shown after changing a bill's status
   const [cancelDialog, setCancelDialog] = useState<{ id: string; invoice: string } | null>(null)
   const [cancelReason, setCancelReason] = useState('')
@@ -1638,7 +1650,7 @@ export default function Dashboard() {
     <div className="admin-shell h-[100dvh] max-h-[100dvh] min-h-[100dvh] bg-bgMain flex flex-col lg:flex-row overflow-hidden">
       {cancelDialog && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Cancel bill">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl border border-[#E8D399]">
+          <div className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-2xl bg-white p-5 shadow-2xl border border-[#E8D399]">
             <h3 className="text-base font-black text-[#111111]">Cancel bill {cancelDialog.invoice}?</h3>
             <p className="mt-1 text-xs font-semibold text-[#6B7280]">Every item on this bill goes back into this store's stock and a stock movement is recorded. This cannot be undone, and the bill cannot be set back to Completed.</p>
             <label className="mt-3 block text-[10px] font-black uppercase tracking-wide text-[#6B7280]">Reason (optional)</label>
@@ -1697,7 +1709,7 @@ export default function Dashboard() {
         </div>
         {/* Mobile mini-header */}
         <div className="flex lg:hidden items-center justify-between px-3 py-2 border-b border-white/10 bg-[#7A1220] shrink-0 gap-2">
-          <Link to="/pos" title="Go to Billing Panel" className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+          <Link to="/pos" title="Go to Billing Panel" className="flex min-h-[44px] items-center gap-2 min-w-0 flex-1 overflow-hidden">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--theme-primary-dark)] border border-[#D4AF37]/50 shrink-0 shadow-sm hover:scale-105 transition-transform p-0.5 overflow-hidden">
               <img src={isGlobalView ? BRAND_ICON : headerLogo} alt={BRAND_EN} className="w-full h-full object-contain" />
             </div>
@@ -1730,8 +1742,9 @@ export default function Dashboard() {
           </button>
         </div>
         {/* Operating Branch selector (admin picks a scope) / fixed branch badge (staff) */}
-        <div className={`px-3 py-2.5 border-b border-white/10 shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''}`}>
-          {can(role, 'branch.switch') && <p className="text-[9px] font-black uppercase tracking-widest text-white/50 mb-1.5">Operating Branch</p>}
+        {/* on a short phone screen the fixed branch badge (staff / manager) is dropped: the branch name is already in the header chip, and the scroll area matters more */}
+        <div className={`px-3 py-1.5 lg:py-2.5 border-b border-white/10 shrink-0 ${sidebarCollapsed ? 'lg:hidden' : ''} ${can(role, 'branch.switch') ? '' : 'max-lg:[@media(max-height:720px)]:hidden'}`}>
+          {can(role, 'branch.switch') && <p className="max-lg:sr-only text-[9px] font-black uppercase tracking-widest text-white/50 mb-1.5">Operating Branch</p>}
           {can(role, 'branch.switch') ? (
             <select
               value={activeBranch || 'all'}
@@ -1756,7 +1769,8 @@ export default function Dashboard() {
         </div>
         {/* Nav List - Height safe and scrollable */}
         <nav
-          className={`flex overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto lg:flex-col gap-1 lg:gap-1 px-2 py-2 lg:px-2.5 lg:py-2.5 flex-1 min-h-0 transition-all duration-300 ${sidebarCollapsed ? 'lg:px-1.5' : 'lg:px-2.5'}`}
+          ref={navRef} onScroll={measureNav}
+          className={`flex overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto lg:flex-col gap-1 lg:gap-1 px-2 py-2 lg:px-2.5 lg:py-2.5 flex-1 min-h-0 transition-all duration-300 ${navMore ? 'max-lg:[mask-image:linear-gradient(to_right,#000_calc(100%-44px),transparent)]' : ''} ${sidebarCollapsed ? 'lg:px-1.5' : 'lg:px-2.5'}`}
         >
           {navItems.map(item => (
             <React.Fragment key={item.id}>
@@ -1836,7 +1850,7 @@ export default function Dashboard() {
 
       {/* Main */}
       <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        <div className="flex-1 min-h-0 p-4 sm:p-6 lg:p-8 overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div className="app-scroll flex-1 min-h-0 p-4 sm:p-6 lg:p-8 pb-[calc(env(safe-area-inset-bottom)+24px)] overflow-x-hidden overflow-y-auto overscroll-contain">
 
         {tab === 'branch_hub' && <BranchHub onNavigate={handleTabClick} />}
         {tab === 'business_overview' && <BusinessOverview onNavigate={handleTabClick} />}
@@ -3218,7 +3232,7 @@ export default function Dashboard() {
                 <h2 className="mt-1 text-xl font-black text-[#111111]">{l('Order Management', 'ஆர்டர் மேலாண்மை')} <span className="text-[11px] font-semibold text-[#374151]">({l('POS + Advance Bills', 'POS பில்கள் மட்டுமே')})</span></h2>
               </div>
               <div className="flex gap-2">
-                <Link to="/pos" className="inline-flex items-center gap-2 rounded-xl bg-[#111111] px-4 py-2 text-[13px] font-bold text-white shadow-sm hover:bg-[#1f281d]">
+                <Link to="/pos" className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#111111] px-4 py-2 text-[13px] font-bold text-white shadow-sm hover:bg-[#1f281d]">
                   <ShoppingCart size={14} /> Open POS
                 </Link>
               </div>
@@ -3402,7 +3416,7 @@ export default function Dashboard() {
                       <div>
                         <label className="text-[10px] font-bold text-gray-500 uppercase block mb-0.5">{l('Invoice / Bill No', 'பில் எண்')}</label>
                         <input
-                          type="text"
+                          type="tel" inputMode="tel"
                           className="w-full h-10 px-3 rounded-lg bg-[#F9FAFB] border border-gray-200 text-xs font-semibold text-gray-900 focus:outline-none focus:border-[#D4AF37]"
                           placeholder="e.g. INV000001"
                           value={search.invoiceNo}
@@ -4548,8 +4562,8 @@ export default function Dashboard() {
               if (event.target === event.currentTarget) setInvoicePreviewOrder(null)
             }}
           >
-            <div className="flex max-h-[95vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-[#F9FAFB] shadow-2xl">
-              <div className="flex shrink-0 items-center justify-between border-b border-[#E5E7EB]/60 bg-white px-4 py-3 sm:px-6">
+            <div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-[#F9FAFB] shadow-2xl">
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[#E5E7EB]/60 bg-white px-4 py-3 sm:px-6">
                 <div>
                   <h2 className="text-base font-black text-[#111111]">Invoice Preview</h2>
                   <p className="text-xs font-semibold text-[#6B7280]">{formatInvoiceNo(invoicePreviewOrder.invoice_no || invoicePreviewOrder.id)}</p>
@@ -4558,14 +4572,14 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={() => handlePrintReceipt(invoicePreviewOrder)}
-                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#E5E7EB]/70 px-3 text-xs font-black text-[#111111] hover:bg-[#F9FAFB]"
+                    className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-[#E5E7EB]/70 px-3 text-xs font-black text-[#111111] hover:bg-[#F9FAFB]"
                   >
                     <Printer size={15} /> Print
                   </button>
                   <button
                     type="button"
                     onClick={() => void openOrderInvoice(invoicePreviewOrder, 'download')}
-                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#7A1220] px-3 text-xs font-black text-white hover:bg-[#D4AF37]"
+                    className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-[#7A1220] px-3 text-xs font-black text-white hover:bg-[#D4AF37]"
                   >
                     <Download size={15} /> Download
                   </button>
@@ -4579,7 +4593,7 @@ export default function Dashboard() {
                   </button>
                 </div>
               </div>
-              <div className="overflow-y-auto p-2 sm:p-5">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 pb-[calc(env(safe-area-inset-bottom)+8px)] sm:p-5">
                 <div className="mx-auto max-w-3xl overflow-hidden rounded-xl bg-white shadow-sm">
                   <Invoice
                     invoiceNo={formatInvoiceNo(invoicePreviewOrder.invoice_no || invoicePreviewOrder.id)}

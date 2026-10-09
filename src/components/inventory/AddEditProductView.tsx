@@ -63,6 +63,11 @@ export const AddEditProductView: React.FC<{
 
   const [loading, setLoading] = useState(false)
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  useEffect(() => {
+    if (statusMessage?.type !== 'success') return
+    const t = setTimeout(() => setStatusMessage(null), 5000)
+    return () => clearTimeout(t)
+  }, [statusMessage])
 
   useEffect(() => {
     void fetchProducts(branch, true)
@@ -280,6 +285,11 @@ export const AddEditProductView: React.FC<{
       return
     }
 
+    if (categories.length > 0 && !selectedProductId && !categories.some((c) => Number(c.id) === Number(categoryId))) {
+      setStatusMessage({ type: 'error', text: 'Choose a category for this product' })
+      return
+    }
+
     const validVariants = variantRows.filter((v) => v.variantName.trim() !== '')
     const firstVariant = validVariants[0]
     const priceNum = hasVariants && firstVariant ? (Number(firstVariant.price) || 0) : (parseFloat(price) || 0)
@@ -293,6 +303,14 @@ export const AddEditProductView: React.FC<{
     if (hasVariants && validVariants.length === 0) {
       setStatusMessage({ type: 'error', text: 'Please add at least one variant SKU (e.g. Size S, 32, or custom variant)' })
       return
+    }
+
+    if (hasVariants) {
+      const noPrice = validVariants.find((v) => !(Number(v.price) > 0))
+      if (noPrice) {
+        setStatusMessage({ type: 'error', text: `Enter a selling price for variant "${noPrice.variantName.trim()}"` })
+        return
+      }
     }
 
     const selectedCat = categories.find((c) => Number(c.id) === Number(categoryId))
@@ -667,9 +685,10 @@ export const AddEditProductView: React.FC<{
         </button>
       </div>
 
-      <div className="h-[calc(100vh-250px)] sm:h-[calc(100vh-220px)] min-h-[480px] flex flex-col lg:flex-row gap-5 overflow-hidden">
+      {/* Phones/tablets: one page scroll (the dashboard's main area), the cards simply grow with their content. Desktop (lg): two fixed-height panes that scroll inside. */}
+      <div className="flex flex-col lg:flex-row gap-5 lg:h-[calc(100dvh-220px)] lg:min-h-[480px] lg:overflow-hidden">
         {/* LEFT COLUMN: Products Browser List */}
-        <div className={`w-full lg:w-80 xl:w-96 flex-col bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm shrink-0 h-full min-h-0 ${
+        <div className={`w-full lg:w-80 xl:w-96 flex-col bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm shrink-0 max-h-[75dvh] lg:max-h-none lg:h-full min-h-0 ${
           mobileView === 'list' ? 'flex' : 'hidden lg:flex'
         }`}>
           <div className="p-3.5 border-b border-gray-200 bg-[#FAFAFA] shrink-0">
@@ -776,7 +795,7 @@ export const AddEditProductView: React.FC<{
         </div>
 
         {/* RIGHT COLUMN: Product Authoring Form Workspace */}
-        <div className={`flex-1 flex-col bg-[#FBFAF6] border border-gray-200 rounded-2xl shadow-sm overflow-hidden h-full min-h-0 ${
+        <div className={`flex-1 flex-col bg-[#FBFAF6] border border-gray-200 rounded-2xl shadow-sm lg:overflow-hidden lg:h-full min-h-0 ${
           mobileView === 'form' ? 'flex' : 'hidden lg:flex'
         }`}>
           {/* Pinned Form Header */}
@@ -841,19 +860,20 @@ export const AddEditProductView: React.FC<{
           </div>
 
         {/* Scrollable Form Body with Pinned Bottom Action Bar */}
-        <form onSubmit={handleSaveProduct} className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 min-h-0">
-            {/* Status Message */}
+        <form onSubmit={handleSaveProduct} className="flex-1 flex flex-col min-h-0 lg:overflow-hidden">
+          <div className="flex-1 lg:overflow-y-auto p-4 sm:p-6 space-y-4 min-h-0 pb-6">
+            {/* Status message: a toast pinned above the sticky action bar, so it is seen wherever the form is scrolled to */}
             {statusMessage && (
               <div
-                className={`p-3 rounded-xl text-xs font-bold flex items-center justify-between ${
+                role={statusMessage.type === 'error' ? 'alert' : 'status'}
+                className={`fixed left-1/2 z-[130] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+112px)] p-3 rounded-xl text-sm font-bold flex items-start justify-between gap-3 shadow-xl ${
                   statusMessage.type === 'success'
-                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                    : 'bg-red-50 text-red-800 border border-red-200'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-red-600 text-white'
                 }`}
               >
-                <span>{statusMessage.text}</span>
-                <button onClick={() => setStatusMessage(null)} className="font-black">✕</button>
+                <span className="min-w-0 break-words">{statusMessage.text}</span>
+                <button type="button" aria-label="Dismiss message" onClick={() => setStatusMessage(null)} className="font-black shrink-0 h-8 w-8 -mt-1 -mr-1">✕</button>
               </div>
             )}
 
@@ -993,7 +1013,7 @@ export const AddEditProductView: React.FC<{
                 Description / Notes <span className="text-gray-400 font-normal ml-1">(Optional)</span>
               </label>
               <textarea
-                rows={2}
+                rows={3}
                 placeholder="Product material, care instructions, or rack location notes..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -1275,7 +1295,7 @@ export const AddEditProductView: React.FC<{
           </div>
 
           {/* Pinned Bottom Actions */}
-          <div className="shrink-0 px-4 py-3 sm:px-6 sm:py-3.5 border-t border-gray-200 bg-white flex items-center justify-end gap-3">
+          <div className="shrink-0 sticky bottom-0 z-10 px-4 pt-3 sm:px-6 sm:pt-3.5 pb-[calc(env(safe-area-inset-bottom)+12px)] border-t border-gray-200 bg-white flex items-center justify-end gap-3 rounded-b-2xl shadow-[0_-6px_12px_-8px_rgba(0,0,0,0.15)]">
             <button
               type="button"
               onClick={resetForm}

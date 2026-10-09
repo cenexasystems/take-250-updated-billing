@@ -479,12 +479,23 @@
   overscroll-behavior-y: none;
 }
 
-/* Scrollable panels: enable momentum scrolling on iOS with overscroll containment */
+/* Scrollable panels: momentum scrolling on iOS. Overscroll containment is NOT applied to every scroller any more: a
+   scroller nested in the page used to swallow the swipe at its end, so the page below it (and the Save button) could not
+   be reached. Containment is only for what truly needs it: modal bodies (below), the page's own scroller and
+   elements marked data-scroll="ios". */
 .overflow-y-auto,
 .overflow-y-scroll,
 [data-scroll="ios"] {
   -webkit-overflow-scrolling: touch;
+}
+[data-scroll="ios"] {
   overscroll-behavior-y: contain;
+}
+
+/* While any full-screen overlay (modal, dialog, drawer) is open the page scroller behind it cannot scroll, so a swipe
+   on the backdrop never moves the page, and it is released again the moment the overlay closes. */
+html:has(.fixed.inset-0) .app-scroll {
+  overflow-y: hidden !important;
 }
 
 /* Modals, dialogs, drawers, and overlay sheets: contain scroll to lock background page */
@@ -524,3 +535,35 @@ button, a[role="button"] {
   -webkit-overflow-scrolling: touch;
 }
 
+
+
+/* ─── Touch-friendly controls on phones and tablets ─── */
+@media (max-width: 1023px) {
+  /* 16px inputs: iOS Safari zooms the page on focus into anything smaller */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+  /* a 16px text area needs a roomier line height than the 12px one it replaces, or its text overflows and it scrolls inside itself */
+  textarea { line-height: 1.4 !important; }
+}
+@media (pointer: coarse) {
+  /* tap targets of at least 44 x 44 px (checkboxes / radios keep their size but their label is the target) */
+  button,
+  [role="button"],
+  select,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]) {
+    min-height: 44px;
+  }
+  button,
+  [role="button"] {
+    min-width: 44px;
+  }
+  label:has(> input[type="checkbox"]),
+  label:has(> input[type="radio"]) {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+}

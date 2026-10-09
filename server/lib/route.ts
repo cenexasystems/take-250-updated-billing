@@ -90,9 +90,18 @@ export function registerRoutes(app: Express, routes: Route<any, any>[], deps: De
         const q = (req.query ?? {}) as Record<string, unknown>
         for (const k of Object.keys(q)) {
           if (BRANCH_KEY.test(k)) {
-            // the ONLY allowed use: an admin selecting which branch to work in
-            if (isAdmin && k === 'branch_id' && spec.scope === 'branch' && typeof q[k] === 'string') selector = q[k] as string
-            else throw new ApiError(400, 'branch_id is not accepted here')
+            // the ONLY allowed use: an admin selecting which branch to work in. The same value repeated (?branch_id=pos2&branch_id=pos2,
+            // which a proxy or rewrite can produce) is still one choice; two DIFFERENT values are refused.
+            const raw = q[k]
+            const value = typeof raw === 'string' ? raw : Array.isArray(raw) && raw.length > 0 && raw.every((x) => typeof x === 'string' && x === raw[0]) ? (raw[0] as string) : null
+            if (isAdmin && k === 'branch_id' && spec.scope === 'branch' && value !== null) selector = value
+            else {
+              // logged for the operator (role, scope and the SHAPE of the value only, never the value itself or any secret)
+              console.warn(`[api] ${req.method} ${req.path}: ${k} refused (role ${session?.role ?? 'none'}, scope ${spec.scope}, value ${Array.isArray(raw) ? `array(${raw.length})` : typeof raw})`)
+              if (isAdmin) throw new ApiError(400, 'The selected branch could not be read. Please refresh the page and try again.', { code: 'branch_unreadable' })
+              // not an admin, yet the screen sent a branch (it believes it is an admin): typically another login replaced the cookie in this browser
+              throw new ApiError(400, 'Your sign-in no longer matches this screen. Refreshing your session…', { code: 'session_mismatch' })
+            }
           }
         }
         if (findBranchKey(req.body)) throw new ApiError(400, 'branch_id is not accepted in the request body')
@@ -101,9 +110,9 @@ export function registerRoutes(app: Express, routes: Route<any, any>[], deps: De
         if (spec.scope === 'branch') {
           if (!session) throw new ApiError(401, 'Not signed in')
           if (isAdmin) {
-            if (!selector) throw new ApiError(400, 'Select a branch (branch_id)')
+            if (!selector) throw new ApiError(400, 'Choose a branch from the Operating Branch menu first.', { code: 'branch_required' })
             const ok = await deps.db.query('SELECT 1 FROM public.branches WHERE id = $1 AND is_active', [selector])
-            if (ok.rows.length !== 1) throw new ApiError(400, 'Unknown branch')
+            if (ok.rows.length !== 1) throw new ApiError(400, 'That branch is not available.', { code: 'unknown_branch' })
             branch = selector
           } else {
             branch = session.branch
@@ -124,7 +133,7 @@ export function registerRoutes(app: Express, routes: Route<any, any>[], deps: De
         if (api) {
           if (api.extra?.retryAfter) res.setHeader('Retry-After', String(api.extra.retryAfter))
           // retry_after (seconds) lets the login screen show a live M:SS countdown
-          res.status(api.status).json({ error: api.message, ...(api.extra?.retryAfter ? { retry_after: api.extra.retryAfter } : {}) })
+          res.status(api.status).json({ error: api.message, ...(api.extra?.code ? { code: api.extra.code } : {}), ...(api.extra?.retryAfter ? { retry_after: api.extra.retryAfter } : {}) })
           return
         }
         logServerError(`${r.method.toUpperCase()} ${r.path}`, err)

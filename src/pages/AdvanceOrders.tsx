@@ -493,7 +493,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Customer Name *"><input required className={inputClass} value={form.customerName} onChange={e=>setForm({...form,customerName:e.target.value})}/></Field>
-            <Field label="Phone Number *"><input required className={inputClass} value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></Field>
+            <Field label="Phone Number *"><input required type="tel" inputMode="tel" autoComplete="tel" className={inputClass} value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></Field>
             <Field label="Address"><textarea className={inputClass} value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/></Field>
             <Field label="Product Name *"><input required list="advance-products" className={inputClass} value={form.productName} onChange={e=>{const product=products.find(p=>p.name===e.target.value);setForm({...form,productName:e.target.value,category:product?.category||form.category});pickProduct(product)}}/><datalist id="advance-products">{products.map(p=><option key={p.id} value={p.name}/>)}</datalist></Field>
             {variantChoices.length > 0 && (

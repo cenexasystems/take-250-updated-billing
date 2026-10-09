@@ -7,10 +7,13 @@ export class ApiClientError extends Error {
   status: number
   /** seconds until a 429 lockout ends (sign-in screen countdown) */
   retryAfter?: number
-  constructor(status: number, message: string, retryAfter?: number) {
+  /** machine-readable reason from the server (e.g. 'session_mismatch'), never shown to the user */
+  code?: string
+  constructor(status: number, message: string, retryAfter?: number, code?: string) {
     super(message)
     this.status = status
     this.retryAfter = retryAfter
+    this.code = code
   }
 }
 
@@ -27,7 +30,7 @@ function withQuery(path: string, query?: Query): string {
   return qs ? `${path}?${qs}` : path
 }
 
-export async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, opts: { body?: unknown; query?: Query; raw?: { data: Blob | ArrayBuffer; type: string }; branchId?: string | null } = {}): Promise<T> {
+export async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, opts: { body?: unknown; query?: Query; raw?: { data: Blob | ArrayBuffer; type: string }; branchId?: string | null } = {}, healed = false): Promise<T> {
   const { role, activeBranch } = useAdminAuthStore.getState()
   const query: Query = { ...(opts.query ?? {}) }
   // Only the ADMIN ever names a branch (to select which one to work in). `opts.branchId` lets an admin screen that
@@ -49,7 +52,18 @@ export async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' 
     // an expired / replaced session ends the local session too (not for the login call itself)
     if (res.status === 401 && path !== '/api/auth/login') useAdminAuthStore.getState().expireSession()
     const retry = Number((json as { retry_after?: number } | null)?.retry_after)
-    throw new ApiClientError(res.status, message, Number.isFinite(retry) && retry > 0 ? retry : undefined)
+    const code = (json as { code?: string } | null)?.code
+    if (code === 'session_mismatch') {
+      // The server's sign-in (cookie) is not the one this screen believes in. Re-read who we really are; if the role or branch
+      // changed the screen now matches it, and the request is repeated once as that user. Technical detail stays in the console.
+      console.warn(`[api] ${method} ${path}: sign-in mismatch (screen role "${role}"), re-reading the session`)
+      if (!healed) {
+        await useAdminAuthStore.getState().restoreSession()
+        if (useAdminAuthStore.getState().role !== role) return api<T>(method, path, opts, true)
+      }
+      throw new ApiClientError(res.status, 'Your session changed. Please sign in again.', undefined, code)
+    }
+    throw new ApiClientError(res.status, message, Number.isFinite(retry) && retry > 0 ? retry : undefined, code)
   }
   return json as T
 }

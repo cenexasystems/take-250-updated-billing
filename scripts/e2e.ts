@@ -4,7 +4,7 @@
  * Everything it creates is named "E2E ..." and removed at the end. Screenshots, the downloaded PDFs, the captured thermal
  * receipts and a Markdown report go to e2e-report/. It uses the passcodes in .env (SEED_PASSCODE_*): development databases only.
  */
-import './test-env'
+import './test-guard'
 import fs from 'node:fs'
 import path from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'

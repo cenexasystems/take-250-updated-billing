@@ -6,7 +6,7 @@
  *
  * Section A is generated from the central permission table x every registered route x every role.
  */
-import './test-env'
+import './test-guard'
 import { randomBytes } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import bcrypt from 'bcryptjs'

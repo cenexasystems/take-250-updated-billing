@@ -2,7 +2,7 @@ import type { Request } from 'express'
 import type { Db } from './db.js'
 import { ApiError } from './errors.js'
 
-export type Bucket = 'login' | 'passcode_change' | 'invoice'
+export type Bucket = 'login' | 'passcode_change' | 'invoice' | 'customer_lookup'
 
 /** Client IP. Forwarded headers are only trusted on Vercel (platform-set) or when TRUST_PROXY=1. */
 export function clientIp(req: Request): string {
@@ -32,6 +32,10 @@ export const LIMITS = {
   loginSlowdown: { freeFailures: 10, windowMs: 15 * 60_000 },
   passcodeChangeFailures: { max: 5, windowMs: 15 * 60_000 },
   invoiceLookupsPerIp: { max: 30, windowMs: 10 * 60_000 },
+  // POS customer lookup: every call counts (hit, miss or malformed), per signed-in user (role + branch) and per IP.
+  // A till looks up once per customer, so this only stops someone walking through phone numbers.
+  customerLookupsPerUser: { max: 60, windowMs: 5 * 60_000 },
+  customerLookupsPerIp: { max: 120, windowMs: 5 * 60_000 },
 }
 
 async function recentCount(db: Db, bucket: Bucket, windowMs: number, where: { ip?: string; target?: string }, failuresOnly: boolean) {

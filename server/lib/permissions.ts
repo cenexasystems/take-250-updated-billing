@@ -54,6 +54,10 @@ export const PERMISSIONS = {
   'coupons.lookup':        { roles: AMS, scope: 'branch' as Scope },
   'coupons.read':          { roles: A, scope: 'branch' as Scope },
   'coupons.write':         { roles: A, scope: 'branch' as Scope },
+  // sending a coupon PDF to a customer (records coupon_sends): Admin only, for the branch selected in the switcher
+  'coupons.send':          { roles: A, scope: 'branch' as Scope },
+  // POS customer lookup (status line + that customer's sent coupons of THIS branch): every role, own branch only
+  'customers.lookup':      { roles: AMS, scope: 'branch' as Scope },
   // orders (rows 18-20)
   'orders.read':           { roles: AMS, scope: 'branch' as Scope },
   'orders.status':         { roles: AM, scope: 'branch' as Scope }, // pending / completed only: nobody cancels, Staff is view-only

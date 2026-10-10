@@ -1,3 +1,13 @@
+/**
+ * THE canonical customer phone: the 10-digit Indian mobile, used for storing and matching (same rule as the SQL function
+ * public.canonical_phone). "+91 88831 73358", "88831 73358", "088831 73358" and "8883173358" -> "8883173358".
+ * A number typed with "+" must be +91 and ten digits ("+91 8883 1733" is a partial number). Anything else -> null.
+ */
+export function canonicalPhone(input?: string | null): string | null {
+  const normalized = normalizePhone(String(input ?? ''))
+  return normalized ? normalized.slice(2) : null
+}
+
 export function normalizePhone(input: string): string | null {
   if (!input) return null
 
@@ -7,7 +17,10 @@ export function normalizePhone(input: string): string | null {
 
   let digits = raw
 
-  if (digits.startsWith('91') && digits.length === 12) {
+  if (input.trim().startsWith('+')) {
+    // international format: only +91 followed by the 10-digit mobile
+    if (!(digits.startsWith('91') && digits.length === 12)) return null
+  } else if (digits.startsWith('91') && digits.length === 12) {
     // Already 91XXXXXXXXXX
   } else if (digits.length === 10 && /^[6-9]/.test(digits)) {
     digits = '91' + digits

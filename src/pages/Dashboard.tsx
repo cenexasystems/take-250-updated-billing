@@ -44,6 +44,7 @@ import { useProductStore, useAdminAuthStore, useBranchStore, resolveBranch, type
 import { useBranchPolling } from '../hooks/useBranchPolling'
 import ReturnModal from '../components/returns/ReturnModal'
 import ReturnsList from '../components/returns/ReturnsList'
+import SendCouponModal from '../components/coupons/SendCouponModal'
 import { can, canOpenTab, hasAdminPowers, roleLabel, type TabKey as PermTabKey } from '../lib/permissions'
 import { useAlarmStore } from '../store/alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
@@ -291,6 +292,7 @@ export default function Dashboard() {
   const [couponSaveError, setCouponSaveError] = useState('')
   const [couponSaveSuccess, setCouponSaveSuccess] = useState('')
   const [editingCouponId, setEditingCouponId] = useState<number | null>(null)
+  const [sendingCoupon, setSendingCoupon] = useState<DashboardCoupon | null>(null)
 
   // Variant management state
   const { getVariants, refetchVariants } = useVariantStore()
@@ -4501,6 +4503,18 @@ export default function Dashboard() {
                           </div>
 
                           <div className="flex shrink-0 items-center gap-2">
+                            {can(role, 'coupons.send') && (
+                              <button
+                                type="button"
+                                onClick={() => setSendingCoupon(coupon)}
+                                disabled={!coupon.is_active || isExpired || isExhausted}
+                                className="inline-flex items-center gap-1 rounded-lg bg-[#25D366] px-3 py-1.5 text-[11px] font-black uppercase tracking-wider text-white transition-all cursor-pointer hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-40"
+                                title={!coupon.is_active ? 'Turn the coupon on to send it' : isExpired ? 'Expired coupons cannot be sent' : isExhausted ? 'Usage limit reached' : 'Send this coupon to a customer as a PDF'}
+                                data-testid="coupon-send"
+                              >
+                                <MessageCircle size={12} /> Send
+                              </button>
+                            )}
                             <button
                               onClick={() => void toggleCoupon(coupon)}
                               className={`rounded-lg px-3 py-1.5 text-[11px] font-black uppercase tracking-wider transition-all cursor-pointer ${
@@ -4537,6 +4551,7 @@ export default function Dashboard() {
                       {l('No coupons yet. Create your first coupon!', 'இன்னும் கூப்பன் இல்லை. முதல் கூப்பனை உருவாக்குங்கள்!')}
                     </div>
                   )}
+                  {sendingCoupon && <SendCouponModal coupon={sendingCoupon} branch={branch} onClose={() => setSendingCoupon(null)} />}
                 </div>
               </div>
             </div>

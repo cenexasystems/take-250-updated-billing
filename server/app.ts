@@ -9,10 +9,11 @@ import { catalogRoutes } from './routes/catalog.js'
 import { inventoryRoutes } from './routes/inventory.js'
 import { miscRoutes } from './routes/misc.js'
 import { salesRoutes } from './routes/sales.js'
+import { customerRoutes } from './routes/customers.js'
 
 export const allRoutes: Route<any, any>[] = [
   ...authRoutes, ...catalogRoutes, ...inventoryRoutes, ...barcodeRoutes,
-  ...salesRoutes, ...advanceRoutes, ...adminRoutes, ...miscRoutes,
+  ...salesRoutes, ...customerRoutes, ...advanceRoutes, ...adminRoutes, ...miscRoutes,
 ]
 
 export function createApp(deps: Deps): Express {

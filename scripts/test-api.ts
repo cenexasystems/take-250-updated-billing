@@ -15,6 +15,7 @@ import type { PoolClient } from 'pg'
 import { allRoutes, createApp } from '../server/app'
 import { getPool, singleClientDb } from '../server/lib/db'
 import { returnsSuite } from './lib/returnsSuite'
+import { couponSuite } from './lib/couponSuite'
 import { repairSequences, restoreSequences, snapshotSequences } from './lib/devState'
 import { PERMISSIONS, type PermKey } from '../server/lib/permissions'
 import { slowdownMs } from '../server/lib/rateLimit'
@@ -42,10 +43,11 @@ const BRANCH_OF = (a: Actor): B | null => (a === 'admin' ? null : (`pos${a.slice
 //   --part=1  sections A to M      --part=2  sections M2, O, N (billing safety, manager / staff matrices, then the login lockouts, which must run last)
 //   --part=3  section P, the order-returns suite (its own short connection)
 //   --part=4  sections M3 and the login lockouts (split from part 2: a remote database can reset a connection after a few minutes)
+//   --part=5  section Q, customer lookup + coupon sending (migration 0012), all 3 branches (--branch=posN: one branch)
 // With no argument everything runs in one go. npm run test:api runs both parts.
 const PART = (process.argv.find((a) => a.startsWith('--part=')) || '').slice('--part='.length)
 
-// --part=3 --branch=posN runs the returns suite for one branch only (a shorter connection against a remote database)
+// --part=3 / --part=5 --branch=posN runs the returns / coupon suite for one branch only (a shorter connection against a remote database)
 const RETURNS_BRANCH = (process.argv.find((a) => a.startsWith('--branch=')) || '').slice('--branch='.length) as B | ''
 let passed = 0
 let failed = 0
@@ -897,6 +899,10 @@ async function run() {
     // ================================================================== P. ORDER RETURNS (replace the old cancel action): shared suite, all 3 branches
     if (PART === '' || PART === '3') {
       await returnsSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o), q: (sql, params) => rows(sql, params), check, concurrent: false })
+    }
+    // ================================================================== Q. CUSTOMER LOOKUP + COUPON SENDING (0012): shared suite, all 3 branches
+    if (PART === '' || PART === '5') {
+      await couponSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o), q: (sql, params) => rows(sql, params), check })
     }
 
     // ================================================================== O. MANAGER: no Coupons management, Store Settings writes, branding upload or delete (Admin only)

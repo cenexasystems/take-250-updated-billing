@@ -39,6 +39,7 @@ import {
 } from '../lib/retail'
 import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
 import { formatPhoneForDisplay, normalizePhone } from '../lib/phone'
+import CustomerLookupStatus, { clearCustomerLookupCache, useCustomerLookup } from '../components/pos/CustomerLookupStatus'
 import { useLangStore } from '../store/langStore'
 import { fetchVariantsByProduct, type ProductVariant } from '../services/variantService'
 import { BarcodeScannerInput, type ScannedItemPayload } from '../components/pos/BarcodeScannerInput'
@@ -158,6 +159,8 @@ export default function Pos(props: PosProps = {}) {
   const [activeCategory, setActiveCategory] = useState('All')
   const [items, setItems] = useState<PosItem[]>([])
   const [customer, setCustomer] = useState({ name: '', phone: '', address: '' })
+  // status line under the phone field: existing / new customer, other branches (names only), this branch's sent coupons
+  const customerLookup = useCustomerLookup(customer.phone, branch)
   const [remarks, setRemarks] = useState('')
   const [referenceNumber, setReferenceNumber] = useState('')
   const [billingDate, setBillingDate] = useState('') // '' = use current date/time
@@ -927,6 +930,7 @@ export default function Pos(props: PosProps = {}) {
       void persistInvoicePdf(createdInvoice)
       setItems([])
       setCustomer({ name: '', phone: '', address: '' })
+      clearCustomerLookupCache() // a coupon on this bill is now Used: the next lookup must ask again
       void fetchProducts(branch, true)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to generate bill')
@@ -1269,6 +1273,7 @@ export default function Pos(props: PosProps = {}) {
                   placeholder="Enter WhatsApp number"
                   className="w-full min-w-0 max-w-full box-border h-10 sm:h-11 px-3 sm:px-4 bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-[#D4AF37] text-[13px] font-bold text-[#111111] placeholder:text-gray-400 placeholder:font-medium"
                 />
+                <CustomerLookupStatus lookup={customerLookup} />
               </div>
               <div className="min-w-0">
                 <label className="block text-[11px] md:text-[10px] font-bold text-[#374151] mb-1">Remarks (Internal)</label>
@@ -1582,6 +1587,7 @@ export default function Pos(props: PosProps = {}) {
                       placeholder="Enter WhatsApp number"
                       className={`w-full h-8 px-2 bg-white border rounded-lg text-[12px] font-bold text-[#111111] focus:outline-none ${customer.phone && !normalizePhone(customer.phone) ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-[#D4AF37]'}`}
                     />
+                    <CustomerLookupStatus lookup={customerLookup} />
                   </div>
                 </div>
 {items.length > 0 && (

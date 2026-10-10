@@ -161,6 +161,24 @@ async function run() {
       const r = await one(`INSERT INTO orders (invoice_no, customer_name, subtotal, total, branch_id, coupon_code) VALUES ($1, 'x', 1, 1, 'pos3', 'SAVE10') RETURNING coupon_id`, [String(range.pos3[0] + 500)])
       if (r.coupon_id !== couponId.pos3) throw new Error(`coupon_id ${r.coupon_id} is not pos3's coupon ${couponId.pos3}`)
     })
+    // coupon sends (0012): composite key to the SAME branch's coupon, canonical phone only, no cross-branch rows
+    await rejected('coupon send -> coupon of another branch', () =>
+      c.query(`INSERT INTO coupon_sends (branch_id, coupon_id, phone, sent_by_role) VALUES ('pos1', $1, '9876500001', 'admin')`, [couponId.pos2]))
+    await rejected('coupon send with a non-canonical phone (+91 / spaces must be normalised first)', () =>
+      c.query(`INSERT INTO coupon_sends (branch_id, coupon_id, phone, sent_by_role) VALUES ('pos1', $1, '+91 98765 00001', 'admin')`, [couponId.pos1]))
+    await ok('coupon send -> coupon of the SAME branch is accepted (control)', () =>
+      c.query(`INSERT INTO coupon_sends (branch_id, coupon_id, phone, sent_by_role) VALUES ('pos1', $1, '9876500001', 'admin')`, [couponId.pos1]))
+    record(Number((await one(`SELECT count(*)::int n FROM coupon_sends s JOIN coupons c ON c.id = s.coupon_id WHERE c.branch_id <> s.branch_id`)).n) === 0, 'every coupon send belongs to its coupon\'s own branch')
+    await ok('the cross-branch customer read returns other branches\' NAMES only', async () => {
+      await c.query(`INSERT INTO orders (invoice_no, customer_name, phone, subtotal, total, branch_id) VALUES ($1, 'Iso Customer', '+91 98765 00002', 1, 1, 'pos1')`, [String(range.pos1[0] + 501)])
+      const r = await c.query(`SELECT * FROM public.customer_other_branches('pos3', '9876500002')`)
+      const cols = r.fields ? r.fields.map((f: { name: string }) => f.name) : Object.keys(r.rows[0] ?? {})
+      if (cols.join() !== 'branch_name') throw new Error(`columns ${cols.join()}`)
+      const names = r.rows.map((x: any) => x.branch_name)
+      const b1 = (await one(`SELECT name FROM branches WHERE id = 'pos1'`)).name
+      if (names.join() !== b1) throw new Error(`got ${names.join()}`)
+      if ((await c.query(`SELECT * FROM public.customer_other_branches('pos1', '9876500002')`)).rows.length !== 0) throw new Error('own branch listed')
+    })
     await rejected('product -> category of another branch', () =>
       c.query(`INSERT INTO products (name, category, category_id, price, branch_id, is_active) VALUES ('P', 'x', $1, 1, 'pos1', true)`, [categoryId.pos2]))
     await rejected('variant -> product of another branch', () =>

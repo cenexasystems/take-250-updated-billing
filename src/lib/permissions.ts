@@ -52,6 +52,7 @@ export const GLOBAL_NAV: TabKey[] = ['business_overview', 'staff_memberships']
 
 export type Feature =
   | 'inventory.delete' | 'catalog.edit' | 'advance.delete' | 'orders.status' | 'orders.delete' | 'orders.return' | 'settings.write' | 'coupons.manage'
+  | 'coupons.send' | 'customers.lookup'
   | 'branch.switch' | 'passcodes.manage' | 'analytics.view' | 'global.view' | 'expenses.use'
 
 export const FEATURE_ACCESS: Record<Feature, Role[]> = {
@@ -63,6 +64,8 @@ export const FEATURE_ACCESS: Record<Feature, Role[]> = {
   'orders.return': ['admin', 'manager', 'staff'],
   'settings.write': ['admin'],
   'coupons.manage': ['admin'],
+  'coupons.send': ['admin'], // Send button on each coupon (PDF to a customer)
+  'customers.lookup': ['admin', 'manager', 'staff'], // POS status line under the phone field + that customer's coupon status
   'expenses.use': ['admin', 'manager'],
   'branch.switch': ['admin'],
   'passcodes.manage': ['admin'],
@@ -80,6 +83,8 @@ export const FEATURE_SERVER_PERM: Record<Feature, string[]> = {
   'orders.return': ['orders.return'],
   'settings.write': ['settings.write'],
   'coupons.manage': ['coupons.write', 'coupons.read'],
+  'coupons.send': ['coupons.send'],
+  'customers.lookup': ['customers.lookup'],
   'expenses.use': ['expenses.read', 'expenses.write'],
   'branch.switch': [],
   'passcodes.manage': ['passcodes.list', 'passcodes.change', 'lockouts.clear'],

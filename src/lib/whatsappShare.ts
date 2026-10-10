@@ -41,7 +41,8 @@ const downloadPdf = (file: File) => {
   setTimeout(() => URL.revokeObjectURL(url), 1500)
 }
 
-export async function sharePdfOnWhatsApp(file: File, phone?: string | null): Promise<WhatsAppShareResult> {
+/** `downloadedText`: the desktop toast (the invoice wording by default; the coupon PDF passes its own). */
+export async function sharePdfOnWhatsApp(file: File, phone?: string | null, downloadedText = 'Invoice downloaded. Attach it in WhatsApp.'): Promise<WhatsAppShareResult> {
   if (canShareFile(file)) {
     try {
       // files ONLY: no title, text or url, so nothing but the PDF reaches WhatsApp
@@ -54,7 +55,7 @@ export async function sharePdfOnWhatsApp(file: File, phone?: string | null): Pro
     }
   }
   downloadPdf(file)
-  useShareToast.getState().show({ kind: 'ok', text: 'Invoice downloaded. Attach it in WhatsApp.' })
+  useShareToast.getState().show({ kind: 'ok', text: downloadedText })
   window.open(toWhatsAppUrl(phone || ''), '_blank', 'noopener,noreferrer')
   return 'downloaded'
 }

@@ -7,7 +7,7 @@ import {
   Package, Search, RefreshCw, ShieldCheck, ShieldOff, Trophy,
   MessageCircle, ChevronDown, Eye, FileText, Printer, MoreVertical, X, Layers, Receipt,
   SlidersHorizontal, Tag, Ticket, Percent, CheckCircle2, Info, Sparkles,
-  Globe, Users, Store, ArrowLeft,
+  Globe, Users, Store, ArrowLeft, RotateCcw,
 } from 'lucide-react'
 
 // Custom Malaysian Ringgit icon — replaces the generic dollar-sign icon
@@ -42,6 +42,7 @@ import { api, ApiClientError } from '../lib/apiClient'
 import { debounce } from '../lib/debounce'
 import { useProductStore, useAdminAuthStore, useBranchStore, resolveBranch, type Product, type PosBranch } from '../store/store'
 import { useBranchPolling } from '../hooks/useBranchPolling'
+import ReturnModal from '../components/returns/ReturnModal'
 import { can, canOpenTab, hasAdminPowers, roleLabel, type TabKey as PermTabKey } from '../lib/permissions'
 import { useAlarmStore } from '../store/alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
@@ -93,6 +94,8 @@ type DashboardOrder = {
   coupon_code: string; discount_amount: number; manual_discount_amount: number; delivery_charge: number
   total_gst: number; payment_mode: string; payment_method?: string; split_details?: unknown; invoice_pdf_url: string; remarks?: string; reference_number?: string
   branch?: PosBranch
+  /** refunds paid out on this bill so far (goods + tax). Reports subtract it from THIS bill's own day. */
+  returned_amount?: number
 }
 type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null }
 type DashboardCoupon = {
@@ -117,7 +120,7 @@ const normalizeStatus = (v: unknown) => String(v || '').trim().toLowerCase()
 const normalizeOrderType = (v: unknown) => String(v || '').trim().toLowerCase() || 'pos_sale'
 const isCompletedStatus = (v: unknown) => {
   const status = normalizeStatus(v)
-  return status === 'completed' || status === 'paid'
+  return status === 'completed' || status === 'paid' || status === 'returned' || status === 'partially_returned'
 }
 const parseOrderItems = (items: unknown): Record<string, unknown>[] => {
   if (Array.isArray(items)) return items.filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null)
@@ -143,6 +146,11 @@ const getOrderTotal = (order: { total: unknown; items: unknown; shipping?: unkno
   )
 }
 
+// Net sales of one bill = what it took in minus what was refunded on it. The refund stays on the ORIGINAL bill, so it lowers the
+// day of the original sale (never the return date) in every chart, KPI, export and the Business Overview.
+const getOrderNet = (order: Parameters<typeof getOrderTotal>[0] & { returned_amount?: unknown }): number =>
+  Math.max(0, getOrderTotal(order) - toNumber(order.returned_amount, 0))
+
 const emptyForm = {
   name: '', nameTa: '', category: '', categoryId: null as string | number | null,
   remedy: [] as string[], price: 0, offerPrice: '' as string | number,
@@ -156,7 +164,7 @@ const emptyForm = {
 }
 
 const exportCSV = (orders: DashboardOrder[]) => {
-  const header = ['Order Ref', 'Customer', 'Phone', 'Date', 'Total (INR)', 'Order Type', 'Status']
+  const header = ['Order Ref', 'Customer', 'Phone', 'Date', 'Total (INR)', 'Returned (INR)', 'Net (INR)', 'Order Type', 'Status']
   const rows = orders.map(o => {
     let dateStr = ''
     try {
@@ -170,6 +178,8 @@ const exportCSV = (orders: DashboardOrder[]) => {
       formatPhoneForCSV(o.phone),
       dateStr,
       getOrderTotal(o).toFixed(2),
+      toNumber(o.returned_amount, 0).toFixed(2),
+      getOrderNet(o).toFixed(2),
       o.order_type,
       o.status,
     ]
@@ -215,10 +225,8 @@ export default function Dashboard() {
     window.addEventListener('resize', measureNav)
     return () => window.removeEventListener('resize', measureNav)
   }, [measureNav, role])
-  // cancel-bill dialog (optional reason) and the success / error toast shown after changing a bill's status
-  const [cancelDialog, setCancelDialog] = useState<{ id: string; invoice: string } | null>(null)
-  const [cancelReason, setCancelReason] = useState('')
-  const [cancelBusy, setCancelBusy] = useState(false)
+  // success / error toast shown after changing a bill's status
+  const [returnOrderId, setReturnOrderId] = useState<string | null>(null)
   const [orderToast, setOrderToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   useEffect(() => {
     if (!orderToast) return
@@ -436,6 +444,7 @@ export default function Dashboard() {
     invoice_pdf_url: String(row.invoice_pdf_url || ''),
     remarks: row.remarks ? String(row.remarks) : undefined,
     reference_number: row.reference_number ? String(row.reference_number) : undefined,
+    returned_amount: toNumber(row.returned_amount, 0),
   })
 
   // Load dashboard data
@@ -459,14 +468,19 @@ export default function Dashboard() {
       setExpenses(expList || [])
 
       const oi = oRes.orders.flatMap(r => (Array.isArray(r.order_items) ? (r.order_items as unknown[]) : []))
-      setOrderItems(oi.map(r => ({
-        order_id: String((r as Record<string,unknown>).order_id || ''),
-        product_name: String((r as Record<string,unknown>).product_name || 'Product'),
-        category: String((r as Record<string,unknown>).category || ''),
-        quantity: toNumber((r as Record<string,unknown>).quantity, 0),
-        line_total: toNumber((r as Record<string,unknown>).line_total, 0),
-        is_manual: Boolean((r as Record<string,unknown>).is_manual),
-      })))
+      setOrderItems(oi.map(r => {
+        const row = r as Record<string, unknown>
+        const bought = toNumber(row.quantity, 0)
+        const left = Math.max(0, bought - toNumber(row.returned_quantity, 0))   // returned units are not sold units
+        return {
+          order_id: String(row.order_id || ''),
+          product_name: String(row.product_name || 'Product'),
+          category: String(row.category || ''),
+          quantity: left,
+          line_total: bought > 0 ? Math.round(toNumber(row.line_total, 0) * left / bought * 100) / 100 : 0,
+          is_manual: Boolean(row.is_manual),
+        }
+      }))
 
       await productsPromise
     } catch (err) { console.error('Dashboard load error', err) }
@@ -528,12 +542,14 @@ export default function Dashboard() {
     const manualSales = billableCompleted.filter(o => normalizeOrderType(o.order_type) === 'manual_sale')
 
     // Revenue (WhatsApp never included) - directly calculates from completed bills
-    const completedRevenue   = billableCompleted.reduce((s, o) => s + getOrderTotal(o), 0)
+    const completedRevenue   = billableCompleted.reduce((s, o) => s + getOrderNet(o), 0)
+    const returnedTotal = billableCompleted.reduce((s, o) => s + toNumber(o.returned_amount, 0), 0)
+    const todayReturned = allBillableCompleted.filter(o => toLocalDateKey(o.created_at) === toLocalDateKey(new Date())).reduce((s, o) => s + toNumber(o.returned_amount, 0), 0)
     const averageRevenuePerBill = billableCompleted.length > 0 ? completedRevenue / billableCompleted.length : 0
-    const posRevenue         = offlinePOS.reduce((s, o) => s + getOrderTotal(o), 0)
-    const advanceRevenue     = advanceOrders.reduce((s, o) => s + getOrderTotal(o), 0)
-    const onlinePosRevenue   = onlinePOS.reduce((s, o) => s + getOrderTotal(o), 0)
-    const manualRevenue      = manualSales.reduce((s, o) => s + getOrderTotal(o), 0)
+    const posRevenue         = offlinePOS.reduce((s, o) => s + getOrderNet(o), 0)
+    const advanceRevenue     = advanceOrders.reduce((s, o) => s + getOrderNet(o), 0)
+    const onlinePosRevenue   = onlinePOS.reduce((s, o) => s + getOrderNet(o), 0)
+    const manualRevenue      = manualSales.reduce((s, o) => s + getOrderNet(o), 0)
 
     // Expenses & Net Profit calculation:
     // Net Profit = Revenue (total selling based on orders) - Total Expense (from expense tracker)
@@ -548,7 +564,7 @@ export default function Dashboard() {
     const monthKey  = todayKey.slice(0, 7)
     // Today-specific analytics (for TODAY'S SALES tab) — always today's bills, whatever period is selected
     const todayOrders = allBillableCompleted.filter(o => toLocalDateKey(o.created_at) === todayKey)
-    const todaySales = todayOrders.reduce((s, o) => s + getOrderTotal(o), 0)
+    const todaySales = todayOrders.reduce((s, o) => s + getOrderNet(o), 0)
     const todayCompletedOrdersCount = todayOrders.length
     const todayItemsSold = todayOrders.reduce((s, o) => {
       const items = parseOrderItems(o.items)
@@ -560,7 +576,7 @@ export default function Dashboard() {
     const hourlyMap = new Map<string, number>()
     todayOrders.forEach(o => {
       const hour = String(new Date(o.created_at).getHours()).padStart(2, '0')
-      hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + getOrderTotal(o))
+      hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + getOrderNet(o))
     })
     const todayHourlyTrend = Array.from({ length: 24 }, (_, i) => {
       const h = String(i).padStart(2, '0')
@@ -589,9 +605,9 @@ export default function Dashboard() {
     const todayOffline = todayOrders.filter(o => normalizeOrderType(o.order_type) === 'pos_sale' && normalizeOrderMode(o.order_mode) !== 'online')
     const todayOnline = todayOrders.filter(o => normalizeOrderType(o.order_type) === 'pos_sale' && normalizeOrderMode(o.order_mode) === 'online')
     const todayManual = todayOrders.filter(o => normalizeOrderType(o.order_type) === 'manual_sale')
-    const todayOfflineRevenue = todayOffline.reduce((s, o) => s + getOrderTotal(o), 0)
-    const todayOnlineRevenue = todayOnline.reduce((s, o) => s + getOrderTotal(o), 0)
-    const todayManualRevenue = todayManual.reduce((s, o) => s + getOrderTotal(o), 0)
+    const todayOfflineRevenue = todayOffline.reduce((s, o) => s + getOrderNet(o), 0)
+    const todayOnlineRevenue = todayOnline.reduce((s, o) => s + getOrderNet(o), 0)
+    const todayManualRevenue = todayManual.reduce((s, o) => s + getOrderNet(o), 0)
 
     // Product hourly trend (products sold per hour today)
     const productHourlyMap = new Map<string, number>()
@@ -607,7 +623,7 @@ export default function Dashboard() {
       return { hour: `${h12} ${ampm}`, key: h, qty: productHourlyMap.get(h) || 0 }
     })
 
-    const monthlyRevenue = billableCompleted.filter(o => toLocalMonthKey(o.created_at) === monthKey).reduce((s, o) => s + getOrderTotal(o), 0)
+    const monthlyRevenue = billableCompleted.filter(o => toLocalMonthKey(o.created_at) === monthKey).reduce((s, o) => s + getOrderNet(o), 0)
 
     // Item-level analytics
     const completedIds = new Set(billableCompleted.map(o => o.id))
@@ -677,7 +693,7 @@ export default function Dashboard() {
     const monthlyRevenueMap = new Map<string, number>()
     allBillableCompleted.forEach(o => {
       const k = toLocalMonthKey(o.created_at)
-      monthlyRevenueMap.set(k, (monthlyRevenueMap.get(k) || 0) + getOrderTotal(o))
+      monthlyRevenueMap.set(k, (monthlyRevenueMap.get(k) || 0) + getOrderNet(o))
     })
     const monthlyTrend = Array.from({ length: 12 }, (_, i) => {
       const d = new Date(chartYear, i, 1)
@@ -688,7 +704,7 @@ export default function Dashboard() {
     const weeklyRevenueMap = new Map<string, number>()
     allBillableCompleted.forEach(o => {
       const k = toLocalDateKey(o.created_at)
-      weeklyRevenueMap.set(k, (weeklyRevenueMap.get(k) || 0) + getOrderTotal(o))
+      weeklyRevenueMap.set(k, (weeklyRevenueMap.get(k) || 0) + getOrderNet(o))
     })
 
     const currentDayOfWeek = new Date().getDay() || 7 // 1: Mon, ..., 7: Sun
@@ -807,6 +823,8 @@ export default function Dashboard() {
 
     return {
       totalCompletedRevenue: completedRevenue,
+      totalReturned: returnedTotal,
+      todayReturned,
       averageRevenuePerBill,
       todaySales,
       todayCompletedOrdersCount,
@@ -907,34 +925,52 @@ export default function Dashboard() {
     } catch { /* keep the list that is showing */ }
   }, [branch])
 
-  // Cancelling a bill is not just a label: the server puts every item back in stock (one transaction, reversing stock
-  // movements) and refuses a second cancel. A cancelled bill cannot be re-opened.
-  const cancelOrder = (orderId: string) => {
-    const invoiceNo = orders.find(o => o.id === orderId)?.invoice_no || ''
-    setCancelReason('')
-    setCancelDialog({ id: orderId, invoice: invoiceNo })
+  // Order History status cell. Pending / Completed keep the existing dropdown for Admin and Manager; Staff sees the badge only.
+  // Returned / Partially Returned / (old) Cancelled bills are history: a read-only badge for everyone. Same badge classes as before.
+  const orderBadgeTone = (status: unknown) => {
+    const st = normalizeStatus(status)
+    if (st === 'completed') return 'emerald'
+    if (st === 'cancelled' || st === 'returned') return 'red'
+    if (st === 'partially_returned') return 'orange'
+    return 'amber'
   }
-
-  const confirmCancelOrder = async () => {
-    if (!cancelDialog || cancelBusy) return
-    setCancelBusy(true)
-    try {
-      const res = await api<{ restocked_items?: number }>('POST', `/api/orders/${cancelDialog.id}/cancel`, { body: { reason: cancelReason.trim() }, branchId: branch })
-      const id = cancelDialog.id
-      setOrders(prev => prev.map(o => o.id === id ? { ...o, status: 'cancelled' } : o))
-      setSearchResults(prev => prev.map(o => o.id === id ? { ...o, status: 'cancelled' } : o))
-      void fetchProducts(branch, true) // the stock just changed
-      setOrderToast({ kind: 'ok', text: `Bill ${cancelDialog.invoice} cancelled${res?.restocked_items ? `; ${res.restocked_items} item(s) went back into stock` : ''}.` })
-      setCancelDialog(null)
-    } catch (error) {
-      setOrderToast({ kind: 'err', text: `Could not cancel the bill: ${error instanceof Error ? error.message : 'Request failed'}` })
-    } finally {
-      setCancelBusy(false)
-    }
+  const orderStatusLabel = (status: unknown) => {
+    const st = normalizeStatus(status)
+    if (st === 'completed') return l('Completed', 'முடிந்தது')
+    if (st === 'cancelled') return l('Cancelled', 'ரத்து')
+    if (st === 'returned') return l('Returned', 'திரும்பப் பெறப்பட்டது')
+    if (st === 'partially_returned') return l('Partially Returned', 'பகுதி திரும்பம்')
+    return l('Pending', 'நிலுவை')
+  }
+  const isReturnableOrder = (o: DashboardOrder) =>
+    ['completed', 'partially_returned'].includes(normalizeStatus(o.status)) && normalizeOrderType(o.order_type) !== 'online_request'
+  const renderStatusCell = (o: DashboardOrder, layout: 'card' | 'row') => {
+    const st = normalizeStatus(o.status)
+    const tone = orderBadgeTone(o.status)
+    const cls = tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : tone === 'red' ? 'border-red-200 bg-red-50 text-red-700' : tone === 'orange' ? 'border-orange-200 bg-orange-50 text-orange-700' : 'border-amber-200 bg-amber-50 text-amber-700'
+    const badge = layout === 'card'
+      ? <span className={`inline-flex items-center justify-center flex-1 min-h-[44px] px-3 py-2 rounded-xl text-[12px] font-black uppercase border ${cls}`}>{orderStatusLabel(o.status)}</span>
+      : <span className={`inline-flex items-center justify-center rounded-lg border px-2 py-0.5 text-[10px] font-black uppercase ${cls}`}>{orderStatusLabel(o.status)}</span>
+    const returnBtn = isReturnableOrder(o) ? (layout === 'card'
+      ? <button type="button" onClick={() => setReturnOrderId(o.id)} className="inline-flex h-10 sm:h-11 shrink-0 items-center justify-center gap-1 rounded-xl border border-[#E5E7EB]/60 px-3 text-[12px] font-black text-[#111111] transition-colors hover:bg-[#D4AF37]/5 cursor-pointer" title="Return items"><RotateCcw size={13} /> {l('Return', 'திருப்பு')}</button>
+      : <button type="button" onClick={() => setReturnOrderId(o.id)} className="inline-flex items-center gap-1 rounded-lg border border-[#E5E7EB]/60 px-1.5 py-1 text-[10px] font-black text-[#111111] transition-colors hover:bg-[#D4AF37]/5 cursor-pointer" title="Return items"><RotateCcw size={11} /> {l('Return', 'திருப்பு')}</button>) : null
+    if (!can(role, 'orders.status') || !['pending', 'completed'].includes(st)) return <>{badge}{returnBtn}</>
+    return <>{layout === 'card' ? (
+      <select value={normalizeStatus(o.status)} onChange={e => void updateOrderStatus(o.id, e.target.value)}
+                            className={`min-h-[44px] flex-1 cursor-pointer rounded-xl border px-3 py-2 text-[12px] font-black outline-none ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : normalizeStatus(o.status) === 'cancelled' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                            <option value="pending">{l('Pending', 'நிலுவை')}</option>
+                            <option value="completed">{l('Completed', 'முடிந்தது')}</option>
+                          </select>
+    ) : (
+      <select value={normalizeStatus(o.status)} onChange={e => void updateOrderStatus(o.id, e.target.value)}
+                                  className={`cursor-pointer rounded-lg border px-1.5 py-1 text-[10px] font-black outline-none ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : normalizeStatus(o.status) === 'cancelled' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                                  <option value="pending">{l('Pending', 'நிலுவை')}</option>
+                                  <option value="completed">{l('Completed', 'முடிந்தது')}</option>
+                                </select>)}{returnBtn}</>
   }
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
-    if (newStatus === 'cancelled') { cancelOrder(orderId); return }
+    if (newStatus !== 'pending' && newStatus !== 'completed') return
     try {
       await api('PATCH', `/api/orders/${orderId}/status`, { body: { status: newStatus }, branchId: branch })
     } catch (error) {
@@ -1647,19 +1683,20 @@ export default function Dashboard() {
 
   return (
     <div className="admin-shell h-[100dvh] max-h-[100dvh] min-h-[100dvh] bg-bgMain flex flex-col lg:flex-row overflow-hidden">
-      {cancelDialog && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Cancel bill">
-          <div className="w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-2xl bg-white p-5 shadow-2xl border border-[#E8D399]">
-            <h3 className="text-base font-black text-[#111111]">Cancel bill {cancelDialog.invoice}?</h3>
-            <p className="mt-1 text-xs font-semibold text-[#6B7280]">Every item on this bill goes back into this store's stock and a stock movement is recorded. This cannot be undone, and the bill cannot be set back to Completed.</p>
-            <label className="mt-3 block text-[10px] font-black uppercase tracking-wide text-[#6B7280]">Reason (optional)</label>
-            <textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)} maxLength={300} rows={3} placeholder="e.g. customer returned the item" className="mt-1 w-full rounded-xl border border-[#E5E7EB] px-3 py-2 text-sm outline-none focus:border-[#D4AF37]" />
-            <div className="mt-4 flex gap-2">
-              <button type="button" disabled={cancelBusy} onClick={() => setCancelDialog(null)} className="h-11 flex-1 rounded-xl border border-[#E5E7EB] text-sm font-black text-[#111111] cursor-pointer disabled:opacity-60">Keep bill</button>
-              <button type="button" disabled={cancelBusy} onClick={() => void confirmCancelOrder()} className="h-11 flex-1 rounded-xl bg-red-600 text-sm font-black text-white cursor-pointer hover:bg-red-700 disabled:opacity-60">{cancelBusy ? 'Cancelling…' : 'Cancel bill'}</button>
-            </div>
-          </div>
-        </div>
+      {returnOrderId && (
+        <ReturnModal
+          orderId={returnOrderId}
+          branch={branch}
+          onClose={() => setReturnOrderId(null)}
+          onReturned={(rec) => {
+            const patch = (o: DashboardOrder) => o.id === rec.order_id || o.id === returnOrderId
+              ? { ...o, status: rec.order_status, returned_amount: (o.returned_amount ?? 0) + Number(rec.refund_amount) } : o
+            setOrders(prev => prev.map(patch))
+            setSearchResults(prev => prev.map(patch))
+            void fetchProducts(branch, true) // the stock just changed
+            setOrderToast({ kind: 'ok', text: `Return ${rec.return_no} saved.` })
+          }}
+        />
       )}
       {orderToast && (
         <div role="status" className={`fixed bottom-5 left-1/2 z-[130] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-xl px-4 py-3 text-sm font-bold shadow-xl ${orderToast.kind === 'ok' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
@@ -1894,7 +1931,7 @@ export default function Dashboard() {
             {/* Revenue KPIs - 6 cards in 3 columns */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {[
-                { label: l('Total Revenue', 'மொத்த வருவாய்'),    value: formatCurrency(analytics.totalCompletedRevenue), from: 'from-emerald-50 via-emerald-50/80 to-teal-50', iconBg: 'from-emerald-400 to-teal-500', icon: <RMIcon size={16} /> },
+                { label: analytics.totalReturned > 0 ? `${l('Net Revenue', 'நிகர வருவாய்')} · ${l('Returned', 'திரும்பம்')} ${formatCurrency(analytics.totalReturned)}` : l('Total Revenue', 'மொத்த வருவாய்'),    value: formatCurrency(analytics.totalCompletedRevenue), from: 'from-emerald-50 via-emerald-50/80 to-teal-50', iconBg: 'from-emerald-400 to-teal-500', icon: <RMIcon size={16} /> },
                 {
                   label: analytics.isProfitable ? l('Net Profit', 'நிகர லாபம்') : l('Net Loss', 'நிகர நஷ்டம்'),
                   value: formatCurrency(Math.abs(analytics.netProfit)),
@@ -2526,8 +2563,8 @@ export default function Dashboard() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
                   {[
                     {
-                      label: 'Total Revenue',
-                      helper: 'Completed POS, manual, and fully paid advance orders',
+                      label: analytics.totalReturned > 0 ? 'Net Revenue' : 'Total Revenue',
+                      helper: analytics.totalReturned > 0 ? `Net of returns: ${formatCurrency(analytics.totalReturned)} returned (counted on the original sale date)` : 'Completed POS, manual, and fully paid advance orders',
                       value: formatCurrency(analytics.totalCompletedRevenue),
                       icon: <RMIcon size={16} />,
                       color: 'text-emerald-500',
@@ -3560,18 +3597,7 @@ export default function Dashboard() {
                           </button>
                         </div>
                         <div className="flex gap-2 w-full sm:flex-1">
-                        {can(role, 'orders.status') ? (
-                          <select value={normalizeStatus(o.status)} onChange={e => void updateOrderStatus(o.id, e.target.value)} disabled={normalizeStatus(o.status) === 'cancelled'}
-                            className={`min-h-[44px] flex-1 cursor-pointer rounded-xl border px-3 py-2 text-[12px] font-black outline-none disabled:cursor-not-allowed ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : normalizeStatus(o.status) === 'cancelled' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
-                            <option value="pending">{l('Pending', 'நிலுவை')}</option>
-                            <option value="completed">{l('Completed', 'முடிந்தது')}</option>
-                            <option value="cancelled">{l('Cancelled', 'ரத்து')}</option>
-                          </select>
-                        ) : (
-                          <span className={`inline-flex items-center justify-center flex-1 min-h-[44px] px-3 py-2 rounded-xl text-[12px] font-black uppercase ${normalizeStatus(o.status) === 'completed' ? 'border border-emerald-200 bg-emerald-50 text-emerald-700' : normalizeStatus(o.status) === 'cancelled' ? 'border border-red-200 bg-red-50 text-red-700' : 'border border-amber-200 bg-amber-50 text-amber-700'}`}>
-                            {normalizeStatus(o.status) === 'completed' ? l('Completed', 'முடிந்தது') : normalizeStatus(o.status) === 'cancelled' ? l('Cancelled', 'ரத்து') : l('Pending', 'நிலுவை')}
-                          </span>
-                        )}
+                        {renderStatusCell(o, 'card')}
                         {can(role, 'orders.delete') && (
                           <button onClick={() => void deleteOrder(o.id, o.invoice_no)} className="h-10 w-10 sm:h-11 sm:w-11 shrink-0 rounded-xl border border-[#E5E7EB]/60 text-[#D4AF37] transition-colors hover:bg-[#D4AF37]/5" title="Delete Order">
                             <Trash2 size={14} className="mx-auto" />
@@ -3632,18 +3658,7 @@ export default function Dashboard() {
                           <td className="whitespace-nowrap px-2 py-3 text-[11px] text-[#374151]">{new Date(o.created_at).toLocaleDateString('en-IN')}</td>
                           <td className="px-2 py-3">
                             <div className="flex items-center justify-center gap-1.5">
-                              {can(role, 'orders.status') ? (
-                                <select value={normalizeStatus(o.status)} onChange={e => void updateOrderStatus(o.id, e.target.value)} disabled={normalizeStatus(o.status) === 'cancelled'}
-                                  className={`cursor-pointer rounded-lg border px-1.5 py-1 text-[10px] font-black outline-none disabled:cursor-not-allowed ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : normalizeStatus(o.status) === 'cancelled' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
-                                  <option value="pending">{l('Pending', 'நிலுவை')}</option>
-                                  <option value="completed">{l('Completed', 'முடிந்தது')}</option>
-                                  <option value="cancelled">{l('Cancelled', 'ரத்து')}</option>
-                                </select>
-                              ) : (
-                                <span className={`inline-flex items-center justify-center rounded-lg border px-2 py-0.5 text-[10px] font-black uppercase ${normalizeStatus(o.status) === 'completed' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : normalizeStatus(o.status) === 'cancelled' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
-                                  {normalizeStatus(o.status) === 'completed' ? l('Completed', 'முடிந்தது') : normalizeStatus(o.status) === 'cancelled' ? l('Cancelled', 'ரத்து') : l('Pending', 'நிலுவை')}
-                                </span>
-                              )}
+                              {renderStatusCell(o, 'row')}
                               {can(role, 'orders.delete') && (
                                 <button onClick={() => void deleteOrder(o.id, o.invoice_no)} className="rounded-lg p-1 text-[#D4AF37] transition-colors hover:bg-[#D4AF37]/5" title="Delete Order">
                                   <Trash2 size={13} />

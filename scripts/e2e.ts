@@ -307,7 +307,7 @@ async function main() {
       await go(page, '/dashboard?tab=history')
       const hist = await bodyText(page)
       check(hist.includes(invNo), 'Order History lists the new bill')
-      check((await page.locator('option[value="cancelled"]').count()) === 0, 'staff have no Cancelled option in Order History')
+      check((await page.locator('option[value="cancelled"]').count()) === 0 && (await page.locator('select:visible option[value="pending"]').count()) === 0, 'staff have no Cancelled option and no status dropdown in Order History (view only, Return only)')
       check(!Object.entries(bills).filter(([k]) => k !== b).some(([, n]) => n && hist.includes(n)), "Order History shows none of the other branches' bills")
 
       // advance order in the UI
@@ -338,7 +338,7 @@ async function main() {
       const mg = await loginAs('manager', i)
       const mp = mg.page
       const nav2 = (await navLabels(mp)).join(' | ')
-      check(/Expenses/.test(nav2) && /Coupons/.test(nav2) && /Store Settings/.test(nav2) && /Order History/.test(nav2), 'manager sees the admin tools (Expenses, Coupons, Store Settings, ...)', nav2)
+      check(/Expenses/.test(nav2) && /Order History/.test(nav2) && /Stock/.test(nav2) && !/Coupons|Store Settings|Analytics/.test(nav2), 'manager sees Expenses, Stock, Order History and NOT Coupons / Store Settings / Analytics', nav2)
       check(!/Analytics/.test(nav2), 'manager has NO Analytics Dashboard in the menu', nav2)
       check(!/Staff & Memberships|Business Overview/.test(nav2), 'manager has no passcode / cross-branch entries')
       check((await mp.locator('aside select').count()) === 0, 'manager has no branch switcher (fixed branch badge)')
@@ -365,29 +365,28 @@ async function main() {
       check((await bodyText(mp)).includes(`E2E expense ${i + 1}`), 'the expense shows in the ledger')
       check(!exp.some((e) => /E2E expense/.test(e.description) && e.description !== `E2E expense ${i + 1}`), "the ledger holds none of the other branches' expenses")
       await shot(mp, `manager-${b}-expenses`)
-      // cancel a bill from Order History: the item goes back in stock, the bill is marked cancelled and cannot be changed again
+      // return a bill from Order History (replaces the old cancel): the item goes back in stock, the bill becomes Partially Returned / Returned
       await go(mp, '/dashboard?tab=history')
-      const stockBeforeCancel = await stockOf(mp, me.name)
-      mp.on('dialog', (d) => { void d.accept(d.type() === 'prompt' ? 'E2E cancel reason' : undefined) })
-      const cancelSel = mp.locator('select:visible').filter({ has: mp.locator('option[value="cancelled"]') }).first()
-      await cancelSel.waitFor({ timeout: 15000 }).catch(() => undefined)
-      await cancelSel.selectOption('cancelled').catch(() => undefined)
-      await sleep(3000)
-      const cancelledRows = await pool.query(`SELECT cancelled_by, cancel_reason FROM orders WHERE branch_id = $1 AND status = 'cancelled' AND customer_name LIKE 'E2E %'`, [b])
-      check(cancelledRows.rowCount === 1 && cancelledRows.rows[0].cancelled_by === 'manager' && /E2E cancel reason/.test(cancelledRows.rows[0].cancel_reason), `the manager cancels a bill from Order History in ${b} (reason and who are stored)`, JSON.stringify(cancelledRows.rows))
-      check((await stockOf(mp, me.name)) === stockBeforeCancel + 1, 'cancelling put the item back in stock (+1)')
-      check((await mp.locator('select[disabled]').count()) >= 1, 'a cancelled bill\'s status can no longer be changed (dropdown disabled)')
-      await shot(mp, `manager-${b}-cancelled-bill`)
-      // Store Settings opens on the manager's own branch (token branch), never on Branch 1
+      const stockBeforeReturn = await stockOf(mp, me.name)
+      await mp.getByRole('button', { name: /^return$/i }).first().click()
+      const dlg = mp.locator('[role="dialog"]')
+      await dlg.getByTestId('return-line').first().waitFor({ timeout: 15000 })
+      await dlg.getByLabel(/Quantity to return/).first().fill('1')
+      await sleep(1200)
+      await shot(mp, `manager-${b}-return-modal`)
+      await dlg.getByRole('button', { name: /^return$/i }).click()
+      await dlg.getByRole('button', { name: /confirm return/i }).click()
+      await dlg.getByTestId('return-done').waitFor({ timeout: 15000 }).catch(() => undefined)
+      const retRows = await pool.query(`SELECT r.return_no, r.created_by_role, o.status FROM order_returns r JOIN orders o ON o.id = r.order_id AND o.branch_id = r.branch_id WHERE r.branch_id = $1 AND o.customer_name LIKE 'E2E %'`, [b])
+      check(retRows.rowCount === 1 && retRows.rows[0].created_by_role === 'manager' && /^RET-POS\d-\d{6}$/.test(retRows.rows[0].return_no), `the manager returns an item from Order History in ${b} (RET- number, who is stored)`, JSON.stringify(retRows.rows))
+      check((await stockOf(mp, me.name)) === stockBeforeReturn + 1, 'the return put the item back in stock (+1)')
+      await mp.keyboard.press('Escape'); await dlg.getByRole('button', { name: /^done$/i }).click().catch(() => undefined)
+      check((await mp.locator('option[value="cancelled"]').count()) === 0, 'there is no Cancelled option in Order History')
+      await shot(mp, `manager-${b}-returned-bill`)
+      // Store Settings is Admin only now: a manager's deep link lands on billing, not on a blank page
       await go(mp, '/dashboard?tab=store_settings')
-      await waitText(mp, 'Profile')
-      const ss = await bodyText(mp)
-      const branchRows = (await apiGet(mp, '/api/branches')).branches as any[]
-      const ownLabel = branchRows.find((x) => x.id === b)?.short_label as string | undefined
-      const branch1Label = (branchRows.find((x) => x.id === 'pos1')?.short_label as string | undefined) || 'take250 karanthai'
-      const profileTitles = [...ss.matchAll(/([A-Za-z0-9 &'.-]+?) Profile/gi)].map((m) => m[1].trim().toLowerCase()) // the heading is upper-cased by CSS
-      check(profileTitles.length > 0 && !!ownLabel && profileTitles.some((t) => t.endsWith(ownLabel.toLowerCase())) && (i === 0 || !profileTitles.some((t) => t.endsWith(branch1Label.toLowerCase()))), `Store Settings shows ${b}'s own profile (not Branch 1)`, profileTitles.join(' | '))
-      check((await mp.locator('button:has-text("Admin Portal (Global)")').count()) === 0, 'manager has no branch tabs in Store Settings')
+      await sleep(1000)
+      check(!/Store Settings & Appearance/.test(await bodyText(mp)) && (await mp.locator('aside nav button', { hasText: 'Store Settings' }).count()) === 0, 'manager has no Store Settings (deep link redirects)')
       await mg.ctx.close()
     }
 

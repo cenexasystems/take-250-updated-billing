@@ -12,13 +12,14 @@ const BRANCHES: PosBranch[] = ['pos1', 'pos2', 'pos3']
 
 type BranchStats = {
   todaySales: number
+  todayReturned: number
   bills: number
   stockValue: number
   lowStock: number
   lowStockItems: string[]
 }
 
-const emptyStats = (): BranchStats => ({ todaySales: 0, bills: 0, stockValue: 0, lowStock: 0, lowStockItems: [] })
+const emptyStats = (): BranchStats => ({ todaySales: 0, todayReturned: 0, bills: 0, stockValue: 0, lowStock: 0, lowStockItems: [] })
 
 interface BusinessOverviewProps {
   onNavigate: (tab: TabKey, branch?: PosBranch) => void
@@ -45,14 +46,17 @@ export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) 
         const validOrders = (orders || []).filter((o) => {
           const status = String(o.status || '').trim().toLowerCase()
           const type = String(o.order_type || '').trim().toLowerCase()
-          return (status === 'completed' || status === 'paid') && type !== 'online_request' && type !== 'whatsapp_request'
+          return (status === 'completed' || status === 'paid' || status === 'returned' || status === 'partially_returned') && type !== 'online_request' && type !== 'whatsapp_request'
         })
-        const todaySales = validOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0)
+        // net of returns: a refund lowers the day of the ORIGINAL sale
+        const todaySales = validOrders.reduce((sum, o) => sum + Math.max(0, (Number(o.total) || 0) - (Number(o.returned_amount) || 0)), 0)
+        const todayReturned = validOrders.reduce((sum, o) => sum + (Number(o.returned_amount) || 0), 0)
         const stockValue = (products || []).reduce((sum, p) => sum + (Number(p.price) || 0) * (Number(p.stock_quantity) || 0), 0)
         const low = (products || []).filter((p) => (Number(p.stock_quantity) || 0) <= (Number(p.low_stock_alert) > 0 ? Number(p.low_stock_alert) : 5))
 
         return [branch, {
           todaySales,
+          todayReturned,
           bills: validOrders.length,
           stockValue,
           lowStock: low.length,
@@ -147,6 +151,7 @@ export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) 
                   <div className={`${accent.bgLight} rounded-xl p-2 text-center`}>
                     <p className="text-[9px] font-black uppercase text-gray-500">Today Sales</p>
                     <p className="text-xs font-black text-[#1A0E0E]">{formatCurrency(s.todaySales)}</p>
+                    {s.todayReturned > 0 && <p className="text-[9px] font-bold text-red-600">Returned {formatCurrency(s.todayReturned)}</p>}
                   </div>
                   <div className={`${accent.bgLight} rounded-xl p-2 text-center`}>
                     <p className="text-[9px] font-black uppercase text-gray-500">Bills</p>

@@ -14,6 +14,7 @@ import jwt from 'jsonwebtoken'
 import type { PoolClient } from 'pg'
 import { allRoutes, createApp } from '../server/app'
 import { getPool, singleClientDb } from '../server/lib/db'
+import { returnsSuite } from './lib/returnsSuite'
 import { repairSequences, restoreSequences, snapshotSequences } from './lib/devState'
 import { PERMISSIONS, type PermKey } from '../server/lib/permissions'
 import { slowdownMs } from '../server/lib/rateLimit'
@@ -274,7 +275,7 @@ async function run() {
       const sv = await call('PUT', '/api/admin/passcodes', { cookie: cookies.staff1, body: { target_role: 'staff', target_branch: 'pos1', new_passcode: 'Another-Pass-123', current_admin_passcode: PASS.admin } })
       check(sv.status === 403, 'staff cannot manage passcodes even with the admin passcode in the body')
       check((await call('DELETE', '/api/inventory/items', { cookie: cookies.staff1, query: { product_id: String(prod.pos1) } })).status === 403, 'staff cannot delete inventory items')
-      check((await call('PATCH', `/api/orders/${'00000000-0000-4000-8000-000000000000'}/status`, { cookie: cookies.staff1, body: { status: 'completed' } })).status === 404, 'staff may change order status (an unknown bill is a plain 404, not 403)')
+      check((await call('PATCH', `/api/orders/${'00000000-0000-4000-8000-000000000000'}/status`, { cookie: cookies.staff1, body: { status: 'completed' } })).status === 403, 'staff cannot change an order status (view-only Order History: 403 before any lookup)')
       check((await call('DELETE', `/api/orders/${'00000000-0000-4000-8000-000000000000'}`, { cookie: cookies.staff1 })).status === 403, 'staff has no order-delete endpoint (403)')
     }
 
@@ -422,7 +423,7 @@ async function run() {
       check(g.status === 404, 'staff3 cannot open a branch 1 order by id')
       check((await call('GET', `/api/orders/${sale.body.order_id}`, { cookie: cookies.staff1 })).body.items.length >= 1, 'staff1 can open its own order with items')
       // status / delete: manager yes (own branch only), staff no
-      check((await call('PATCH', `/api/orders/${sale.body.order_id}/status`, { cookie: cookies.manager2, body: { status: 'cancelled' } })).status === 404, 'manager2 cannot change a branch 1 order status')
+      check((await call('PATCH', `/api/orders/${sale.body.order_id}/status`, { cookie: cookies.manager2, body: { status: 'pending' } })).status === 404, 'manager2 cannot change a branch 1 order status')
       check((await call('PATCH', `/api/orders/${sale.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'pending' } })).status === 200, 'manager1 can change its own order status')
       check((await call('DELETE', `/api/orders/${sale.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos3' } })).status === 404, 'admin on branch 3 cannot delete a branch 1 order')
       // coupons
@@ -757,39 +758,40 @@ async function run() {
       const evRows = await one(`SELECT count(*)::int n FROM advance_order_timeline WHERE advance_order_id = $1 AND event_type = 'status_ready_for_delivery'`, [noKey.body.order.id]).catch(() => ({ n: -1 }))
       check(ev.status === 200 && (await one(`SELECT count(*)::int n FROM advance_orders WHERE customer_name = 'Idem NoKey'`)).n === 1, 'an advance status change touches one order and stays one row', JSON.stringify([ev.status, evRows]))
 
-      // ---- 2. cancel + restock
-      const before = await stockOfP(pid)                         // 18 - 2 - 2 - 2 (s3, s4, s5) = 12
+      // ---- 2. no cancel action any more: nothing restocks except the Admin deleting a live bill (and that happens once)
+      const before = await stockOfP(pid)
       const c0 = await sale('staff1', bill({ idempotency_key: 'cancel-key-aaaaaa' }, 3))
       check((await stockOfP(pid)) === before - 3, 'a 3-item bill takes 3 from stock')
-      check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.staff2, body: { reason: 'x' } })).status === 404, "another branch's staff cannot cancel it (404)")
-      { const sb = await sale('staff1', bill({}, 1)); const before = await stockOfP(pid); const sc = await call('POST', `/api/orders/${sb.body.order_id}/cancel`, { cookie: cookies.staff1, body: { reason: 'staff cancel' } })
-        check(sc.status === 200 && sc.body.order.status === 'cancelled' && (await stockOfP(pid)) === before + 1, 'staff can cancel a bill of their own branch: stock goes back', JSON.stringify([sc.status, sc.body?.error])) }
-      check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { body: {} })).status === 401, 'cancel needs a session (401)')
-      check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.manager2, body: {} })).status === 404, 'another branch\'s manager cannot cancel it (404)')
-      check((await stockOfP(pid)) === before - 3, 'refused cancels changed nothing')
-      const x1 = await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.manager1, body: { reason: 'wrong size' } })
-      check(x1.status === 200 && x1.body.order.status === 'cancelled' && x1.body.restocked_items === 1, 'manager cancels a bill', JSON.stringify(x1.body).slice(0, 160))
-      check((await stockOfP(pid)) === before, 'cancelling put the 3 items back in stock')
-      const o1 = await one(`SELECT status, cancelled_at, cancelled_by, cancel_reason FROM orders WHERE id = $1`, [c0.body.order_id])
-      check(o1.status === 'cancelled' && !!o1.cancelled_at && o1.cancelled_by === 'manager' && o1.cancel_reason === 'wrong size', 'status, cancelled_at, cancelled_by and cancel_reason are stored')
-      const mv = await rows(`SELECT movement_type, quantity_delta::numeric d, quantity_before::numeric b, quantity_after::numeric a, reference_type, note FROM inventory_movements WHERE reference_id = $1 AND product_id = $2 ORDER BY id`, [c0.body.invoice_no, pid])
-      check(mv.length === 2 && mv[0].movement_type === 'SALE' && Number(mv[0].d) === -3 && mv[1].movement_type === 'CANCELLATION_RESTOCK' && Number(mv[1].d) === 3 && Number(mv[1].b) === before - 3 && Number(mv[1].a) === before && /wrong size/.test(mv[1].note), 'the original SALE movement stays and a reversing CANCELLATION_RESTOCK movement is added', JSON.stringify(mv))
-      const x2 = await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.manager1, body: {} })
-      check(x2.status === 409 && (await stockOfP(pid)) === before, 'a second cancel is refused (409) and never restocks twice')
-      check((await one(`SELECT count(*)::int n FROM inventory_movements WHERE reference_id = $1 AND movement_type = 'CANCELLATION_RESTOCK'`, [c0.body.invoice_no])).n === 1, 'only one reversing movement exists')
-      check((await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'completed' } })).status === 409, 'a cancelled bill cannot be re-opened (status change refused)')
-      check((await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'cancelled' } })).status === 409, 'cancelling through the status route twice is refused too')
+      for (const a of ['staff1', 'staff2', 'manager1', 'manager2'] as Actor[]) {
+        const x = await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies[a], body: { reason: 'x' } })
+        check(x.status === 404, `the cancel endpoint no longer exists (${a}: ${x.status})`)
+      }
+      check((await call('POST', `/api/orders/${c0.body.order_id}/cancel`, { cookie: cookies.admin, query: { branch_id: 'pos1' }, body: {} })).status === 404, 'the cancel endpoint no longer exists for the admin either')
+      for (const a of ['manager1', 'staff1'] as Actor[]) {
+        const x = await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies[a], body: { status: 'cancelled' } })
+        check(x.status === (a === 'staff1' ? 403 : 400), `status "cancelled" is refused (${a}: ${x.status})`)
+      }
+      check((await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies.admin, query: { branch_id: 'pos1' }, body: { status: 'cancelled' } })).status === 400, 'status "cancelled" is refused for the admin too')
+      check((await stockOfP(pid)) === before - 3, 'none of that changed the stock')
+      check((await one(`SELECT count(*)::int n FROM inventory_movements WHERE reference_id = $1 AND movement_type = 'CANCELLATION_RESTOCK'`, [c0.body.invoice_no])).n === 0, 'and wrote no restock movement')
+      check((await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'completed' } })).status === 200, 'manager keeps the other status changes (completed)')
+      check((await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'pending' } })).status === 200, 'manager keeps the other status changes (pending)')
       check((await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'shipped' } })).status === 400, 'an unknown status is rejected (zod + CHECK)')
-      // cancel through the status dropdown path
-      const c1 = await sale('staff1', bill({}, 2))
-      const st = await call('PATCH', `/api/orders/${c1.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'cancelled' } })
-      check(st.status === 200 && st.body.order.status === 'cancelled' && (await stockOfP(pid)) === before, 'setting the status to cancelled restocks too (same transaction)')
-      // delete of a LIVE bill restocks first; delete of a cancelled one does not restock again
+      check((await call('PATCH', `/api/orders/${c0.body.order_id}/status`, { cookie: cookies.staff1, body: { status: 'completed' } })).status === 403, 'staff cannot change a status (view-only Order History)')
+      // a bill cancelled BEFORE the action was removed (legacy row, made through the SQL function) stays frozen and is never restocked twice
+      const lg = await sale('staff1', bill({}, 2))
+      await client.query(`SELECT public.cancel_order($1, 'pos1', 'manager', 'legacy')`, [lg.body.order_id])
+      check((await stockOfP(pid)) === before - 3, 'a legacy cancel gave its 2 items back once')
+      check((await call('PATCH', `/api/orders/${lg.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'completed' } })).status === 409, 'a legacy cancelled bill cannot be re-opened')
+      check((await call('DELETE', `/api/orders/${lg.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos1' } })).status === 200 && (await stockOfP(pid)) === before - 3, 'deleting that legacy cancelled bill does not restock a second time')
+      // the Admin deleting a LIVE bill restocks it once (the only restock path), and the bill is gone so it cannot repeat
       const c2 = await sale('staff1', bill({}, 4))
-      check((await stockOfP(pid)) === before - 4, 'another bill took 4')
-      check((await call('DELETE', `/api/orders/${c2.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos1' } })).status === 200 && (await stockOfP(pid)) === before, 'deleting a live bill puts its items back (no stock leak)')
+      check((await stockOfP(pid)) === before - 7, 'another bill took 4')
+      check((await call('DELETE', `/api/orders/${c2.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos1' } })).status === 200 && (await stockOfP(pid)) === before - 3, 'deleting a live bill puts its items back once (no stock leak)')
       check((await one(`SELECT count(*)::int n FROM orders WHERE id = $1`, [c2.body.order_id])).n === 0, 'and the bill is gone')
-      check((await call('DELETE', `/api/orders/${c0.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos1' } })).status === 200 && (await stockOfP(pid)) === before, 'deleting an already-cancelled bill does not restock a second time')
+      check((await call('DELETE', `/api/orders/${c2.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos1' } })).status === 404 && (await stockOfP(pid)) === before - 3, 'a second delete is a 404 and restocks nothing')
+      // put the shelf back for the later sections (c0 is a live bill with 3 items; remove it the same way)
+      check((await call('DELETE', `/api/orders/${c0.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos1' } })).status === 200 && (await stockOfP(pid)) === before, 'deleting the live 3-item bill restores the stock to the starting level')
       // variants, manual items and coupons
       const pv = await mkProduct('pos1', 5, 'Idem Variant Product')
       const vid = (await one(`INSERT INTO product_variants (product_id, variant_name, price, stock, branch_id, is_active) VALUES ($1, 'Large', 50, 5, 'pos1', true) RETURNING id`, [pv])).id
@@ -798,8 +800,8 @@ async function run() {
         items: [{ product_id: pv, variant_id: vid, quantity: 2, unit_price: 50, name: 'Idem Variant Product' }, { name: 'Loose item', quantity: 1, unit_price: 10, is_manual: true }] })
       check(Number((await one(`SELECT stock::numeric s FROM product_variants WHERE id = $1`, [vid])).s) === 3 && (await stockOfP(pv)) === 3, 'a variant sale takes the variant stock and updates the parent')
       check(Number((await one(`SELECT usage_count FROM coupons WHERE code = 'IDEM5' AND branch_id = 'pos1'`)).usage_count) === 1, 'the coupon use was counted')
-      const xv = await call('POST', `/api/orders/${cv.body.order_id}/cancel`, { cookie: cookies.manager1, body: {} })
-      check(xv.status === 200 && xv.body.restocked_items === 1, 'cancelling restocks the variant item only (the manual item has no stock)', JSON.stringify(xv.body).slice(0, 120))
+      const xv = await call('DELETE', `/api/orders/${cv.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos1' } })
+      check(xv.status === 200, 'the admin deleting a bill restocks the variant item only (the manual item has no stock)', JSON.stringify(xv.body).slice(0, 120))
       check(Number((await one(`SELECT stock::numeric s FROM product_variants WHERE id = $1`, [vid])).s) === 5 && (await stockOfP(pv)) === 5, 'variant and parent stock are back')
       check(Number((await one(`SELECT usage_count FROM coupons WHERE code = 'IDEM5' AND branch_id = 'pos1'`)).usage_count) === 0, 'the coupon use was given back')
 
@@ -886,6 +888,11 @@ async function run() {
       const listed = (advList.body.orders as any[]).find((o) => o.id === dA.body.order.id)
       check(listed && /^\d{4}-\d{2}-\d{2}$/.test(String(listed.expected_delivery_date)), 'a delivery date comes back as plain YYYY-MM-DD (it used to become a full timestamp that the screen showed as "Invalid Date")', JSON.stringify(listed?.expected_delivery_date))
     }
+    // ================================================================== P. ORDER RETURNS (replace the old cancel action): shared suite, all 3 branches
+    {
+      await returnsSuite({ branches: BRANCHES, cookies, call: (m, p, o) => call(m, p, o), q: (sql, params) => rows(sql, params), check, concurrent: false })
+    }
+
     // ================================================================== O. MANAGER: no Coupons management, Store Settings writes, branding upload or delete (Admin only)
     {
       const FAKE = '00000000-0000-4000-8000-000000000000'
@@ -964,6 +971,7 @@ async function run() {
           ['DELETE', `/api/categories/${cat[b]}`, 'delete a category'],
           ['POST', '/api/uploads/product-images', 'upload a product image'],
           ['DELETE', `/api/advance-orders/${FAKE}`, 'delete an advance order'],
+          ['PATCH', `/api/orders/${FAKE}/status`, 'change an order status (Order History is view-only)', { status: 'completed' }],
         ]
         for (const [method, path, what, body] of forbidden) {
           const st = await call(method as any, path, { cookie: cookies[staff], body })

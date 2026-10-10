@@ -6,6 +6,8 @@ import { formatCurrency } from '../lib/retail'
 
 export interface AnalyticsExportData {
   totalCompletedRevenue: number
+  /** refunds paid on the bills in this period (already deducted from totalCompletedRevenue) */
+  totalReturned?: number
   netProfit: number
   isProfitable: boolean
   totalExpenses: number
@@ -76,7 +78,8 @@ export function exportAnalyticsToCSV({ data, activeTab, datePreset, dateFrom, da
   if (activeTab === 'revenue') {
     rows.push(['--- REVENUE & PROFIT SUMMARY ---'])
     rows.push(['Metric', 'Value'])
-    rows.push(['Total Revenue (INR)', data.totalCompletedRevenue.toFixed(2)])
+    rows.push(['Net Revenue (INR, after returns)', data.totalCompletedRevenue.toFixed(2)])
+    rows.push(['Returned (INR, deducted on the original sale dates)', (data.totalReturned ?? 0).toFixed(2)])
     rows.push(['Total Expenses (INR)', data.totalExpenses.toFixed(2)])
     rows.push(['Net Profit / Loss (INR)', data.netProfit.toFixed(2)])
     rows.push(['Completed Bills Count', String(data.completedOrders)])
@@ -245,9 +248,9 @@ export async function exportAnalyticsToPDF({
       <!-- KPI Summary Cards Grid -->
       <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px;">
         <div style="background: #FBF9F4; border: 1px solid #E8D399; border-radius: 12px; padding: 12px 14px; min-height: 84px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box;">
-          <div style="font-size: 8.5px; font-weight: 800; text-transform: uppercase; color: #666; margin-bottom: 4px; letter-spacing: 0.3px;">Total Revenue</div>
+          <div style="font-size: 8.5px; font-weight: 800; text-transform: uppercase; color: #666; margin-bottom: 4px; letter-spacing: 0.3px;">${(data.totalReturned ?? 0) > 0 ? 'Net Revenue' : 'Total Revenue'}</div>
           <div style="font-size: 16px; font-weight: 900; color: ${THEME_PALETTE.primary}; line-height: 1.2;">${formatCurrency(data.totalCompletedRevenue)}</div>
-          <div style="font-size: 8px; color: #047857; font-weight: 700; margin-top: 4px;">POS & Walk-in sales</div>
+          <div style="font-size: 8px; color: #047857; font-weight: 700; margin-top: 4px;">${(data.totalReturned ?? 0) > 0 ? `After returns: ${formatCurrency(data.totalReturned ?? 0)} returned` : 'POS & Walk-in sales'}</div>
         </div>
         <div style="background: ${data.isProfitable ? '#ECFDF5' : '#FFF1F2'}; border: 1px solid ${data.isProfitable ? '#A7F3D0' : '#FECDD3'}; border-radius: 12px; padding: 12px 14px; min-height: 84px; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box;">
           <div style="font-size: 8.5px; font-weight: 800; text-transform: uppercase; color: ${data.isProfitable ? '#065F46' : '#9F1239'}; margin-bottom: 4px; letter-spacing: 0.3px;">${data.isProfitable ? 'Net Profit' : 'Net Loss'}</div>

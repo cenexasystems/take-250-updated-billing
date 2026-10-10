@@ -26,8 +26,9 @@ Legend: Y = allowed, N = 403, "own" = locked to the branch in the JWT (never fro
 | 16 | Coupon **validate/apply** at POS | Y any | Y own | Y own | applying a coupon in Pos is ungated |
 | 17 | Coupons **manage** (create/edit/delete, Coupons tab) | Y any | **N** (2026 change) | N | `coupons` in admin nav only |
 | 18 | Order history: list / view / print / share | Y any | Y own | Y own | `history` in `staffAllowedTabs` |
-| 19 | Order **status change** | Y any | Y own | N | `role === 'admin' ? <select> : <span>` (`Dashboard.tsx:3603, 3674`) |
+| 19 | Order **status change** (Pending / Completed. There is no Cancelled any more) | Y any | Y own (Pending / Completed only) | **N** (view only) | `role === 'admin' ? <select> : <span>` (`Dashboard.tsx:3603, 3674`) |
 | 20 | Order **delete** | Y any | **N** (2026 change) | N | delete button `role === 'admin'`. The staff branch of `deleteOrder` (prompt for hard-coded `<removed>`) is unreachable dead code, see Flag 1 |
+| 20b | Order **return** (Return button on a completed bill: items back to stock or damaged, refund, RET- receipt; `POST /api/orders/:id/return`, `/return/preview`, `GET /api/orders/:id/returns`) | Y any | Y own | Y own | new (2026): replaces the cancel action. Staff may return but nothing else in Order History |
 | 21 | Advance orders: create, list, update status, timeline, complete (`complete_advance_order_v2`). **Delete: Admin only** | Y any | Y own (no delete, 2026 change) | Y own (no delete, 2026 change) | `advance_orders` in `staffAllowedTabs`; `AdvanceOrders.tsx` has no role gate |
 | 22 | **Analytics Dashboard** (`pos_analytics` tab, `/pos-analytics`, `BillingAnalytics`, `analyticsExport`, their data endpoints incl. the order delete inside BillingAnalytics) | Y any | **N** | N | `pos_analytics` admin nav + `/pos-analytics` `AdminOnlyGuard`; `BillingAnalytics` `isAdmin`. Manager exclusion per your rule |
 | 23 | Expenses (categories, entries, summary metrics) | Y any | Y own | N | `/expenses` under `AdminOnlyGuard`; `expenses` only in admin nav |
@@ -66,7 +67,7 @@ Staff row, final:
 | Catalog | read only (`products`, `variants`, `categories`), no purchase cost |
 | Stock / price / product / variant / category / barcode generate-print-receive | **403** |
 | Advance orders | view, create, update, complete; **delete 403** |
-| Order history | view own branch; status change / cancel as decided earlier (rows 19-20: delete is Admin / Manager only) |
+| Order history | view own branch, **view only + Return** (no status change, no cancel, no delete; see "Order Returns replace Cancellation" below) |
 | Low-stock alert | popup + sound, fed by `GET /api/inventory/low-stock-alerts` (name, variant, quantity, threshold of the token's branch only) |
 
 
@@ -81,3 +82,12 @@ Manager row, final (everything else is unchanged):
 | Store settings write, logo / branding upload | **403** (Admin only). `GET /api/settings` (own branch, display data) stays for bills, PDFs, thermal receipts, sidebar logo and theme |
 | Advance order delete, Order delete (incl. the delete on WhatsApp Center online requests) | **403** (Admin only) |
 | Still Manager | advance orders view / create / update / complete, order history view / print / status / cancel, inventory, expenses, WhatsApp Center, product image upload |
+
+## Order Returns replace Cancellation (2026)
+
+- **Cancel is removed** (UI, `POST /api/orders/:id/cancel` and the `cancelled` status). Old cancelled bills stay as read-only history.
+- **Staff in Order History: view only + Return.** No status change, no delete, no cancel (403 / 404).
+- **Manager** keeps the Pending / Completed dropdown; **Admin** also keeps Delete.
+- **Return** is allowed to Staff, Manager and Admin, own branch only (Admin follows the branch switcher). Branch comes from the token.
+- **Stock can only be put back by**: a return (RETURN row), the Admin deleting a bill (only the never-returned units, see `cancel_order()` in migration 0011), or the advance-order delete. A return and a delete cannot restock the same unit twice.
+- Ledger (Movement Audit / Stock History) is Admin and Manager only; Staff has no ledger.

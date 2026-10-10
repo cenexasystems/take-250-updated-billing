@@ -56,9 +56,10 @@ export const PERMISSIONS = {
   'coupons.write':         { roles: A, scope: 'branch' as Scope },
   // orders (rows 18-20)
   'orders.read':           { roles: AMS, scope: 'branch' as Scope },
-  'orders.status':         { roles: AMS, scope: 'branch' as Scope },
+  'orders.status':         { roles: AM, scope: 'branch' as Scope }, // pending / completed only: nobody cancels, Staff is view-only
   'orders.delete':         { roles: A, scope: 'branch' as Scope },
-  'orders.cancel':         { roles: AMS, scope: 'branch' as Scope },
+  // returns replace the old cancel: Staff, Manager and Admin may return a completed bill of their own branch (Staff stays view-only otherwise)
+  'orders.return':         { roles: AMS, scope: 'branch' as Scope },
   // advance orders (row 21)
   'advance.read':          { roles: AMS, scope: 'branch' as Scope },
   'advance.write':         { roles: AMS, scope: 'branch' as Scope },

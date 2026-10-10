@@ -149,7 +149,8 @@ export const adminRoutes = [
       const r = await db.query(
         `SELECT b.id AS branch_id, b.short_label,
            (SELECT count(*)::int FROM public.orders o WHERE o.branch_id = b.id AND o.created_at >= date_trunc('day', now())) AS orders_today,
-           (SELECT COALESCE(sum(o.total),0) FROM public.orders o WHERE o.branch_id = b.id AND o.created_at >= date_trunc('day', now()) AND lower(o.status) <> 'cancelled') AS sales_today,
+           (SELECT COALESCE(sum(o.total - o.returned_amount),0) FROM public.orders o WHERE o.branch_id = b.id AND o.created_at >= date_trunc('day', now()) AND lower(o.status) <> 'cancelled') AS sales_today,
+           (SELECT COALESCE(sum(o.returned_amount),0) FROM public.orders o WHERE o.branch_id = b.id AND o.created_at >= date_trunc('day', now()) AND lower(o.status) <> 'cancelled') AS returned_today,
            (SELECT count(*)::int FROM public.products p WHERE p.branch_id = b.id AND p.is_active) AS active_products,
            (SELECT count(*)::int FROM public.products p WHERE p.branch_id = b.id AND p.is_active AND p.stock_quantity <= p.low_stock_alert) AS low_stock_products
          FROM public.branches b WHERE b.is_active ORDER BY b.sort_order`)
@@ -161,7 +162,8 @@ export const adminRoutes = [
     query: z.object({ from: stamp.optional(), to: stamp.optional() }).strict(),
     async handler({ db, query }) {
       const r = await db.query(
-        `SELECT branch_id, (created_at AT TIME ZONE 'UTC')::date AS day, count(*)::int AS orders, COALESCE(sum(total),0) AS total
+        `SELECT branch_id, (created_at AT TIME ZONE 'UTC')::date AS day, count(*)::int AS orders, COALESCE(sum(total),0) AS total, COALESCE(sum(returned_amount),0) AS returned,
+                COALESCE(sum(total - returned_amount),0) AS net_total
          FROM public.orders WHERE lower(status) <> 'cancelled' AND ($1::timestamptz IS NULL OR created_at >= $1) AND ($2::timestamptz IS NULL OR created_at <= $2)
          GROUP BY branch_id, 2 ORDER BY 2 DESC, branch_id`, [query.from ?? null, query.to ?? null])
       return { sales: r.rows }

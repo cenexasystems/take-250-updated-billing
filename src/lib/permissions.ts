@@ -50,15 +50,16 @@ export const NAV_ORDER: Record<Role, TabKey[]> = {
 export const GLOBAL_NAV: TabKey[] = ['business_overview', 'staff_memberships']
 
 export type Feature =
-  | 'inventory.delete' | 'catalog.edit' | 'advance.delete' | 'orders.status' | 'orders.delete' | 'settings.write' | 'coupons.manage'
+  | 'inventory.delete' | 'catalog.edit' | 'advance.delete' | 'orders.status' | 'orders.delete' | 'orders.return' | 'settings.write' | 'coupons.manage'
   | 'branch.switch' | 'passcodes.manage' | 'analytics.view' | 'global.view' | 'expenses.use'
 
 export const FEATURE_ACCESS: Record<Feature, Role[]> = {
   'inventory.delete': ['admin', 'manager'],
   'catalog.edit': ['admin', 'manager'],
   'advance.delete': ['admin'],
-  'orders.status': ['admin', 'manager', 'staff'],
+  'orders.status': ['admin', 'manager'],
   'orders.delete': ['admin'],
+  'orders.return': ['admin', 'manager', 'staff'],
   'settings.write': ['admin'],
   'coupons.manage': ['admin'],
   'expenses.use': ['admin', 'manager'],
@@ -73,8 +74,9 @@ export const FEATURE_SERVER_PERM: Record<Feature, string[]> = {
   'inventory.delete': ['inventory.delete'],
   'catalog.edit': ['products.write', 'variants.write', 'categories.create'],
   'advance.delete': ['advance.delete'],
-  'orders.status': ['orders.status', 'orders.cancel'],
+  'orders.status': ['orders.status'],
   'orders.delete': ['orders.delete'],
+  'orders.return': ['orders.return'],
   'settings.write': ['settings.write'],
   'coupons.manage': ['coupons.write', 'coupons.read'],
   'expenses.use': ['expenses.read', 'expenses.write'],

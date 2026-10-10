@@ -52,17 +52,10 @@ async function saleForKey(db: Db, branch: string, key: string) {
   return o ? { order_id: o.id, invoice_no: o.invoice_no, total: Number(o.total), replayed: true } : null
 }
 
-/** Cancel a bill in ONE transaction: lock it, refuse a second cancel, restock every item, write reversing stock movements. */
-async function cancelOrderTx(db: Db, branch: string, id: string, by: string, reason: string) {
-  return db.tx(async (t) => {
-    const cur = (await t.query(`SELECT status FROM public.orders WHERE id = $1 AND branch_id = $2 FOR UPDATE`, [id, branch])).rows[0]
-    if (!cur) throw notFound()
-    if (cur.status === 'cancelled') throw new ApiError(409, 'This order is already cancelled')
-    const r = await t.query(`SELECT public.cancel_order($1, $2, $3, $4) AS r`, [id, branch, by, reason])
-    const order = (await t.query(`SELECT * FROM public.orders WHERE id = $1 AND branch_id = $2`, [id, branch])).rows[0]
-    return { order, restocked_items: Number(r.rows[0].r.restocked_items) }
-  })
-}
+export const RETURN_REASONS = ['Wrong size', 'Defective / damaged', 'Customer changed mind', 'Wrong item billed', 'Other'] as const
+const returnLines = z.object({
+  items: z.array(z.object({ order_item_id: z.number().int().positive(), quantity: z.number().finite().gt(0).max(100000), restock: z.boolean().default(true) }).strict()).min(1).max(200),
+}).strict()
 
 const couponFields = {
   code: z.string().trim().min(1).max(60),
@@ -243,7 +236,7 @@ export const salesRoutes = [
       if (query.customer) conds.push(like('o.customer_name', query.customer.trim()))
       const where = conds.join(' AND ')
       const items = query.include_items
-        ? `, COALESCE((SELECT json_agg(i ORDER BY i.id) FROM public.order_items i WHERE i.order_id = o.id AND i.branch_id = o.branch_id), '[]'::json) AS order_items`
+        ? `, COALESCE((SELECT json_agg(to_jsonb(i) || jsonb_build_object('returned_quantity', COALESCE((SELECT SUM(r.quantity) FROM public.order_return_items r WHERE r.order_item_id = i.id AND r.branch_id = i.branch_id), 0)) ORDER BY i.id) FROM public.order_items i WHERE i.order_id = o.id AND i.branch_id = o.branch_id), '[]'::json) AS order_items`
         : ''
       const rows = await db.query(`SELECT o.*${items} FROM public.orders o WHERE ${where} ORDER BY o.created_at DESC LIMIT ${query.limit} OFFSET ${query.offset}`, p)
       const total = await db.query(`SELECT count(*)::int AS n FROM public.orders o WHERE ${where}`, p)
@@ -285,25 +278,56 @@ export const salesRoutes = [
   }),
   route({
     method: 'patch', path: '/api/orders/:id/status', perm: 'orders.status',
-    body: z.object({ status: z.enum(['pending', 'completed', 'cancelled']) }).strict(),
-    async handler({ db, branch, body, params, session }) {
-      // "cancelled" is not just a label: it restocks the items (see cancel_order), so it takes the cancel path
-      if (body.status === 'cancelled') return cancelOrderTx(db, branch!, params.id, session!.role, '')
+    body: z.object({ status: z.enum(['pending', 'completed']) }).strict(),
+    async handler({ db, branch, body, params }) {
       return db.tx(async (t) => {
         const cur = (await t.query(`SELECT status FROM public.orders WHERE id = $1 AND branch_id = $2 FOR UPDATE`, [params.id, branch])).rows[0]
         if (!cur) throw notFound()
-        // the stock of a cancelled bill has already gone back to the shelf: it cannot be revived
-        if (cur.status === 'cancelled') throw new ApiError(409, 'A cancelled order cannot be changed')
+        // a bill cancelled earlier (before the cancel action was removed) and a returned bill stay as they are: a return is its own record
+        if (['cancelled', 'returned', 'partially_returned'].includes(cur.status)) throw new ApiError(409, `A ${cur.status.replace('_', ' ')} order cannot be changed`)
         return { order: await updateRow(t, 'orders', params.id, branch!, { status: body.status }) }
       })
     },
   }),
-  // Cancel a bill: one transaction, stock back on the shelf, reversing stock movements, never a second time.
+  // ---- returns (replace the old cancel action) ----
+  // Everything money- or stock-related happens in SQL (process_order_return): one transaction, row locks, idempotent.
+  // Narrowest read the Return modal needs: the bill's lines with bought / already-returned quantities. No prices, no customer data.
   route({
-    method: 'post', path: '/api/orders/:id/cancel', perm: 'orders.cancel',
-    body: z.object({ reason: z.string().trim().max(300).default('') }).strict(),
+    method: 'get', path: '/api/orders/:id/returns', perm: 'orders.return',
+    async handler({ db, branch, params }) {
+      const o = (await db.query(`SELECT id, invoice_no, status, payment_method, payment_mode FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])).rows[0]
+      if (!o) throw notFound()
+      const items = await db.query(
+        `SELECT i.id AS order_item_id, i.name, i.variant_name, i.quantity, i.is_manual,
+                COALESCE((SELECT SUM(r.quantity) FROM public.order_return_items r WHERE r.order_item_id = i.id AND r.branch_id = i.branch_id), 0) AS returned_quantity
+           FROM public.order_items i WHERE i.order_id = $1 AND i.branch_id = $2 AND i.quantity > 0 ORDER BY i.id`, [params.id, branch])
+      const returns = await db.query(`SELECT public.order_return_json(r.id, r.branch_id) AS r FROM public.order_returns r WHERE r.order_id = $1 AND r.branch_id = $2 ORDER BY r.created_at, r.return_no`, [params.id, branch])
+      return { order: o, items: items.rows.map((x) => ({ ...x, quantity: Number(x.quantity), returned_quantity: Number(x.returned_quantity) })), returns: returns.rows.map((x) => x.r) }
+    },
+  }),
+  // the refund amount shown BEFORE confirming: the same SQL, dry run (nothing written)
+  route({
+    method: 'post', path: '/api/orders/:id/return/preview', perm: 'orders.return', body: returnLines,
     async handler({ db, branch, body, params, session }) {
-      return cancelOrderTx(db, branch!, params.id, session!.role, body.reason)
+      // another branch's (or a made-up) bill is a plain 404, never an SQL error text
+      if (!(await db.query(`SELECT 1 FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])).rows[0]) throw notFound()
+      const r = await db.query(`SELECT public.process_order_return($1, $2, $3::jsonb, '', '', 'cash', $4, NULL, true) AS r`, [params.id, branch, JSON.stringify(body.items), session!.role])
+      return r.rows[0].r
+    },
+  }),
+  route({
+    method: 'post', path: '/api/orders/:id/return', perm: 'orders.return', status: 201,
+    body: returnLines.extend({
+      reason: z.enum(RETURN_REASONS), note: z.string().trim().max(300).default(''),
+      refund_mode: z.enum(['cash', 'original']).default('cash'), idempotency_key: z.string().min(8).max(80).optional(),
+    }).strict(),
+    async handler({ db, branch, body, params, session }) {
+      return db.tx(async (t) => {
+        if (!(await t.query(`SELECT 1 FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])).rows[0]) throw notFound()
+        const r = await t.query(`SELECT public.process_order_return($1, $2, $3::jsonb, $4, $5, $6, $7, $8, false) AS r`,
+          [params.id, branch, JSON.stringify(body.items), body.reason, body.note, body.refund_mode, session!.role, body.idempotency_key ?? null])
+        return r.rows[0].r
+      })
     },
   }),
   route({
@@ -313,7 +337,8 @@ export const salesRoutes = [
         // deleting a live bill must not leak stock: it is cancelled (restocked, ledger reversed) first, then removed
         const cur = (await t.query(`SELECT status FROM public.orders WHERE id = $1 AND branch_id = $2 FOR UPDATE`, [params.id, branch])).rows[0]
         if (!cur) throw notFound()
-        if (cur.status !== 'cancelled') await t.query(`SELECT public.cancel_order($1, $2, $3, $4)`, [params.id, branch, session!.role, 'Order deleted'])
+        // (a fully returned bill already has all its stock back; a part-returned one gets only its never-returned units, see cancel_order)
+        if (!['cancelled', 'returned'].includes(cur.status)) await t.query(`SELECT public.cancel_order($1, $2, $3, $4)`, [params.id, branch, session!.role, 'Order deleted'])
         // same sequence the history screen ran: release a linked advance order, then delete the bill (items cascade)
         await t.query(`UPDATE public.advance_orders SET completed_order_id = NULL, invoice_number = NULL, status = 'cancelled' WHERE completed_order_id = $1 AND branch_id = $2`, [params.id, branch])
         const r = await t.query(`DELETE FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])

@@ -66,6 +66,8 @@ async function main() {
   const bodyText = async (page: Page) => (await page.locator('body').innerText()).replace(/\s+/g, ' ')
   const silence = async (page: Page) => { const b = page.getByRole('button', { name: /silence alarm/i }); if (await b.isVisible().catch(() => false)) await b.click().catch(() => undefined) }
   async function settle(page: Page) { await page.waitForLoadState('networkidle').catch(() => undefined); await sleep(700); await silence(page) }
+  // the low-stock alarm can pop up between two steps (it polls); silence it right before a sidebar click
+  const navClick = async (page: Page, name: RegExp) => { await silence(page); await page.getByRole('button', { name }).first().click({ timeout: 10000 }).catch(async () => { await silence(page); await page.getByRole('button', { name }).first().click() }) }
   async function waitText(page: Page, text: string, ms = 20000) { await page.getByText(text).first().waitFor({ timeout: ms }).catch(() => undefined); await sleep(300) }
   async function go(page: Page, p: string) { await page.goto(`${origin}${p}`); await settle(page) }
   const navLabels = async (page: Page) => (await page.locator('aside nav button').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim())
@@ -409,7 +411,7 @@ async function main() {
       const sel = p.locator('aside select')
       await sel.selectOption('pos1'); await settle(p)
       check(/ADMIN\s*·\s*Branch 1/i.test(await bodyText(p)), 'header badge follows the switcher: ADMIN · Branch 1')
-      await p.getByRole('button', { name: /stock & inventory/i }).first().click(); await settle(p); await waitText(p, 'E2E Item 1')
+      await navClick(p, /stock & inventory/i); await settle(p); await waitText(p, 'E2E Item 1')
       const t1 = await bodyText(p)
       check(t1.includes('E2E Item 1') && !t1.includes('E2E Item 2') && !t1.includes('E2E Item 3'), 'branch 1 inventory shows only branch 1 items')
       await shot(p, 'admin-branch1-inventory')
@@ -418,17 +420,17 @@ async function main() {
         const instant = await bodyText(p) // immediately after the switch: nothing from the old branch may remain
         check(!instant.includes('E2E Item 1') && !instant.includes(fx.pos1.code), `right after switching to branch ${n} nothing of branch ${n === 2 ? 1 : 2} is on screen`)
         await settle(p)
-        await p.getByRole('button', { name: /stock & inventory/i }).first().click(); await settle(p); await waitText(p, `E2E Item ${n}`)
+        await navClick(p, /stock & inventory/i); await settle(p); await waitText(p, `E2E Item ${n}`)
         const tn = await bodyText(p)
         check(tn.includes(`E2E Item ${n}`) && ![1, 2, 3].filter((x) => x !== n).some((x) => tn.includes(`E2E Item ${x}`)), `branch ${n} inventory shows only branch ${n} items`)
         check(new RegExp(`ADMIN\\s*·\\s*Branch ${n}`, 'i').test(tn), `header badge: ADMIN · Branch ${n}`)
         await shot(p, `admin-branch${n}-inventory`)
         // history in this branch
-        await p.getByRole('button', { name: /order history/i }).first().click(); await settle(p); await waitText(p, bills[B[n - 1]])
+        await navClick(p, /order history/i); await settle(p); await waitText(p, bills[B[n - 1]])
         const hn = await bodyText(p)
         check(hn.includes(bills[B[n - 1]]) && !Object.entries(bills).filter(([k]) => k !== B[n - 1]).some(([, no]) => hn.includes(no)), `branch ${n} order history shows only branch ${n}'s bill`)
         // Store Settings follows the branch selected in the switcher
-        await p.getByRole('button', { name: /store settings/i }).first().click(); await settle(p); await waitText(p, 'Profile')
+        await navClick(p, /store settings/i); await settle(p); await waitText(p, 'Profile')
         const rowsAdm = (await apiGet(p, `/api/branches`)).branches as any[]
         const lbl = rowsAdm.find((x) => x.id === `pos${n}`)?.short_label as string
         const lbl1 = rowsAdm.find((x) => x.id === 'pos1')?.short_label as string
@@ -437,7 +439,7 @@ async function main() {
       }
       // analytics is the admin's
       await sel.selectOption('pos1'); await settle(p)
-      await p.getByRole('button', { name: /analytics dashboard/i }).first().click(); await settle(p)
+      await navClick(p, /analytics dashboard/i); await settle(p)
       check(/Analytics|Revenue/i.test(await bodyText(p)), 'the admin can open the Analytics Dashboard')
       await shot(p, 'admin-analytics')
       // an admin session cannot be turned into another branch's staff session: forged branch is refused

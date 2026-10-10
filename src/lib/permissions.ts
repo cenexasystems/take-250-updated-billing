@@ -27,8 +27,8 @@ export const TAB_ACCESS: Record<TabKey, Role[]> = {
   history: ['admin', 'manager', 'staff'],
   branch_hub: ['staff'],
   expenses: ['admin', 'manager'],
-  coupons: ['admin', 'manager'],
-  store_settings: ['admin', 'manager'],
+  coupons: ['admin'],
+  store_settings: ['admin'],
   whatsapp: ['admin', 'manager'],
   products: ['admin', 'manager'],
   overview: ['admin', 'manager'],
@@ -44,7 +44,7 @@ export const TAB_ACCESS: Record<TabKey, Role[]> = {
 /** Sidebar order (the original's), per portal. Manager = admin's list minus the Analytics Dashboard. */
 export const NAV_ORDER: Record<Role, TabKey[]> = {
   admin: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'pos_analytics', 'coupons', 'store_settings'],
-  manager: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'coupons', 'store_settings'],
+  manager: ['billing', 'inventory', 'expenses', 'advance_orders', 'history'],
   staff: ['branch_hub', 'billing', 'advance_orders', 'history'],
 }
 export const GLOBAL_NAV: TabKey[] = ['business_overview', 'staff_memberships']
@@ -56,11 +56,11 @@ export type Feature =
 export const FEATURE_ACCESS: Record<Feature, Role[]> = {
   'inventory.delete': ['admin', 'manager'],
   'catalog.edit': ['admin', 'manager'],
-  'advance.delete': ['admin', 'manager'],
+  'advance.delete': ['admin'],
   'orders.status': ['admin', 'manager', 'staff'],
-  'orders.delete': ['admin', 'manager'],
-  'settings.write': ['admin', 'manager'],
-  'coupons.manage': ['admin', 'manager'],
+  'orders.delete': ['admin'],
+  'settings.write': ['admin'],
+  'coupons.manage': ['admin'],
   'expenses.use': ['admin', 'manager'],
   'branch.switch': ['admin'],
   'passcodes.manage': ['admin'],

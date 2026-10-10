@@ -24,15 +24,15 @@ Legend: Y = allowed, N = 403, "own" = locked to the branch in the JWT (never fro
 | 14 | Barcode Hub tab | N (hidden) | N | N | `barcode_hub` in `ADMIN_REMOVED_TABS`, not in `staffAllowedTabs`. **No endpoint** beyond rows 10-13 |
 | 15 | POS sale (`complete_pos_sale_with_inventory`), invoice number | Y any | Y own | Y own | `/pos` `PosGuard`; billing tab |
 | 16 | Coupon **validate/apply** at POS | Y any | Y own | Y own | applying a coupon in Pos is ungated |
-| 17 | Coupons **manage** (create/edit/delete, Coupons tab) | Y any | Y own | N | `coupons` in admin nav only |
+| 17 | Coupons **manage** (create/edit/delete, Coupons tab) | Y any | **N** (2026 change) | N | `coupons` in admin nav only |
 | 18 | Order history: list / view / print / share | Y any | Y own | Y own | `history` in `staffAllowedTabs` |
 | 19 | Order **status change** | Y any | Y own | N | `role === 'admin' ? <select> : <span>` (`Dashboard.tsx:3603, 3674`) |
-| 20 | Order **delete** | Y any | Y own | N | delete button `role === 'admin'`. The staff branch of `deleteOrder` (prompt for hard-coded `<removed>`) is unreachable dead code, see Flag 1 |
-| 21 | Advance orders: create, list, update status, timeline, complete (`complete_advance_order_v2`). **Delete: Admin / Manager only** | Y any | Y own | Y own (no delete, 2026 change) | `advance_orders` in `staffAllowedTabs`; `AdvanceOrders.tsx` has no role gate |
+| 20 | Order **delete** | Y any | **N** (2026 change) | N | delete button `role === 'admin'`. The staff branch of `deleteOrder` (prompt for hard-coded `<removed>`) is unreachable dead code, see Flag 1 |
+| 21 | Advance orders: create, list, update status, timeline, complete (`complete_advance_order_v2`). **Delete: Admin only** | Y any | Y own (no delete, 2026 change) | Y own (no delete, 2026 change) | `advance_orders` in `staffAllowedTabs`; `AdvanceOrders.tsx` has no role gate |
 | 22 | **Analytics Dashboard** (`pos_analytics` tab, `/pos-analytics`, `BillingAnalytics`, `analyticsExport`, their data endpoints incl. the order delete inside BillingAnalytics) | Y any | **N** | N | `pos_analytics` admin nav + `/pos-analytics` `AdminOnlyGuard`; `BillingAnalytics` `isAdmin`. Manager exclusion per your rule |
 | 23 | Expenses (categories, entries, summary metrics) | Y any | Y own | N | `/expenses` under `AdminOnlyGuard`; `expenses` only in admin nav |
 | 24 | Store settings read (own branch) | Y any | Y own | Y own | needed by theme/invoice for everyone |
-| 25 | Store settings **write** + logo/branding upload | Y any | Y own | N | `store_settings` admin nav only; `StoreSettingsView` target selector `role === 'admin'` |
+| 25 | Store settings **write** + logo/branding upload | Y any | **N** (2026 change) | N | `store_settings` admin nav only; `StoreSettingsView` target selector `role === 'admin'` |
 | 26 | Attendance + staff roster | N (hidden) | N | N | `attendance` in `ADMIN_REMOVED_TABS` and not in staff list; screens unreachable. Kept in DB, **no endpoint** unless you say otherwise |
 | 27 | WhatsApp Center (`/whatsapp-center`) | Y any | Y own | N | `AdminOnlyGuard` route |
 | 28 | **Passcode management** (Change passcodes) | Y | **N** | N | `StaffMemberships` / `credentialService` (global view), Admin-only; Manager exclusion per your rule |
@@ -68,3 +68,16 @@ Staff row, final:
 | Advance orders | view, create, update, complete; **delete 403** |
 | Order history | view own branch; status change / cancel as decided earlier (rows 19-20: delete is Admin / Manager only) |
 | Low-stock alert | popup + sound, fed by `GET /api/inventory/low-stock-alerts` (name, variant, quantity, threshold of the token's branch only) |
+
+
+## Manager change (2026): no Coupons, Store Settings or delete
+
+Manager row, final (everything else is unchanged):
+
+| Area | Manager |
+|---|---|
+| Sidebar | Store Dashboard & POS, Stock & Inventory, Expenses Ledger, Advance & Custom Orders, Order History. **No Coupons, no Store Settings** (deep links redirect to billing) |
+| Coupons manage (list, create, edit, delete, activate) | **403** (Admin only). Applying a code at billing keeps `GET /api/coupons/lookup` and `/api/coupons/available` (Manager and Staff, own branch) |
+| Store settings write, logo / branding upload | **403** (Admin only). `GET /api/settings` (own branch, display data) stays for bills, PDFs, thermal receipts, sidebar logo and theme |
+| Advance order delete, Order delete (incl. the delete on WhatsApp Center online requests) | **403** (Admin only) |
+| Still Manager | advance orders view / create / update / complete, order history view / print / status / cancel, inventory, expenses, WhatsApp Center, product image upload |

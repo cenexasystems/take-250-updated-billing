@@ -28,7 +28,7 @@ export const PERMISSIONS = {
   'lockouts.clear':        { roles: A, scope: 'none' as Scope },
   // store settings (rows 24, 25)
   'settings.read':         { roles: AMS, scope: 'branch' as Scope },
-  'settings.write':        { roles: AM, scope: 'branch' as Scope },
+  'settings.write':        { roles: A, scope: 'branch' as Scope },
   // catalog (rows 3, 4, 6). Staff only READS the catalog (the POS needs it to sell); creating / editing products, variants and
   // categories is Admin / Manager. categories.create is the inline "add category" inside product forms.
   'categories.read':       { roles: AMS, scope: 'branch' as Scope },
@@ -52,17 +52,17 @@ export const PERMISSIONS = {
   'pos.sale':              { roles: AMS, scope: 'branch' as Scope },
   'pos.unregistered':      { roles: AMS, scope: 'branch' as Scope },
   'coupons.lookup':        { roles: AMS, scope: 'branch' as Scope },
-  'coupons.read':          { roles: AM, scope: 'branch' as Scope },
-  'coupons.write':         { roles: AM, scope: 'branch' as Scope },
+  'coupons.read':          { roles: A, scope: 'branch' as Scope },
+  'coupons.write':         { roles: A, scope: 'branch' as Scope },
   // orders (rows 18-20)
   'orders.read':           { roles: AMS, scope: 'branch' as Scope },
   'orders.status':         { roles: AMS, scope: 'branch' as Scope },
-  'orders.delete':         { roles: AM, scope: 'branch' as Scope },
+  'orders.delete':         { roles: A, scope: 'branch' as Scope },
   'orders.cancel':         { roles: AMS, scope: 'branch' as Scope },
   // advance orders (row 21)
   'advance.read':          { roles: AMS, scope: 'branch' as Scope },
   'advance.write':         { roles: AMS, scope: 'branch' as Scope },
-  'advance.delete':        { roles: AM, scope: 'branch' as Scope },
+  'advance.delete':        { roles: A, scope: 'branch' as Scope },
   // expenses (row 23)
   'expenses.read':         { roles: AM, scope: 'branch' as Scope },
   'expenses.write':        { roles: AM, scope: 'branch' as Scope },
@@ -73,7 +73,7 @@ export const PERMISSIONS = {
   // uploads (rows 32-34)
   'uploads.product-images': { roles: AM, scope: 'branch' as Scope }, // only product forms upload these
   'uploads.invoices':      { roles: AMS, scope: 'branch' as Scope },
-  'uploads.branding':      { roles: AM, scope: 'branch' as Scope },
+  'uploads.branding':      { roles: A, scope: 'branch' as Scope },
   'uploads.avatars':       { roles: AM, scope: 'branch' as Scope },
   // polling replacement for realtime (row 36)
   'poll.stamps':           { roles: AMS, scope: 'branch' as Scope },

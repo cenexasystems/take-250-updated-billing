@@ -186,7 +186,8 @@ async function run() {
       check(!canOpenTab('manager', 'staff_memberships') && !canOpenTab('manager', 'business_overview'), 'manager has no passcode tab and no cross-branch tab')
       check(UI_ROLES.every((r) => REMOVED_TABS.every((t) => !canOpenTab(r, t) || t === 'branch_hub')), 'tabs the original removed are open to nobody (branch_hub only for staff)')
       check(canOpenTab('staff', 'branch_hub') && !canOpenTab('manager', 'branch_hub') && !canOpenTab('admin', 'branch_hub'), 'branch hub follows the original: staff only')
-      check(same(NAV_ORDER.manager, NAV_ORDER.admin.filter((t) => t !== 'pos_analytics')), 'manager sidebar = admin sidebar minus the Analytics Dashboard')
+      check(same(NAV_ORDER.manager, NAV_ORDER.admin.filter((t) => !['pos_analytics', 'coupons', 'store_settings'].includes(t))), 'manager sidebar = admin sidebar minus Analytics Dashboard, Coupons and Store Settings')
+      check(!canOpenTab('manager', 'coupons') && !canOpenTab('staff', 'coupons') && canOpenTab('admin', 'coupons') && !canOpenTab('manager', 'store_settings') && !canOpenTab('staff', 'store_settings') && canOpenTab('admin', 'store_settings'), 'Coupons and Store Settings tabs: admin only')
       check(same(NAV_ORDER.staff, ['branch_hub', 'billing', 'advance_orders', 'history']), 'staff sidebar: Store Hub, POS, Advance Orders, Order History (no Stock & Inventory)')
       check(!canOpenTab('staff', 'inventory') && canOpenTab('manager', 'inventory') && canOpenTab('admin', 'inventory'), 'Stock & Inventory tab: admin and manager only')
       check(UI_ROLES.every((r) => NAV_ORDER[r].every((t) => canOpenTab(r, t))), 'every sidebar entry is openable by its own role')
@@ -423,13 +424,13 @@ async function run() {
       // status / delete: manager yes (own branch only), staff no
       check((await call('PATCH', `/api/orders/${sale.body.order_id}/status`, { cookie: cookies.manager2, body: { status: 'cancelled' } })).status === 404, 'manager2 cannot change a branch 1 order status')
       check((await call('PATCH', `/api/orders/${sale.body.order_id}/status`, { cookie: cookies.manager1, body: { status: 'pending' } })).status === 200, 'manager1 can change its own order status')
-      check((await call('DELETE', `/api/orders/${sale.body.order_id}`, { cookie: cookies.manager3 })).status === 404, 'manager3 cannot delete a branch 1 order')
+      check((await call('DELETE', `/api/orders/${sale.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos3' } })).status === 404, 'admin on branch 3 cannot delete a branch 1 order')
       // coupons
       check((await call('GET', '/api/coupons/lookup', { cookie: cookies.staff1, query: { code: 'api10' } })).body.coupon?.percentage == 10, 'coupon lookup (case-insensitive) in own branch')
       await client.query(`INSERT INTO coupons (code, percentage, branch_id) VALUES ('ONLY2', 5, 'pos2')`)
       check((await call('GET', '/api/coupons/lookup', { cookie: cookies.staff1, query: { code: 'ONLY2' } })).status === 404, 'a branch 2 coupon code is not found at branch 1')
       check((await call('GET', '/api/coupons', { cookie: cookies.staff1 })).status === 403, 'staff cannot list/manage coupons')
-      check((await call('GET', '/api/coupons', { cookie: cookies.manager1 })).body.coupons.every((c: any) => c.branch_id === 'pos1'), 'manager1 coupon list is branch 1 only')
+      check((await call('GET', '/api/coupons', { cookie: cookies.admin, query: { branch_id: 'pos1' } })).body.coupons.every((c: any) => c.branch_id === 'pos1'), 'admin coupon list for branch 1 is branch 1 only')
       // unregistered item
       const un = await call('POST', '/api/pos/unregistered-product', { cookie: cookies.staff3, body: { name: 'Loose item', price: 25 } })
       check(un.status === 200 && (await one(`SELECT branch_id FROM products WHERE id = $1`, [un.body.id])).branch_id === 'pos3', 'unregistered product is created in the token\'s branch')
@@ -447,7 +448,7 @@ async function run() {
       check((await call('POST', `/api/advance-orders/${id}/status`, { cookie: cookies.staff1, body: { status: 'ready_for_delivery' } })).status === 200, 'staff1 updates its own advance order')
       check((await call('DELETE', `/api/advance-orders/${id}`, { cookie: cookies.staff2 })).status === 403, 'staff2 cannot delete advance orders at all (403)')
       check((await call('DELETE', `/api/advance-orders/${id}`, { cookie: cookies.staff1 })).status === 403, 'staff1 cannot delete its own advance order either (403)')
-      check((await call('DELETE', `/api/advance-orders/${id}`, { cookie: cookies.manager2 })).status === 404, 'manager2 cannot delete a branch 1 advance order (404)')
+      check((await call('DELETE', `/api/advance-orders/${id}`, { cookie: cookies.admin, query: { branch_id: 'pos2' } })).status === 404, 'admin on branch 2 cannot delete a branch 1 advance order (404)')
 
       // expenses: staff never, manager own branch, admin any
       const ex = await call('POST', '/api/expenses', { cookie: cookies.manager2, body: { expense_date: '2030-01-01', category_id: null, category_name: 'Rent', amount: 50 } })
@@ -460,11 +461,11 @@ async function run() {
 
       // settings
       const before1 = await one(`SELECT theme_color FROM store_settings WHERE branch_id = 'pos1'`)
-      const put = await call('PUT', '/api/settings', { cookie: cookies.manager2, body: { theme_color: '#112233', name: 'Branch Two Shop' } })
-      check(put.status === 200 && put.body.settings.branch_id === 'pos2' && put.body.settings.theme_color === '#112233', 'manager2 store-settings write lands in branch 2 (token branch)')
-      check((await one(`SELECT theme_color FROM store_settings WHERE branch_id = 'pos1'`)).theme_color === before1.theme_color, 'branch 1 settings untouched by manager2')
+      const put = await call('PUT', '/api/settings', { cookie: cookies.admin, query: { branch_id: 'pos2' }, body: { theme_color: '#112233', name: 'Branch Two Shop' } })
+      check(put.status === 200 && put.body.settings.branch_id === 'pos2' && put.body.settings.theme_color === '#112233', 'admin store-settings write lands in the selected branch 2')
+      check((await one(`SELECT theme_color FROM store_settings WHERE branch_id = 'pos1'`)).theme_color === before1.theme_color, 'branch 1 settings untouched by the branch 2 write')
       check((await call('PUT', '/api/settings', { cookie: cookies.staff1, body: { name: 'x' } })).status === 403, 'staff cannot write store settings')
-      check((await call('PUT', '/api/settings', { cookie: cookies.manager1, body: { theme_color: 'red' } })).status === 400, 'invalid theme colour rejected (zod)')
+      check((await call('PUT', '/api/settings', { cookie: cookies.admin, query: { branch_id: 'pos1' }, body: { theme_color: 'red' } })).status === 400, 'invalid theme colour rejected (zod)')
       check((await call('GET', '/api/settings', { cookie: cookies.staff3 })).body.settings.branch_id === 'pos3', 'staff3 reads branch 3 settings')
       const pa = await call('PUT', '/api/settings', { cookie: cookies.admin, query: { branch_id: 'pos3' }, body: { name: 'Branch Three' } })
       check(pa.body.settings.branch_id === 'pos3', 'admin writes settings for the selected branch only')
@@ -498,8 +499,8 @@ async function run() {
       const up = (a: Actor, kind: string, extra: Parameters<typeof call>[2] = {}) => call('POST', `/api/uploads/${kind}`, { cookie: cookies[a], raw: { buf: png, type: 'image/png' }, query: { filename: 'Logo Image.png' }, ...extra })
       const r1 = await up('manager1', 'product-images')
       check(r1.status === 201 && r1.body.path.startsWith('pos1/product-images/') && r1.body.path.endsWith('.png'), 'manager1 product image path starts with pos1/')
-      const r2 = await up('manager2', 'branding')
-      check(r2.status === 201 && r2.body.path.startsWith('pos2/branding/'), 'manager2 branding upload path starts with pos2/')
+      const r2 = await up('admin', 'branding', { query: { filename: 'Logo Image.png', branch_id: 'pos2' } })
+      check(r2.status === 201 && r2.body.path.startsWith('pos2/branding/'), 'admin branding upload (branch 2) path starts with pos2/')
       check((await up('staff1', 'product-images')).status === 403, 'staff cannot upload product images (no product forms for staff)')
       check((await up('staff1', 'branding')).status === 403, 'staff cannot upload branding')
       check((await up('staff1', 'avatars')).status === 403, 'staff cannot upload avatars')
@@ -517,7 +518,7 @@ async function run() {
       check((await up('manager1', 'product-images', { raw: { buf: Buffer.alloc(4 * 1024 * 1024, 1), type: 'image/png' } })).status === 201, 'an image of exactly 4 MB is accepted')
       const bigPdf = await up('staff1', 'invoices', { raw: { buf: Buffer.alloc(4 * 1024 * 1024 + 1, 1), type: 'application/pdf' } })
       check(bigPdf.status === 413 && bigPdf.body.error === 'PDF too large, max 4 MB', 'a PDF over 4 MB is refused with "PDF too large, max 4 MB"')
-      check((await up('manager1', 'branding', { raw: { buf: Buffer.alloc(4 * 1024 * 1024 + 1, 1), type: 'image/jpeg' } })).status === 413, 'branding images share the same 4 MB cap')
+      check((await up('admin', 'branding', { query: { filename: 'x.jpg', branch_id: 'pos1' }, raw: { buf: Buffer.alloc(4 * 1024 * 1024 + 1, 1), type: 'image/jpeg' } })).status === 413, 'branding images share the same 4 MB cap')
       check((await up('manager1', 'product-images', { body: undefined, raw: { buf: Buffer.alloc(0), type: 'image/png' } })).status === 400, 'empty upload refused')
       check((await up('manager1', 'product-images', { query: { filename: 'a.png', branch_id: 'pos2' } })).status === 400, 'upload refuses a client branch_id')
       check(blobCalls.every((c) => /^pos[123]\//.test(c.pathname)), 'every blob path in the run starts with a branch id')
@@ -610,7 +611,7 @@ async function run() {
       check(moved.category === 'Uncategorized' && moved.category_id === null, 'the products of a deleted category become Uncategorized')
       const dv = await call('POST', '/api/variants', { cookie: cookies.manager1, body: { product_id: prod.pos1, variant_name: 'Large', price: 1 } })
       check(dv.status === 409 && dv.body.error === 'A variant with this name already exists for this product.', 'duplicate variant name gives the original message', dv.body?.error ?? '')
-      const dc = await call('POST', '/api/coupons', { cookie: cookies.manager1, body: { code: ' api10 ', percentage: 5 } })
+      const dc = await call('POST', '/api/coupons', { cookie: cookies.admin, query: { branch_id: 'pos1' }, body: { code: ' api10 ', percentage: 5 } })
       check(dc.status === 409 && /already exists/.test(dc.body.error), 'duplicate coupon code is reported as already existing', dc.body?.error ?? '')
     }
 
@@ -786,9 +787,9 @@ async function run() {
       // delete of a LIVE bill restocks first; delete of a cancelled one does not restock again
       const c2 = await sale('staff1', bill({}, 4))
       check((await stockOfP(pid)) === before - 4, 'another bill took 4')
-      check((await call('DELETE', `/api/orders/${c2.body.order_id}`, { cookie: cookies.manager1 })).status === 200 && (await stockOfP(pid)) === before, 'deleting a live bill puts its items back (no stock leak)')
+      check((await call('DELETE', `/api/orders/${c2.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos1' } })).status === 200 && (await stockOfP(pid)) === before, 'deleting a live bill puts its items back (no stock leak)')
       check((await one(`SELECT count(*)::int n FROM orders WHERE id = $1`, [c2.body.order_id])).n === 0, 'and the bill is gone')
-      check((await call('DELETE', `/api/orders/${c0.body.order_id}`, { cookie: cookies.manager1 })).status === 200 && (await stockOfP(pid)) === before, 'deleting an already-cancelled bill does not restock a second time')
+      check((await call('DELETE', `/api/orders/${c0.body.order_id}`, { cookie: cookies.admin, query: { branch_id: 'pos1' } })).status === 200 && (await stockOfP(pid)) === before, 'deleting an already-cancelled bill does not restock a second time')
       // variants, manual items and coupons
       const pv = await mkProduct('pos1', 5, 'Idem Variant Product')
       const vid = (await one(`INSERT INTO product_variants (product_id, variant_name, price, stock, branch_id, is_active) VALUES ($1, 'Large', 50, 5, 'pos1', true) RETURNING id`, [pv])).id
@@ -885,6 +886,55 @@ async function run() {
       const listed = (advList.body.orders as any[]).find((o) => o.id === dA.body.order.id)
       check(listed && /^\d{4}-\d{2}-\d{2}$/.test(String(listed.expected_delivery_date)), 'a delivery date comes back as plain YYYY-MM-DD (it used to become a full timestamp that the screen showed as "Invalid Date")', JSON.stringify(listed?.expected_delivery_date))
     }
+    // ================================================================== O. MANAGER: no Coupons management, Store Settings writes, branding upload or delete (Admin only)
+    {
+      const FAKE = '00000000-0000-4000-8000-000000000000'
+      const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
+      for (const b of BRANCHES) {
+        const n = b.slice(-1); const mgr = `manager${n}` as Actor; const staff = `staff${n}` as Actor
+        const adminOnly: Array<[string, string, string, unknown?, boolean?]> = [
+          ['GET', '/api/coupons', 'coupon management list'],
+          ['POST', '/api/coupons', 'create a coupon', { code: `MGR${n}X`, percentage: 5 }],
+          ['PATCH', `/api/coupons/${FAKE}`, 'edit / activate a coupon', { is_active: false }],
+          ['DELETE', `/api/coupons/${FAKE}`, 'delete a coupon'],
+          ['PUT', '/api/settings', 'store settings write (profile, theme, contact, address)', { theme_color: '#112233' }],
+          ['POST', '/api/uploads/branding', 'branding / logo upload', undefined, true],
+          ['DELETE', `/api/advance-orders/${FAKE}`, 'delete an advance order'],
+          ['DELETE', `/api/orders/${FAKE}`, 'delete an order'],
+        ]
+        for (const [method, path, what, body, raw] of adminOnly) {
+          for (const a of [mgr, staff]) {
+            const x = await call(method, path, { cookie: cookies[a], body, ...(raw ? { raw: { buf: png, type: 'image/png' }, query: { filename: 'l.png' } } : {}) })
+            check(x.status === 403, `${a} (${b}) ${what}: ${method} ${path.replace(FAKE, ':id')} -> 403`, `status ${x.status}`)
+          }
+          const ad = await call(method, path, { cookie: cookies.admin, body, ...(raw ? { raw: { buf: png, type: 'image/png' }, query: { filename: 'l.png', branch_id: b } } : { query: { branch_id: b } }) })
+          check(ad.status !== 403 && ad.status !== 401, `admin keeps ${method} ${path.replace(FAKE, ':id')} on ${b} (not 403)`, `status ${ad.status}`)
+        }
+        check([400, 403].includes((await call('GET', '/api/coupons', { cookie: cookies[mgr], query: { branch_id: BRANCHES.find((o) => o !== b)! } })).status), `${mgr}: forged branch_id on coupons refused`)
+        // what Manager and Staff keep: apply a coupon at billing, read branch display settings
+        await client.query(`INSERT INTO coupons (code, percentage, branch_id) VALUES ($1, 10, $2) ON CONFLICT DO NOTHING`, [`CPN${n}`, b])
+        for (const a of [mgr, staff]) {
+          const lk = await call('GET', '/api/coupons/lookup', { cookie: cookies[a], query: { code: `cpn${n}` } })
+          check(lk.status === 200 && Number(lk.body.coupon?.percentage) === 10, `${a}: coupon code validation still works at billing`, JSON.stringify(lk.body).slice(0, 120))
+          check(!Array.isArray(lk.body.coupons), `${a}: validation returns one coupon, not a list`)
+          const av = await call('GET', '/api/coupons/available', { cookie: cookies[a] })
+          check(av.status === 200 && av.body.coupons.every((c: any) => Object.keys(c).every((k) => ['code', 'percentage'].includes(k))), `${a}: billing coupon chips carry only code and percentage`, JSON.stringify(av.body).slice(0, 160))
+          const st = await call('GET', '/api/settings', { cookie: cookies[a] })
+          check(st.status === 200 && st.body.settings.branch_id === b && !!st.body.settings.name, `${a}: branch settings READ still works`)
+          check(['name', 'address', 'phone', 'logo_url', 'theme_color'].every((k) => k in st.body.settings), `${a}: settings carry the invoice / theme display fields`)
+        }
+        check((await call('POST', '/api/uploads/product-images', { cookie: cookies[mgr], raw: { buf: png, type: 'image/png' }, query: { filename: 'p.png' } })).status === 201, `${mgr}: product image upload unchanged`)
+        const adv = await call('POST', '/api/advance-orders', { cookie: cookies[mgr], body: { customer_name: 'M', phone: '99', product_name: 'Card', total_amount: 100, deposit_amount: 20, expected_delivery_date: '2030-01-01', payment_method: 'cash' } })
+        check(adv.status === 201, `${mgr}: still creates an advance order`)
+        check((await call('POST', `/api/advance-orders/${adv.body.order.id}/status`, { cookie: cookies[mgr], body: { status: 'ready_for_delivery' } })).status === 200, `${mgr}: still updates it`)
+        check((await call('GET', '/api/orders', { cookie: cookies[mgr] })).status === 200, `${mgr}: order history view`)
+        check((await call('GET', '/api/inventory/movements', { cookie: cookies[mgr] })).status !== 403 && (await call('GET', '/api/expenses', { cookie: cookies[mgr] })).status === 200, `${mgr}: inventory and expenses unchanged`)
+        check((await call('GET', '/api/analytics/orders', { cookie: cookies[mgr] })).status === 403, `${mgr}: analytics still excluded`)
+        const dl = await call('DELETE', `/api/advance-orders/${adv.body.order.id}`, { cookie: cookies.admin, query: { branch_id: b } })
+        check(dl.status === 200, `admin deletes that advance order on ${b}`, `status ${dl.status}`)
+      }
+    }
+
     // ================================================================== N. STAFF: billing, advance orders, order history and the low-stock alert only
     {
       const SECRETS = ['purchase_price', 'unit_cost', 'cost_price']
@@ -920,7 +970,8 @@ async function run() {
           check(st.status === 403, `${staff} (${b}) ${what}: ${method} ${path.replace(FAKE, ':id')} -> 403`, `status ${st.status}`)
           if (method === 'DELETE' && path.includes('/api/categories/')) continue // (a real delete would remove the category later tests use)
           const mg = await call(method as any, path, { cookie: cookies[mgr], body })
-          check(mg.status !== 403 && mg.status !== 401, `${mgr} (${b}) keeps ${method} ${path.replace(FAKE, ':id')} (not 403)`, `status ${mg.status}`)
+          if (path.startsWith('/api/advance-orders/')) check(mg.status === 403, `${mgr} (${b}) cannot delete an advance order either (Admin only since the manager change)`, `status ${mg.status}`)
+          else check(mg.status !== 403 && mg.status !== 401, `${mgr} (${b}) keeps ${method} ${path.replace(FAKE, ':id')} (not 403)`, `status ${mg.status}`)
         }
         // --- what Staff keeps: sell from the POS, scan, advance orders, order history, the low-stock alert
         const own = (rowsList: any[]) => rowsList.every((r) => r.branch_id === b)

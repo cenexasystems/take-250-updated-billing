@@ -448,7 +448,7 @@ export default function Dashboard() {
       const [cRes, oRes, couponRes, expList] = await Promise.all([
         api<{ categories: unknown[] }>('GET', '/api/categories', { branchId: branch }),
         api<{ orders: Array<Record<string, unknown>> }>('GET', '/api/orders', { query: { include_items: 1, limit: 1000 }, branchId: branch }),
-        powers ? api<{ coupons: unknown[] }>('GET', '/api/coupons', { branchId: branch }) : Promise.resolve({ coupons: [] as unknown[] }),
+        canOpenTab(useAdminAuthStore.getState().role, 'coupons') ? api<{ coupons: unknown[] }>('GET', '/api/coupons', { branchId: branch }) : Promise.resolve({ coupons: [] as unknown[] }),
         powers ? expenseService.getExpenses(branch) : Promise.resolve([] as ExpenseRecord[]),
       ])
       const mappedOrders = oRes.orders.map(r => toDashboardOrder({ ...r, branch: r.branch_id }))
@@ -900,7 +900,7 @@ export default function Dashboard() {
 
 
   const loadCoupons = useCallback(async () => {
-    if (!hasAdminPowers(useAdminAuthStore.getState().role)) return
+    if (!canOpenTab(useAdminAuthStore.getState().role, 'coupons')) return
     try {
       const res = await api<{ coupons: unknown[] }>('GET', '/api/coupons', { branchId: branch })
       setCoupons((res.coupons || []) as DashboardCoupon[])
@@ -2220,9 +2220,11 @@ export default function Dashboard() {
                                     <option value="contacted">{l('Contacted', 'தொடர்பு')}</option>
                                     <option value="completed">{l('Completed', 'முடிந்தது')}</option>
                                   </select>
+                                  {can(role, 'orders.delete') && (
                                   <button onClick={() => void deleteOrder(order.id, order.invoice_no)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Delete Order">
                                     <Trash2 size={14} />
                                   </button>
+                                  )}
                                 </div>
                               </td>
                               <td className="px-4 py-3 text-center">

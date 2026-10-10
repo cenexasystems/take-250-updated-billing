@@ -11,7 +11,10 @@ export const advanceRoutes = [
   route({
     method: 'get', path: '/api/advance-orders', perm: 'advance.read',
     async handler({ db, branch }) {
-      const r = await db.query(`SELECT * FROM public.advance_orders WHERE branch_id = $1 ORDER BY created_at DESC`, [branch])
+      // bill_returned: a return was processed on the completed bill (the advance order record itself is never changed by a return)
+      const r = await db.query(
+        `SELECT a.*, EXISTS (SELECT 1 FROM public.order_returns r WHERE r.order_id = a.completed_order_id AND r.branch_id = a.branch_id) AS bill_returned
+           FROM public.advance_orders a WHERE a.branch_id = $1 ORDER BY a.created_at DESC`, [branch])
       return { orders: r.rows }
     },
   }),

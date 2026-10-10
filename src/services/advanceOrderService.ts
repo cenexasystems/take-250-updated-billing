@@ -28,6 +28,8 @@ export type AdvanceOrder = {
   completed_order_id: string | null
   invoice_number: string | null
   final_payment_method: string | null
+  /** a return was processed on the completed bill (shown as a note; the advance order itself is unchanged) */
+  bill_returned?: boolean
   branch: PosBranch
 }
 
@@ -59,6 +61,7 @@ const normalizeOrder = (row: Record<string, unknown>): AdvanceOrder => ({
   completed_order_id: row.completed_order_id ? String(row.completed_order_id) : null,
   invoice_number: row.invoice_number ? String(row.invoice_number) : null,
   final_payment_method: row.final_payment_method ? String(row.final_payment_method) : null,
+  bill_returned: Boolean(row.bill_returned),
   branch: (['pos1', 'pos2', 'pos3'].includes(String(row.branch_id ?? row.branch)) ? String(row.branch_id ?? row.branch) : 'pos1') as PosBranch,
 })
 

@@ -220,6 +220,23 @@ export async function returnsSuite(c: ReturnsCtx) {
     check((await call('GET', '/api/returns', { cookie: cookies[mgr], query: { mode: 'original' } })).body.returns.every((x: any) => x.refund_mode === 'original'), `${L} the refund-mode filter works`)
     check((await call('GET', '/api/returns', { cookie: cookies[mgr], query: { branch_id: other } })).status === 400, `${L} a forged ?branch_id is refused`)
 
+    // ================= 13. a return on an ADVANCE-ORDER bill is allowed; the advance order record itself does not change
+    const adv = await call('POST', '/api/advance-orders', { cookie: cookies[staff], body: { customer_name: 'Ret Adv', phone: '9876500011', product_name: 'Custom blouse', total_amount: 500, deposit_amount: 100, expected_delivery_date: '2030-01-01', payment_method: 'cash' } })
+    const advId = adv.body.order?.id
+    const done = await call('POST', `/api/advance-orders/${advId}/complete`, { cookie: cookies[staff], body: { payment_method: 'cash', final_amount: 400 } })
+    check(adv.status === 201 && done.status === 200, `${L} fixture: an advance order is created and completed`, `${adv.status}/${done.status} ${JSON.stringify(done.body).slice(0, 100)}`)
+    const advBefore = (await call('GET', '/api/advance-orders', { cookie: cookies[mgr] })).body.orders.find((o: any) => o.id === advId)
+    check(advBefore?.bill_returned === false, `${L} before any return the advance order shows no return flag`)
+    const advBillId = advBefore.completed_order_id
+    const advItems = await items(advBillId)
+    const advRet = await ret(staff, advBillId, [{ order_item_id: advItems[0].id, quantity: 1 }])
+    check(advRet.status === 201 && num(advRet.body.refund_amount) > 0, `${L} STAFF can return the advance-order bill`, JSON.stringify(advRet.body).slice(0, 140))
+    const advAfter = (await call('GET', '/api/advance-orders', { cookie: cookies[mgr] })).body.orders.find((o: any) => o.id === advId)
+    check(advAfter.bill_returned === true, `${L} the advance order now carries the "bill returned" flag (the UI shows the note)`)
+    const keep = ['status', 'deposit_amount', 'total_amount', 'remaining_balance', 'completed_order_id', 'invoice_number', 'final_payment_method', 'deposit_id']
+    check(keep.every((k) => String(advAfter[k]) === String(advBefore[k])), `${L} deposits and the advance order record are unchanged by the return`, keep.filter((k) => String(advAfter[k]) !== String(advBefore[k])).join())
+    check((await call('GET', '/api/advance-orders', { cookie: cookies[mgr] })).body.orders.filter((o: any) => o.id !== advId).every((o: any) => o.bill_returned === false), `${L} other advance orders show no flag`)
+
     // another branch's return numbers are separate counters
     check(num((await one(`SELECT count(*)::int n FROM order_returns r JOIN orders o ON o.id = r.order_id AND o.branch_id = r.branch_id WHERE r.branch_id <> o.branch_id`)).n) === 0, `${L} every return belongs to its bill's own branch`)
   }

@@ -366,6 +366,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
                       <option value="ready_for_delivery">Ready to Collect</option>
                       <option value="cancelled">Cancelled</option>
                     </select>
+                    {order.bill_returned && <span data-testid="advance-bill-returned" className="mt-1 block w-fit rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700" title="A return was processed on the bill. Deposits and the advance order record are unchanged.">Bill returned</span>}
                   </td>
                   <td className="px-4 py-3.5 align-middle whitespace-nowrap">
                     <div className="flex items-center gap-1.5">
@@ -665,6 +666,13 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
                 </div>
               ))}
             </div>
+
+            {selected.bill_returned && (
+              <div data-testid="advance-return-note" className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                <p className="text-[10px] font-black uppercase text-amber-700">Return</p>
+                <p className="mt-1 text-sm text-[#273126] font-medium">A return was processed on the bill. Deposits and the advance order record are unchanged.</p>
+              </div>
+            )}
 
             {selected.remarks && (
               <div className="rounded-xl border border-violet-200 bg-violet-50 p-3.5">

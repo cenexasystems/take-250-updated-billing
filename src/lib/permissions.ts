@@ -6,7 +6,7 @@
  *
  *  admin   original admin: all branches, global views, analytics, passcode management
  *  manager original admin powers locked to ONE branch; no analytics, no passcode management, no cross-branch views
- *  staff   original staff permissions, locked to one branch
+ *  staff   locked to one branch: Billing (POS), Advance Orders (no delete), Order History and the low-stock alert; NO stock screen
  */
 export type Role = 'admin' | 'manager' | 'staff'
 export const ROLES: Role[] = ['admin', 'manager', 'staff']
@@ -22,7 +22,7 @@ export const REMOVED_TABS: TabKey[] = ['branch_hub', 'categories', 'attendance',
 /** Who may open each tab. Removed tabs are listed with an empty role list except branch_hub (the original staff landing tile page). */
 export const TAB_ACCESS: Record<TabKey, Role[]> = {
   billing: ['admin', 'manager', 'staff'],
-  inventory: ['admin', 'manager', 'staff'],
+  inventory: ['admin', 'manager'], // Stock & Inventory: Staff sells from the POS but has no stock screen
   advance_orders: ['admin', 'manager', 'staff'],
   history: ['admin', 'manager', 'staff'],
   branch_hub: ['staff'],
@@ -45,16 +45,18 @@ export const TAB_ACCESS: Record<TabKey, Role[]> = {
 export const NAV_ORDER: Record<Role, TabKey[]> = {
   admin: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'pos_analytics', 'coupons', 'store_settings'],
   manager: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'coupons', 'store_settings'],
-  staff: ['branch_hub', 'billing', 'inventory', 'advance_orders', 'history'],
+  staff: ['branch_hub', 'billing', 'advance_orders', 'history'],
 }
 export const GLOBAL_NAV: TabKey[] = ['business_overview', 'staff_memberships']
 
 export type Feature =
-  | 'inventory.delete' | 'orders.status' | 'orders.delete' | 'settings.write' | 'coupons.manage'
+  | 'inventory.delete' | 'catalog.edit' | 'advance.delete' | 'orders.status' | 'orders.delete' | 'settings.write' | 'coupons.manage'
   | 'branch.switch' | 'passcodes.manage' | 'analytics.view' | 'global.view' | 'expenses.use'
 
 export const FEATURE_ACCESS: Record<Feature, Role[]> = {
   'inventory.delete': ['admin', 'manager'],
+  'catalog.edit': ['admin', 'manager'],
+  'advance.delete': ['admin', 'manager'],
   'orders.status': ['admin', 'manager', 'staff'],
   'orders.delete': ['admin', 'manager'],
   'settings.write': ['admin', 'manager'],
@@ -69,6 +71,8 @@ export const FEATURE_ACCESS: Record<Feature, Role[]> = {
 /** Each UI feature and the server permission key that guards its API call (checked by the API tests). */
 export const FEATURE_SERVER_PERM: Record<Feature, string[]> = {
   'inventory.delete': ['inventory.delete'],
+  'catalog.edit': ['products.write', 'variants.write', 'categories.create'],
+  'advance.delete': ['advance.delete'],
   'orders.status': ['orders.status', 'orders.cancel'],
   'orders.delete': ['orders.delete'],
   'settings.write': ['settings.write'],

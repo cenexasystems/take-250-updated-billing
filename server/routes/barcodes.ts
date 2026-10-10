@@ -50,7 +50,7 @@ export async function lookupBarcode(db: Db, branch: string, raw: string) {
 
 export const barcodeRoutes = [
   route({
-    method: 'get', path: '/api/barcodes/lookup', perm: 'barcodes.read',
+    method: 'get', path: '/api/barcodes/lookup', perm: 'barcodes.lookup',
     query: z.object({ code: z.string().min(1).max(100) }).strict(),
     async handler({ db, branch, query }) {
       const record = await lookupBarcode(db, branch!, query.code)

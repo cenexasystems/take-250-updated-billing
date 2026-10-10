@@ -158,7 +158,7 @@ async function main() {
       const st = await loginAs('staff', i)
       const page = st.page
       const nav = (await navLabels(page)).join(' | ')
-      check(/Store Dashboard & POS/.test(nav) && /Stock & Inventory/.test(nav) && /Advance Orders/.test(nav) && /Order History/.test(nav), 'staff sees POS, Stock, Advance Orders, Order History', nav)
+      check(/Store Hub/.test(nav) && /Store Dashboard & POS/.test(nav) && /Advance Orders/.test(nav) && /Order History/.test(nav) && !/Stock & Inventory/.test(nav), 'staff sidebar: Store Hub, POS, Advance Orders, Order History and NO Stock & Inventory', nav)
       check(!/Expenses|Analytics|Coupons|Store Settings|Staff & Memberships|Business Overview/.test(nav), 'staff sees none of Expenses / Analytics / Coupons / Settings / Passcodes / Global', nav)
       const staffBody = await bodyText(page)
       check(/\bSTAFF\b/.test(staffBody) && !/Branch\s*\d/i.test(staffBody), 'staff header badge reads just STAFF and the screen never says Branch 1/2/3')
@@ -171,25 +171,19 @@ async function main() {
       const apiBlocked = await Promise.all(['/api/expenses', '/api/analytics/orders', '/api/admin/passcodes', '/api/global/overview'].map(async (p) => (await page.request.get(`${origin}${p}`)).status()))
       check(apiBlocked.every((s) => s === 403), 'the API also answers 403 to staff for expenses / analytics / passcodes / global', apiBlocked.join(','))
 
-      // stock list: only this branch's items
+      // Staff has NO stock screen: the deep link lands on billing, the Store Hub has no Stock Control button, the alert is plain text
       await go(page, '/dashboard?tab=inventory')
       const inv = await bodyText(page)
-      check(inv.includes(me.name) && inv.includes(me.code), `inventory shows this branch's item and its ${me.code.slice(0, 2)} barcode`)
-      check(![1, 2, 3].filter((n) => n !== i + 1).some((n) => inv.includes(`E2E Item ${n}`)), "inventory shows none of the other branches' items")
-      check(!inv.includes(other.code), "inventory shows none of the other branches' barcodes")
-      await shot(page, `staff-${b}-inventory`)
-
-      // receive stock in the UI: Adjust -> Restock +10
-      await page.getByRole('button', { name: /^adjust$/i }).first().click()
-      await page.getByRole('button', { name: /^\+10$/ }).click()
-      await page.getByRole('button', { name: /^update \(\+10\)/i }).click()
-      await sleep(2500)
-      const afterRestock = await stockOf(page, me.name)
-      check(afterRestock === 60, `restock +10 in the browser changes this branch's stock (50 -> ${afterRestock})`)
-      const touched = await pool.query(`SELECT DISTINCT branch_id FROM inventory_movements WHERE product_id = $1`, [me.productId])
-      check(touched.rows.every((r) => r.branch_id === b), 'the stock movement was recorded in this branch only')
-      const others = await pool.query(`SELECT name, stock_quantity::numeric s FROM products WHERE name LIKE 'E2E Item %' AND branch_id <> $1`, [b])
-      check(others.rows.every((r) => Number(r.s) === 50 || Number(r.s) === 60 || Number(r.s) === 59), "the other branches' stock was not touched by this restock", JSON.stringify(others.rows))
+      check(!/Stock Management|Add \/ Edit Products|Analytics & Reports|Total SKUs|Stock Valuation/i.test(inv) && !inv.includes(me.code), 'staff: ?tab=inventory shows no stock screen')
+      check(/Current Order|Order Items|Store Dashboard/i.test(inv) && inv.trim().length > 200, 'staff: the stock deep link lands on the billing page, not a blank page')
+      await go(page, '/dashboard?tab=branch_hub')
+      const hub = await bodyText(page)
+      check(/Open Store Dashboard & POS/.test(hub) && /Advance Orders/.test(hub) && !/Stock Control/i.test(hub), 'staff Store Hub: POS and Advance Orders buttons, no Stock Control button')
+      check((await page.getByRole('button', { name: /open stock control/i }).count()) === 0, 'staff Store Hub: the alert text has no "Open Stock Control" link')
+      await shot(page, `staff-${b}-sidebar-and-store-hub`)
+      const invApi = await Promise.all(['/api/inventory/movements', '/api/inventory/low-stock', '/api/barcodes'].map(async (p) => (await page.request.get(`${origin}${p}`)).status()))
+      check(invApi.every((s) => s === 403), 'staff: stock history, full stock list and barcode registry answer 403', invApi.join(','))
+      check((await page.request.get(`${origin}/api/inventory/low-stock-alerts`)).status() === 200, 'staff: the narrow low-stock alert endpoint answers 200')
 
       // POS: wrong-branch scan first, then the right one
       await go(page, '/pos')
@@ -222,7 +216,7 @@ async function main() {
       bills[b] = invNo
       const orders = (await apiGet(page, `/api/orders?q=${invNo}`)).orders as any[]
       check(orders.length === 1 && orders[0].branch_id === b && Number(orders[0].total) === me.price, `the bill is stored in ${b} with the right total`)
-      check((await stockOf(page, me.name)) === 59, 'the sale reduced stock by exactly 1 in this branch (60 -> 59)')
+      check((await stockOf(page, me.name)) === 49, 'the sale reduced stock by exactly 1 in this branch (50 -> 49)')
 
       // thermal receipt preview: capture the print iframe
       await page.evaluate(() => {

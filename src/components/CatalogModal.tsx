@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Search, ShoppingBag, Edit2, Trash2 } from 'lucide-react'
-import { useProductStore, type Product, type PosBranch } from '../store/store'
+import { useProductStore, useAdminAuthStore, type Product, type PosBranch } from '../store/store'
+import { can } from '../lib/permissions'
 import { api } from '../lib/apiClient'
 import { useBodyScrollLock } from '../hooks/useBodyScrollLock'
 
@@ -16,6 +17,7 @@ type CategoryOption = { id: string | number; name_en: string; is_active?: boolea
 
 export default function CatalogModal({ isOpen, branch, onClose, onAdd }: CatalogModalProps) {
   const { fetchProducts, products, loading, error } = useProductStore()
+  const role = useAdminAuthStore((s) => s.role)
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState('All')
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
@@ -242,6 +244,7 @@ export default function CatalogModal({ isOpen, branch, onClose, onAdd }: Catalog
                             {product.category}
                           </span>
                         </div>
+                        {can(role, 'catalog.edit') && (
                         <div className="flex items-center gap-1 shrink-0">
                           <button
                             type="button"
@@ -260,6 +263,7 @@ export default function CatalogModal({ isOpen, branch, onClose, onAdd }: Catalog
                             <Trash2 size={13} />
                           </button>
                         </div>
+                        )}
                       </div>
                     </div>
                   ))}

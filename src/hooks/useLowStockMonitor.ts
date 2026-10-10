@@ -28,13 +28,26 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
       const targets: Array<PosBranch | undefined> = checkedBranch
         ? [checkedBranch]
         : role === 'admin' ? (allBranchIds.length ? allBranchIds : (['pos1', 'pos2', 'pos3'] as PosBranch[])) : [undefined]
+      const flagged: LowStockItem[] = []
+
+      if (role === 'staff') {
+        // Staff has no stock screen and may not read the stock list: the server answers with ONLY the low items
+        // (name, quantity, threshold) of the staff member's own branch, already filtered by the same rules as below.
+        const res = await api<{ items: Array<{ id: string; name: string; variant_name: string | null; quantity: number; threshold: number }> }>('GET', '/api/inventory/low-stock-alerts')
+          .catch((err) => { console.warn('Low stock check warning:', err); return { items: [] } })
+        for (const it of res.items) {
+          flagged.push({ id: it.id, name: it.name, ...(it.variant_name ? { variantName: it.variant_name } : {}), stock: Number(it.quantity) || 0, alertThreshold: Number(it.threshold) || 5 })
+        }
+        if (!enabledRef.current || branchRef.current !== checkedBranch) return
+        setLowStockItems(flagged)
+        return
+      }
+
       const results = await Promise.all(targets.map((b) =>
         api<{ products: Array<Record<string, any>>; variants: Array<Record<string, any>> }>('GET', '/api/inventory/low-stock', { branchId: b })
           .catch((err) => { console.warn('Low stock check warning:', err); return { products: [], variants: [] } })))
       const prods = results.flatMap((r) => r.products)
       const variants = results.flatMap((r) => r.variants)
-
-      const flagged: LowStockItem[] = []
 
       // Check standard products (Only alert for actual inventory running low: 0 < stock <= threshold)
       for (const p of prods || []) {

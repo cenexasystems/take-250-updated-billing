@@ -11,6 +11,7 @@ import { advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/adv
 import { useAdminAuthStore, useProductStore, resolveBranch } from '../store/store'
 import { fetchVariantsByProduct, type ProductVariant } from '../services/variantService'
 import { formatDateDMY } from '../lib/formatDate'
+import { can } from '../lib/permissions'
 import { getPeriodBounds } from '../lib/dateRanges'
 import {
   addAdvanceEvent, completeAdvanceOrder, createAdvanceOrder, getAdvanceOrderHistory, listAdvanceOrders, updateAdvanceStatus, deleteAdvanceOrder,
@@ -430,7 +431,8 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
                         <Eye size={15}/>
                       </button>
 
-                      {/* Delete Icon */}
+                      {/* Delete Icon (Admin / Manager only: Staff cannot delete advance orders) */}
+                      {can(role, 'advance.delete') && (
                       <button
                         type="button"
                         onClick={() => handleDeleteOrder(order.id, order.customer_name)}
@@ -439,6 +441,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
                       >
                         <Trash2 size={15}/>
                       </button>
+                      )}
 
                       {/* Print Receipt / Invoice */}
                       <button

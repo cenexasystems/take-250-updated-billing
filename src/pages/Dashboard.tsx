@@ -1611,7 +1611,6 @@ export default function Dashboard() {
     ? [
         { id: 'branch_hub',     icon: <Store size={18} />,        label: 'Store Hub' },
         { id: 'billing',        icon: <ShoppingCart size={18} />, label: 'Store Dashboard & POS' },
-        { id: 'inventory',      icon: <Layers size={18} />,       label: 'Stock & Inventory' },
         { id: 'advance_orders', icon: <FileText size={18} />,     label: 'Advance Orders' },
         { id: 'history',        icon: <List size={18} />,         label: 'Order History' },
       ]

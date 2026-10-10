@@ -77,6 +77,10 @@ const categoryFields = {
   sort_order: z.number().int(),
 }
 
+/** Staff reads the catalog to SELL (names, prices, stock level, barcodes) but never the cost the shop paid. */
+const hideCost = <T extends Record<string, any>>(rows: T[], role?: string) =>
+  role === 'staff' ? rows.map(({ purchase_price: _cost, ...rest }) => rest) : rows
+
 export const catalogRoutes = [
   // ---- categories ----
   route({
@@ -125,20 +129,20 @@ export const catalogRoutes = [
   route({
     method: 'get', path: '/api/products', perm: 'products.read',
     query: z.object({ include_inactive: z.enum(['1', 'true']).optional(), search: z.string().max(100).optional() }).strict(),
-    async handler({ db, branch, query }) {
+    async handler({ db, branch, query, session }) {
       const r = await db.query(
         `SELECT * FROM public.products WHERE branch_id = $1 AND ($2::boolean IS TRUE OR is_active)
            AND ($3::text IS NULL OR name ILIKE '%' || $3 || '%' OR sku ILIKE '%' || $3 || '%' OR barcode ILIKE '%' || $3 || '%')
          ORDER BY sort_order, id`, [branch, !!query.include_inactive, query.search ?? null])
-      return { products: r.rows }
+      return { products: hideCost(r.rows, session?.role) }
     },
   }),
   route({
     method: 'get', path: '/api/products/:id', perm: 'products.read',
-    async handler({ db, branch, params }) {
+    async handler({ db, branch, params, session }) {
       const r = await db.query(`SELECT * FROM public.products WHERE id = $1 AND branch_id = $2`, [Number(params.id), branch])
       if (!r.rows[0]) throw notFound()
-      return { product: r.rows[0] }
+      return { product: hideCost([r.rows[0]], session?.role)[0] }
     },
   }),
   route({
@@ -158,11 +162,11 @@ export const catalogRoutes = [
   route({
     method: 'get', path: '/api/variants', perm: 'variants.read',
     query: z.object({ product_id: idParam.optional(), include_inactive: z.enum(['1', 'true']).optional() }).strict(),
-    async handler({ db, branch, query }) {
+    async handler({ db, branch, query, session }) {
       const r = await db.query(
         `SELECT * FROM public.product_variants WHERE branch_id = $1 AND ($2::bigint IS NULL OR product_id = $2)
            AND ($3::boolean IS TRUE OR is_active) ORDER BY sort_order, created_at`, [branch, query.product_id ?? null, !!query.include_inactive])
-      return { variants: r.rows }
+      return { variants: hideCost(r.rows, session?.role) }
     },
   }),
   route({

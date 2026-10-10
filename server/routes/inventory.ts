@@ -50,6 +50,30 @@ export const inventoryRoutes = [
     },
   }),
 
+  // The ONLY stock data Staff may read: which items are low, with name, quantity and threshold. No price, cost, barcode,
+  // category, product id or stock history. The same rules the alarm always used (see useLowStockMonitor): active items only,
+  // "Unregistered" and legacy category 4 never alarm, product threshold = its alert level (default 5), variants use 5.
+  route({
+    method: 'get', path: '/api/inventory/low-stock-alerts', perm: 'inventory.alerts',
+    async handler({ db, branch }) {
+      const r = await db.query(
+        `SELECT 'p-' || p.id AS id, p.name, NULL::text AS variant_name, p.stock_quantity AS quantity,
+                CASE WHEN p.low_stock_alert > 0 THEN p.low_stock_alert ELSE 5 END AS threshold
+           FROM public.products p
+          WHERE p.branch_id = $1 AND p.is_active AND NOT p.has_variants
+            AND lower(btrim(coalesce(p.category, ''))) <> 'unregistered' AND p.category_id IS DISTINCT FROM 4
+            AND p.stock_quantity <= CASE WHEN p.low_stock_alert > 0 THEN p.low_stock_alert ELSE 5 END
+         UNION ALL
+         SELECT 'v-' || v.id, p.name, v.variant_name, v.stock, 5
+           FROM public.product_variants v JOIN public.products p ON p.id = v.product_id AND p.branch_id = v.branch_id
+          WHERE v.branch_id = $1 AND v.is_active AND p.is_active
+            AND lower(btrim(coalesce(p.category, ''))) <> 'unregistered' AND p.category_id IS DISTINCT FROM 4
+            AND v.stock <= 5
+          ORDER BY name, variant_name NULLS FIRST`, [branch])
+      return { items: r.rows.map((x) => ({ id: String(x.id), name: x.name, variant_name: x.variant_name ?? null, quantity: Number(x.quantity), threshold: Number(x.threshold) })) }
+    },
+  }),
+
   route({
     method: 'post', path: '/api/inventory/adjust', perm: 'inventory.adjust',
     body: z.object({

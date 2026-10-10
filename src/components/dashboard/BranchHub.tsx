@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Store, Phone, MapPin, ShoppingCart, Boxes, AlertTriangle, FileText } from 'lucide-react'
 import { useAdminAuthStore, useProductStore, useSettingsStore, resolveBranch, type PosBranch } from '../../store/store'
+import { canOpenTab } from '../../lib/permissions'
 import { BRAND_EN } from '../../lib/brand'
 import { branchLabel, posAccent } from '../../lib/branchTheme'
 import BranchLogo from '../common/BranchLogo'
@@ -13,6 +14,7 @@ interface BranchHubProps {
 /** Staff landing page for a branch: branch details, quick links and low-stock alert. */
 export default function BranchHub({ onNavigate }: BranchHubProps) {
   const activeBranch = useAdminAuthStore((s) => s.activeBranch)
+  const role = useAdminAuthStore((s) => s.role)
   const branch = resolveBranch(activeBranch)
   const accent = posAccent(branch)
   const products = useProductStore((s) => s.products)
@@ -24,7 +26,7 @@ export default function BranchHub({ onNavigate }: BranchHubProps) {
 
   const quickOps: { label: string; tab: TabKey; icon: React.ReactNode; primary?: boolean }[] = [
     { label: 'Open Store Dashboard & POS', tab: 'billing', icon: <ShoppingCart size={15} />, primary: true },
-    { label: 'Stock Control', tab: 'inventory', icon: <Boxes size={15} /> },
+    ...(canOpenTab(role, 'inventory') ? [{ label: 'Stock Control', tab: 'inventory' as TabKey, icon: <Boxes size={15} /> }] : []),
     { label: 'Advance Orders', tab: 'advance_orders', icon: <FileText size={15} /> },
   ]
 
@@ -79,7 +81,7 @@ export default function BranchHub({ onNavigate }: BranchHubProps) {
             <p className="text-xs font-black text-amber-900">Inventory Alerts</p>
             <p className="text-xs text-amber-700 font-semibold mt-0.5">
               {lowStockCount} item{lowStockCount === 1 ? '' : 's'} at or below minimum stock threshold in this store.{' '}
-              <button onClick={() => onNavigate('inventory')} className="underline font-black cursor-pointer">Open Stock Control</button>
+              {canOpenTab(role, 'inventory') && <button onClick={() => onNavigate('inventory')} className="underline font-black cursor-pointer">Open Stock Control</button>}
             </p>
           </div>
         </div>

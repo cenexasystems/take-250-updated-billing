@@ -187,7 +187,8 @@ async function run() {
       check(UI_ROLES.every((r) => REMOVED_TABS.every((t) => !canOpenTab(r, t) || t === 'branch_hub')), 'tabs the original removed are open to nobody (branch_hub only for staff)')
       check(canOpenTab('staff', 'branch_hub') && !canOpenTab('manager', 'branch_hub') && !canOpenTab('admin', 'branch_hub'), 'branch hub follows the original: staff only')
       check(same(NAV_ORDER.manager, NAV_ORDER.admin.filter((t) => t !== 'pos_analytics')), 'manager sidebar = admin sidebar minus the Analytics Dashboard')
-      check(same(NAV_ORDER.staff, ['branch_hub', 'billing', 'inventory', 'advance_orders', 'history']), 'staff sidebar equals the original staff list')
+      check(same(NAV_ORDER.staff, ['branch_hub', 'billing', 'advance_orders', 'history']), 'staff sidebar: Store Hub, POS, Advance Orders, Order History (no Stock & Inventory)')
+      check(!canOpenTab('staff', 'inventory') && canOpenTab('manager', 'inventory') && canOpenTab('admin', 'inventory'), 'Stock & Inventory tab: admin and manager only')
       check(UI_ROLES.every((r) => NAV_ORDER[r].every((t) => canOpenTab(r, t))), 'every sidebar entry is openable by its own role')
       check(FEATURE_ACCESS['branch.switch'].join() === 'admin', 'only the admin has the branch switcher')
     }
@@ -252,11 +253,19 @@ async function run() {
       for (const b of ['pos2', 'pos3'] as const) {
         check((await call('GET', `/api/products/${prod[b]}`, { cookie: cookies.staff1 })).status === 404, `staff1 cannot read a ${b} product by id`)
         check((await call('GET', `/api/products/${prod[b]}`, { cookie: cookies.manager1 })).status === 404, `manager1 cannot read a ${b} product by id`)
-        const patch = await call('PATCH', `/api/products/${prod[b]}`, { cookie: cookies.staff1, body: { price: 1 } })
-        check(patch.status === 404 && (await one(`SELECT price::numeric p FROM products WHERE id = $1`, [prod[b]])).p == 100, `staff1 cannot edit a ${b} product`)
+        const patch = await call('PATCH', `/api/products/${prod[b]}`, { cookie: cookies.manager1, body: { price: 1 } })
+        check(patch.status === 404 && (await one(`SELECT price::numeric p FROM products WHERE id = $1`, [prod[b]])).p == 100, `manager1 cannot edit a ${b} product`)
+        check((await call('PATCH', `/api/products/${prod[b]}`, { cookie: cookies.staff1, body: { price: 1 } })).status === 403, `staff1 cannot edit any product (403)`)
         check((await call('PATCH', `/api/variants/${variant[b]}`, { cookie: cookies.manager1, body: { price: 1 } })).status === 404, `manager1 cannot edit a ${b} variant`)
       }
       for (const [a, other] of [['staff2', 'pos1'], ['manager3', 'pos2'], ['staff3', 'pos1']] as [Actor, B][]) {
+        if (a.startsWith('staff')) {
+          // staff has no stock list: only the narrow alert endpoint, which carries nothing from another branch
+          check((await call('GET', '/api/inventory/low-stock', { cookie: cookies[a] })).status === 403, `${a} cannot read the full low-stock list (403)`)
+          const al = await call('GET', '/api/inventory/low-stock-alerts', { cookie: cookies[a] })
+          check(al.status === 200 && al.body.items.every((x: any) => x.id !== `p-${prod[other]}`), `${a} low-stock alerts contain nothing from ${other}`)
+          continue
+        }
         const r = await call('GET', '/api/inventory/low-stock', { cookie: cookies[a] })
         check(r.body.products.every((p: any) => p.id !== prod[other]), `${a} low-stock list contains nothing from ${other}`)
       }
@@ -285,10 +294,15 @@ async function run() {
         const victim = BRANCHES.find((b) => b !== own)!
         for (const [label, mk] of forged) {
           const r = await call('POST', '/api/products', mk(a, victim))
-          check(r.status === 400, `${a}: forged ${label} is rejected`, `status ${r.status}`)
+          // staff may not create products at all (403 comes before any branch check); managers get the forged-branch 400
+          check(r.status === (a.startsWith('staff') ? 403 : 400), `${a}: forged ${label} is rejected`, `status ${r.status}`)
         }
         // even a branch id equal to their OWN is refused: the client never names a branch
-        check((await call('POST', '/api/products', { cookie: cookies[a], body: { name: 'Forged', branch_id: own } })).status === 400, `${a}: even own branch_id in the body is refused`)
+        check((await call('POST', '/api/products', { cookie: cookies[a], body: { name: 'Forged', branch_id: own } })).status === (a.startsWith('staff') ? 403 : 400), `${a}: even own branch_id in the body is refused`)
+        // a forged branch on a read staff DOES keep (the POS catalog) is still refused
+        for (const [label, extra] of [['header x-branch-id', { headers: { 'x-branch-id': victim } }], ['query branch', { query: { branch: victim } }]] as const) {
+          check((await call('GET', '/api/products', { cookie: cookies[a], ...extra } as any)).status === 400, `${a}: GET /api/products with a forged ${label} is refused`)
+        }
         check((await call('GET', '/api/products', { cookie: cookies[a], query: { branch_id: victim } })).status === 400, `${a}: GET with ?branch_id= is refused`)
       }
       const after = await one(`SELECT count(*)::int n FROM products WHERE name = 'Forged'`)
@@ -307,7 +321,7 @@ async function run() {
       check((await call('POST', '/api/products', { cookie: cookies.admin, query: { branch_id: 'pos2' }, body: { name: 'Forged', branch_id: 'pos3' } })).status === 400, 'admin: branch_id in the BODY is refused (selector is query-only)')
       check((await call('GET', '/api/global/overview', { cookie: cookies.admin, query: { branch_id: 'pos1' } })).status === 400, 'branch_id is refused on a global route')
       // strict zod: unknown fields
-      check((await call('POST', '/api/products', { cookie: cookies.staff1, body: { name: 'X', is_admin: true } })).status === 400, 'unknown product field rejected (zod strict)')
+      check((await call('POST', '/api/products', { cookie: cookies.manager1, body: { name: 'X', is_admin: true } })).status === 400, 'unknown product field rejected (zod strict)')
     }
 
     // ================================================================== E. tokens: expired / tampered / stale
@@ -339,14 +353,14 @@ async function run() {
     {
       const gen = {} as Record<B, any>
       for (const b of BRANCHES) {
-        const a = `staff${b.slice(-1)}` as Actor
+        const a = `manager${b.slice(-1)}` as Actor // generating barcodes / receiving stock is Admin / Manager work
         const before = await stockOf(prod[b])
         const r = await call('POST', '/api/barcodes/receive', { cookie: cookies[a], body: { product_id: prod[b], quantity_received: 4, unit_cost: 50 } })
         gen[b] = r.body
         check(r.status === 200 && r.body.is_new_barcode === true && r.body.barcode_value.startsWith({ pos1: 'PBP', pos2: 'P2P', pos3: 'P3P' }[b]), `${a} generates a ${b} barcode through the API`, r.body?.error ?? '')
         check((await stockOf(prod[b])) === before + 4, `receive-stock changes ${b} stock only through its own token`)
         const mv = (await one(`SELECT created_by_name, branch_id FROM inventory_movements WHERE barcode_id = $1 ORDER BY id DESC LIMIT 1`, [r.body.barcode_id])) ?? {}
-        check(mv.branch_id === b && mv.created_by_name === 'Staff', `${b} receipt is stamped with the token's branch and role name`)
+        check(mv.branch_id === b && mv.created_by_name === 'Manager', `${b} receipt is stamped with the token's branch and role name`)
       }
       check(new Set(Object.values(gen).map((g: any) => g.barcode_value)).size === 3, 'same product in 3 branches got 3 different barcodes via the API')
       const others = (b: B) => BRANCHES.filter((x) => x !== b)
@@ -360,13 +374,13 @@ async function run() {
             check(r.status === 404 && r.body.error === 'Barcode not found', `${b} barcode scanned as ${actor} returns not found`, `status ${r.status}`)
           }
           check((await call('GET', '/api/barcodes/lookup', { cookie: cookies.admin, query: { branch_id: o, code: gen[b].barcode_value } })).status === 404, `${b} barcode scanned by admin working in ${o} returns not found`)
-          check((await call('GET', '/api/barcodes/print-data', { cookie: cookies[`staff${o.slice(-1)}` as Actor], query: { product_id: String(prod[b]) } })).status === 404, `print-data for a ${b} product from ${o} -> not found`)
+          check((await call('GET', '/api/barcodes/print-data', { cookie: cookies[`manager${o.slice(-1)}` as Actor], query: { product_id: String(prod[b]) } })).status === 404, `print-data for a ${b} product from ${o} -> not found`)
         }
       }
       // never adds another branch's item: receive/print/receive by foreign product id
-      const x = await call('POST', '/api/barcodes/receive', { cookie: cookies.staff3, body: { product_id: prod.pos1, quantity_received: 9 } })
-      check(x.status === 400 && (await stockOf(prod.pos1)) === 14, 'staff3 cannot receive stock against a branch 1 product')
-      check((await call('POST', '/api/barcodes/receive', { cookie: cookies.staff1, body: { product_id: prod.pos1, quantity_received: 1, branch_id: 'pos2' } })).status === 400, 'receive-stock refuses a client branch_id')
+      const x = await call('POST', '/api/barcodes/receive', { cookie: cookies.manager3, body: { product_id: prod.pos1, quantity_received: 9 } })
+      check(x.status === 400 && (await stockOf(prod.pos1)) === 14, 'manager3 cannot receive stock against a branch 1 product')
+      check((await call('POST', '/api/barcodes/receive', { cookie: cookies.manager1, body: { product_id: prod.pos1, quantity_received: 1, branch_id: 'pos2' } })).status === 400, 'receive-stock refuses a client branch_id')
       const reg = await call('PUT', '/api/barcodes/register', { cookie: cookies.manager1, body: { product_id: prod.pos2, barcode_value: '8901234567890' } })
       check(reg.status === 409 || reg.status === 400, 'manager1 cannot register a barcode on a branch 2 product', `status ${reg.status}`)
       const m1 = await call('PUT', '/api/barcodes/register', { cookie: cookies.manager1, body: { product_id: prod.pos1, barcode_value: '8901234567890' } })
@@ -379,8 +393,11 @@ async function run() {
       check((await call('PUT', '/api/barcodes/register', { cookie: cookies.manager1, body: { product_id: prod.pos1, barcode_value: 'P2P55555555' } })).status === 400, 'a barcode with another branch\'s prefix is rejected (trigger)')
       check((await call('GET', '/api/barcodes/lookup', { cookie: cookies.staff1, query: { code: gen.pos1.barcode_value.toLowerCase() + ' ' } })).status === 200, 'scan lookup tolerates case and spaces')
       const list = await call('GET', '/api/barcodes', { cookie: cookies.manager2 })
-      check(list.status === 200 && list.body.records.every((r: any) => r.product_id === prod.pos2), 'barcode list shows only the token\'s branch')
-      check((await call('POST', `/api/barcodes/${gen.pos1.barcode_id}/deactivate`, { cookie: cookies.staff2 })).status === 404, 'staff2 cannot deactivate a branch 1 barcode')
+      const listIds = (list.body.records ?? []).map((r: any) => r.id)
+      const foreign = await one(`SELECT count(*)::int n FROM barcode_registry WHERE id = ANY($1::uuid[]) AND branch_id <> 'pos2'`, [listIds])
+      check(list.status === 200 && foreign.n === 0 && list.body.records.some((r: any) => r.product_id === prod.pos2), "barcode list shows only the token's branch (the shop's own real barcodes may be in it)")
+      check((await call('POST', `/api/barcodes/${gen.pos1.barcode_id}/deactivate`, { cookie: cookies.manager2 })).status === 404, 'manager2 cannot deactivate a branch 1 barcode')
+      check((await call('POST', `/api/barcodes/${gen.pos1.barcode_id}/deactivate`, { cookie: cookies.staff2 })).status === 403, 'staff2 cannot deactivate any barcode (403)')
     }
 
     // ================================================================== G. billing through the API (maths stays in SQL)
@@ -423,12 +440,14 @@ async function run() {
       const adv = await call('POST', '/api/advance-orders', { cookie: cookies.staff1, body: { customer_name: 'A', phone: '99', product_name: 'Card', total_amount: 100, deposit_amount: 20, expected_delivery_date: '2030-01-01', payment_method: 'cash' } })
       check(adv.status === 201 && adv.body.order.branch_id === 'pos1', 'staff1 creates an advance order in branch 1', adv.body?.error ?? '')
       const id = adv.body.order.id
-      check((await call('GET', '/api/advance-orders', { cookie: cookies.staff2 })).body.orders.length === 0, 'staff2 sees no branch 1 advance orders')
+      check((await call('GET', '/api/advance-orders', { cookie: cookies.staff2 })).body.orders.every((o: any) => o.branch_id === 'pos2' && o.id !== id), 'staff2 sees no branch 1 advance orders')
       check((await call('POST', `/api/advance-orders/${id}/status`, { cookie: cookies.staff2, body: { status: 'ready_for_delivery' } })).status >= 400, 'staff2 cannot change a branch 1 advance order')
       check((await call('POST', `/api/advance-orders/${id}/complete`, { cookie: cookies.manager3, body: { payment_method: 'cash', final_amount: 80 } })).status >= 400, 'manager3 cannot complete a branch 1 advance order')
       check((await call('GET', `/api/advance-orders/${id}/history`, { cookie: cookies.staff3 })).status === 404, 'staff3 cannot read a branch 1 advance order history')
       check((await call('POST', `/api/advance-orders/${id}/status`, { cookie: cookies.staff1, body: { status: 'ready_for_delivery' } })).status === 200, 'staff1 updates its own advance order')
-      check((await call('DELETE', `/api/advance-orders/${id}`, { cookie: cookies.staff2 })).status === 404, 'staff2 cannot delete a branch 1 advance order')
+      check((await call('DELETE', `/api/advance-orders/${id}`, { cookie: cookies.staff2 })).status === 403, 'staff2 cannot delete advance orders at all (403)')
+      check((await call('DELETE', `/api/advance-orders/${id}`, { cookie: cookies.staff1 })).status === 403, 'staff1 cannot delete its own advance order either (403)')
+      check((await call('DELETE', `/api/advance-orders/${id}`, { cookie: cookies.manager2 })).status === 404, 'manager2 cannot delete a branch 1 advance order (404)')
 
       // expenses: staff never, manager own branch, admin any
       const ex = await call('POST', '/api/expenses', { cookie: cookies.manager2, body: { expense_date: '2030-01-01', category_id: null, category_name: 'Rent', amount: 50 } })
@@ -477,29 +496,30 @@ async function run() {
     {
       const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
       const up = (a: Actor, kind: string, extra: Parameters<typeof call>[2] = {}) => call('POST', `/api/uploads/${kind}`, { cookie: cookies[a], raw: { buf: png, type: 'image/png' }, query: { filename: 'Logo Image.png' }, ...extra })
-      const r1 = await up('staff1', 'product-images')
-      check(r1.status === 201 && r1.body.path.startsWith('pos1/product-images/') && r1.body.path.endsWith('.png'), 'staff1 product image path starts with pos1/')
+      const r1 = await up('manager1', 'product-images')
+      check(r1.status === 201 && r1.body.path.startsWith('pos1/product-images/') && r1.body.path.endsWith('.png'), 'manager1 product image path starts with pos1/')
       const r2 = await up('manager2', 'branding')
       check(r2.status === 201 && r2.body.path.startsWith('pos2/branding/'), 'manager2 branding upload path starts with pos2/')
+      check((await up('staff1', 'product-images')).status === 403, 'staff cannot upload product images (no product forms for staff)')
       check((await up('staff1', 'branding')).status === 403, 'staff cannot upload branding')
       check((await up('staff1', 'avatars')).status === 403, 'staff cannot upload avatars')
       check((await up('staff3', 'invoices', { raw: { buf: Buffer.from('%PDF-1.4'), type: 'application/pdf' } })).body.path?.startsWith('pos3/invoices/'), 'staff3 invoice PDF path starts with pos3/')
       check((await up('admin', 'avatars')).status === 400, 'admin upload without a branch selector -> 400')
       const a3 = await up('admin', 'avatars', { cookie: cookies.admin, query: { branch_id: 'pos3', filename: 'x.png' } })
       check(a3.status === 201 && a3.body.path.startsWith('pos3/avatars/'), 'admin upload path uses the selected, validated branch')
-      const trav = await up('staff1', 'product-images', { query: { filename: '../../pos2/evil.png' } })
+      const trav = await up('manager1', 'product-images', { query: { filename: '../../pos2/evil.png' } })
       check(trav.status === 201 && trav.body.path.startsWith('pos1/product-images/') && !trav.body.path.includes('..') && trav.body.path.split('/').length === 3, 'path traversal in the filename cannot leave the branch prefix')
-      check((await up('staff1', 'product-images', { raw: { buf: Buffer.from('<svg/>'), type: 'image/svg+xml' } })).status === 415, 'SVG upload refused (415)')
-      check((await up('staff1', 'product-images', { raw: { buf: Buffer.from('x'), type: 'text/html' } })).status === 415, 'HTML upload refused (415)')
-      check((await up('staff1', 'product-images', { raw: { buf: Buffer.alloc(6 * 1024 * 1024, 1), type: 'image/png' } })).status === 413, 'oversized image refused (413)')
-      const over = await up('staff1', 'product-images', { raw: { buf: Buffer.alloc(4 * 1024 * 1024 + 1, 1), type: 'image/png' } })
+      check((await up('manager1', 'product-images', { raw: { buf: Buffer.from('<svg/>'), type: 'image/svg+xml' } })).status === 415, 'SVG upload refused (415)')
+      check((await up('manager1', 'product-images', { raw: { buf: Buffer.from('x'), type: 'text/html' } })).status === 415, 'HTML upload refused (415)')
+      check((await up('manager1', 'product-images', { raw: { buf: Buffer.alloc(6 * 1024 * 1024, 1), type: 'image/png' } })).status === 413, 'oversized image refused (413)')
+      const over = await up('manager1', 'product-images', { raw: { buf: Buffer.alloc(4 * 1024 * 1024 + 1, 1), type: 'image/png' } })
       check(over.status === 413 && over.body.error === 'Image too large, max 4 MB', 'an image of 4 MB + 1 byte is refused with "Image too large, max 4 MB"', `${over.status} ${JSON.stringify(over.body)}`)
-      check((await up('staff1', 'product-images', { raw: { buf: Buffer.alloc(4 * 1024 * 1024, 1), type: 'image/png' } })).status === 201, 'an image of exactly 4 MB is accepted')
+      check((await up('manager1', 'product-images', { raw: { buf: Buffer.alloc(4 * 1024 * 1024, 1), type: 'image/png' } })).status === 201, 'an image of exactly 4 MB is accepted')
       const bigPdf = await up('staff1', 'invoices', { raw: { buf: Buffer.alloc(4 * 1024 * 1024 + 1, 1), type: 'application/pdf' } })
       check(bigPdf.status === 413 && bigPdf.body.error === 'PDF too large, max 4 MB', 'a PDF over 4 MB is refused with "PDF too large, max 4 MB"')
       check((await up('manager1', 'branding', { raw: { buf: Buffer.alloc(4 * 1024 * 1024 + 1, 1), type: 'image/jpeg' } })).status === 413, 'branding images share the same 4 MB cap')
-      check((await up('staff1', 'product-images', { body: undefined, raw: { buf: Buffer.alloc(0), type: 'image/png' } })).status === 400, 'empty upload refused')
-      check((await up('staff1', 'product-images', { query: { filename: 'a.png', branch_id: 'pos2' } })).status === 400, 'upload refuses a client branch_id')
+      check((await up('manager1', 'product-images', { body: undefined, raw: { buf: Buffer.alloc(0), type: 'image/png' } })).status === 400, 'empty upload refused')
+      check((await up('manager1', 'product-images', { query: { filename: 'a.png', branch_id: 'pos2' } })).status === 400, 'upload refuses a client branch_id')
       check(blobCalls.every((c) => /^pos[123]\//.test(c.pathname)), 'every blob path in the run starts with a branch id')
     }
 
@@ -578,17 +598,17 @@ async function run() {
       // categories: deleting one moves its products to "Uncategorized" (what the screen used to do itself)
       const cc = await call('POST', '/api/categories', { cookie: cookies.manager1, body: { name_en: 'Temp Cat' } })
       check(cc.status === 201 && !cc.body.existing, 'manager creates a category')
-      check((await call('POST', '/api/categories', { cookie: cookies.staff1, body: { name_en: 'temp cat' } })).body.existing === true, 'creating the same name again returns the existing category')
-      const pp = await call('POST', '/api/products', { cookie: cookies.staff1, body: { name: 'In Temp', category: 'Temp Cat', category_id: cc.body.category.id, price: 5 } })
-      check(pp.status === 201, 'staff creates a product in that category')
-      const dup = await call('POST', '/api/products', { cookie: cookies.staff1, body: { name: 'In Temp', category: 'Temp Cat', category_id: cc.body.category.id, price: 5 } })
+      check((await call('POST', '/api/categories', { cookie: cookies.manager1, body: { name_en: 'temp cat' } })).body.existing === true, 'creating the same name again returns the existing category')
+      const pp = await call('POST', '/api/products', { cookie: cookies.manager1, body: { name: 'In Temp', category: 'Temp Cat', category_id: cc.body.category.id, price: 5 } })
+      check(pp.status === 201, 'manager creates a product in that category')
+      const dup = await call('POST', '/api/products', { cookie: cookies.manager1, body: { name: 'In Temp', category: 'Temp Cat', category_id: cc.body.category.id, price: 5 } })
       check(dup.status === 409 && dup.body.error === 'A product with this name already exists in the selected category.', 'duplicate product name gives the original message', dup.body?.error ?? '')
       check((await call('DELETE', `/api/categories/${cc.body.category.id}`, { cookie: cookies.staff1 })).status === 403, 'staff cannot delete a category')
       check((await call('DELETE', `/api/categories/${cc.body.category.id}`, { cookie: cookies.manager2 })).status === 404, 'manager2 cannot delete a branch 1 category')
       check((await call('DELETE', `/api/categories/${cc.body.category.id}`, { cookie: cookies.manager1 })).status === 200, 'manager1 deletes its category')
       const moved = await one(`SELECT category, category_id FROM products WHERE id = $1`, [pp.body.product.id])
       check(moved.category === 'Uncategorized' && moved.category_id === null, 'the products of a deleted category become Uncategorized')
-      const dv = await call('POST', '/api/variants', { cookie: cookies.staff1, body: { product_id: prod.pos1, variant_name: 'Large', price: 1 } })
+      const dv = await call('POST', '/api/variants', { cookie: cookies.manager1, body: { product_id: prod.pos1, variant_name: 'Large', price: 1 } })
       check(dv.status === 409 && dv.body.error === 'A variant with this name already exists for this product.', 'duplicate variant name gives the original message', dv.body?.error ?? '')
       const dc = await call('POST', '/api/coupons', { cookie: cookies.manager1, body: { code: ' api10 ', percentage: 5 } })
       check(dc.status === 409 && /already exists/.test(dc.body.error), 'duplicate coupon code is reported as already existing', dc.body?.error ?? '')
@@ -841,7 +861,7 @@ async function run() {
       const n1 = await made({ discount_amount: 10 }); check(Number(n1.o.t) === 90 && Number(n1.o.d) === 10 && Number(n1.o.m) === 0, 'coupon only: 100 - 10 = 90', JSON.stringify(n1.o))
       const n2 = await made({ manual_discount_amount: 15 }); check(Number(n2.o.t) === 85 && Number(n2.o.d) === 0 && Number(n2.o.m) === 15, 'manual discount only: 100 - 15 = 85', JSON.stringify(n2.o))
       const n3 = await made({ shipping: 20, delivery_charge: 20 }); check(Number(n3.o.t) === 120, 'delivery is added once (120), even though the POS sends it as shipping and delivery charge', JSON.stringify(n3.o))
-      const n4 = await made({ discount_amount: 10, manual_discount_amount: 5, total_gst: 9, shipping: 20, delivery_charge: 20 }); check(Number(n4.o.t) === 134, 'coupon + manual + GST + delivery: 100 - 10 - 5 + 9 + 20 = 134', JSON.stringify(n4.o))
+      const n4 = await made({ discount_amount: 10, manual_discount_amount: 5, total_gst: 9, shipping: 20, delivery_charge: 20 }); check(Number(n4.o.t) === 114, 'coupon + manual + GST + delivery: 100 - 10 - 5 + 9 + 20 = 114', JSON.stringify(n4.o))
       const stockBefore = await stockOfP(tpid); const billsBefore = (await one(`SELECT count(*)::int n FROM orders WHERE customer_name = 'Totals Customer'`)).n
       const sOk = await made({ payment_method: 'split', split_details: { payments: [{ method: 'cash', amount: 40 }, { method: 'qr', amount: 60 }] } })
       check(sOk.r.status === 201 && sOk.o.pm === 'split' && sOk.o.sd.payments.length === 2 && sOk.o.sd.payments[0].method === 'cash' && sOk.o.sd.payments[1].amount === 60, 'split payment (cash 40 + QR 60): payment_method stays "split", the breakdown is saved as structured data', JSON.stringify([sOk.r.status, sOk.r.body, sOk.o]))
@@ -865,6 +885,86 @@ async function run() {
       const listed = (advList.body.orders as any[]).find((o) => o.id === dA.body.order.id)
       check(listed && /^\d{4}-\d{2}-\d{2}$/.test(String(listed.expected_delivery_date)), 'a delivery date comes back as plain YYYY-MM-DD (it used to become a full timestamp that the screen showed as "Invalid Date")', JSON.stringify(listed?.expected_delivery_date))
     }
+    // ================================================================== N. STAFF: billing, advance orders, order history and the low-stock alert only
+    {
+      const SECRETS = ['purchase_price', 'unit_cost', 'cost_price']
+      const FAKE = '00000000-0000-4000-8000-000000000000'
+      for (const b of BRANCHES) {
+        const n = b.slice(-1); const staff = `staff${n}` as Actor; const mgr = `manager${n}` as Actor
+        // --- everything that manages stock, prices, products, barcodes or deletes an advance order is 403 for Staff
+        const forbidden: Array<[string, string, string, unknown?]> = [
+          ['GET', '/api/inventory/movements', 'stock history / ledger / ledger CSV'],
+          ['GET', '/api/inventory/low-stock', 'full stock list for the old monitor'],
+          ['POST', '/api/inventory/adjust', 'adjust stock', {}],
+          ['POST', '/api/inventory/movements', 'write a stock movement', {}],
+          ['PATCH', '/api/inventory/price', 'price edit', {}],
+          ['DELETE', '/api/inventory/items', 'delete an item'],
+          ['GET', '/api/barcodes', 'barcode registry list'],
+          ['GET', '/api/barcodes/print-data', 'label / print data'],
+          ['POST', '/api/barcodes/receive', 'generate barcode + receive stock', {}],
+          ['PUT', '/api/barcodes/register', 'register a barcode', {}],
+          ['POST', `/api/barcodes/${FAKE}/deactivate`, 'deactivate a barcode', {}],
+          ['POST', '/api/products', 'create a product', {}],
+          ['PATCH', `/api/products/${prod[b]}`, 'edit a product', {}],
+          ['POST', '/api/variants', 'create a variant', {}],
+          ['PATCH', `/api/variants/${FAKE}`, 'edit a variant', {}],
+          ['POST', `/api/variants/${FAKE}/default`, 'set the default variant', {}],
+          ['POST', '/api/categories', 'create a category', {}],
+          ['PATCH', `/api/categories/${cat[b]}`, 'edit a category', {}],
+          ['DELETE', `/api/categories/${cat[b]}`, 'delete a category'],
+          ['POST', '/api/uploads/product-images', 'upload a product image'],
+          ['DELETE', `/api/advance-orders/${FAKE}`, 'delete an advance order'],
+        ]
+        for (const [method, path, what, body] of forbidden) {
+          const st = await call(method as any, path, { cookie: cookies[staff], body })
+          check(st.status === 403, `${staff} (${b}) ${what}: ${method} ${path.replace(FAKE, ':id')} -> 403`, `status ${st.status}`)
+          if (method === 'DELETE' && path.includes('/api/categories/')) continue // (a real delete would remove the category later tests use)
+          const mg = await call(method as any, path, { cookie: cookies[mgr], body })
+          check(mg.status !== 403 && mg.status !== 401, `${mgr} (${b}) keeps ${method} ${path.replace(FAKE, ':id')} (not 403)`, `status ${mg.status}`)
+        }
+        // --- what Staff keeps: sell from the POS, scan, advance orders, order history, the low-stock alert
+        const own = (rowsList: any[]) => rowsList.every((r) => r.branch_id === b)
+        const cat1 = await call('GET', '/api/products', { cookie: cookies[staff] })
+        check(cat1.status === 200 && cat1.body.products.length > 0 && own(cat1.body.products), `${staff}: POS product catalog of ${b} only`)
+        check(cat1.body.products.every((x: any) => SECRETS.every((k) => !(k in x))), `${staff}: the catalog never carries the purchase cost`)
+        check(!!cat1.body.products[0] && 'price' in cat1.body.products[0] && 'stock_quantity' in cat1.body.products[0], `${staff}: the catalog still has price and stock level (needed to sell)`)
+        const vr = await call('GET', '/api/variants', { cookie: cookies[staff] })
+        check(vr.status === 200 && own(vr.body.variants) && vr.body.variants.every((x: any) => !('purchase_price' in x)), `${staff}: variants of ${b} only, without cost`)
+        check((await call('GET', '/api/categories', { cookie: cookies[staff] })).status === 200, `${staff}: category list for the POS filter`)
+        const mgrCat = await call('GET', '/api/products', { cookie: cookies[mgr] })
+        check(mgrCat.body.products.some((x: any) => 'purchase_price' in x), `${mgr}: the manager's catalog still carries purchase_price (unchanged)`)
+        // scan lookup
+        const code = await call('POST', '/api/barcodes/receive', { cookie: cookies[mgr], body: { product_id: prod[b], quantity_received: 1, unit_cost: 5 } })
+        const scan = await call('GET', '/api/barcodes/lookup', { cookie: cookies[staff], query: { code: code.body.barcode_value } })
+        check(scan.status === 200 && scan.body.record.product_id === prod[b], `${staff}: barcode scan lookup works in the POS`)
+        // POS sale: stock goes down by the quantity sold
+        const before = await stockOf(prod[b])
+        const sale = await call('POST', '/api/pos/sale', { cookie: cookies[staff], body: { items: [{ product_id: prod[b], quantity: 2, unit_price: 100, name: 'Api Product' }], payment_method: 'cash' } })
+        check(sale.status === 201 && (await stockOf(prod[b])) === before - 2, `${staff}: a POS sale works and stock drops by 2 (${before} -> ${before - 2})`, `status ${sale.status} ${sale.body?.error ?? ''}`)
+        // advance orders: create / view / update, no delete
+        const adv = await call('POST', '/api/advance-orders', { cookie: cookies[staff], body: { customer_name: 'N', phone: '99', product_name: 'Card', total_amount: 100, deposit_amount: 20, expected_delivery_date: '2030-01-01', payment_method: 'cash' } })
+        check(adv.status === 201, `${staff}: creates an advance order`)
+        check((await call('GET', '/api/advance-orders', { cookie: cookies[staff] })).body.orders.some((o: any) => o.id === adv.body.order.id), `${staff}: sees it in the list`)
+        check((await call('POST', `/api/advance-orders/${adv.body.order.id}/status`, { cookie: cookies[staff], body: { status: 'ready_for_delivery' } })).status === 200, `${staff}: updates its status`)
+        check((await call('DELETE', `/api/advance-orders/${adv.body.order.id}`, { cookie: cookies[staff] })).status === 403, `${staff}: cannot delete it (403)`)
+        // order history
+        const oh = await call('GET', '/api/orders', { cookie: cookies[staff] })
+        check(oh.status === 200 && own(oh.body.orders), `${staff}: order history of ${b} only`)
+        check((await call('DELETE', `/api/orders/${sale.body.order_id}`, { cookie: cookies[staff] })).status === 403, `${staff}: cannot delete an order`)
+        // low-stock alert: narrow, branch-scoped, no cost / barcode / history
+        await client.query(`UPDATE products SET stock_quantity = 2, stock = 2, low_stock_alert = 5 WHERE id = $1`, [prod[b]])
+        const al = await call('GET', '/api/inventory/low-stock-alerts', { cookie: cookies[staff] })
+        const item = al.body.items?.find((x: any) => x.id === `p-${prod[b]}`)
+        check(al.status === 200 && !!item && item.quantity === 2 && item.threshold === 5 && item.name === 'Api Product', `${staff}: low-stock alert lists the low item with name, quantity and threshold`, JSON.stringify(al.body).slice(0, 160))
+        check(al.body.items.every((x: any) => Object.keys(x).sort().join() === 'id,name,quantity,threshold,variant_name'), `${staff}: the alert carries only id, name, variant name, quantity and threshold`)
+        check(al.body.items.every((x: any) => BRANCHES.filter((o) => o !== b).every((o) => x.id !== `p-${prod[o]}`)), `${staff}: the alert never lists another branch's items`)
+        check((await call('GET', '/api/inventory/low-stock-alerts', { cookie: cookies[staff], query: { branch_id: BRANCHES.find((o) => o !== b)! } })).status === 400, `${staff}: a forged branch_id on the alert endpoint is refused`)
+        check((await call('GET', '/api/inventory/low-stock-alerts', { cookie: cookies[mgr] })).status === 200, `${mgr}: may read the alert endpoint too`)
+        await client.query(`UPDATE products SET stock_quantity = 10, stock = 10 WHERE id = $1`, [prod[b]])
+      }
+      check((await call('GET', '/api/inventory/low-stock-alerts', { cookie: cookies.admin, query: { branch_id: 'pos1' } })).status === 200, 'admin: low-stock alerts for a selected branch')
+      check((await call('GET', '/api/inventory/low-stock-alerts')).status === 401, 'low-stock alerts need a session (401)')
+    }
     // ================================================================== M3. one barcode = exactly one item (variants never share a code)
     {
       const mkProd = async (b: B, name: string, extra = '') => Number((await one(`INSERT INTO products (name, category, price, stock_quantity, stock, branch_id, is_active, has_variants${extra ? ', barcode' : ''}) VALUES ($2, 'x', 100, 0, 0, $1, true, true${extra ? ', $3' : ''}) RETURNING id`, extra ? [b, name, extra] : [b, name])).id)
@@ -874,7 +974,7 @@ async function run() {
       const sal = await mkProd('pos1', 'Salwar Barcode Test')
 
       // 1. three variants, each with its own code: every scan returns ITS variant and ITS price
-      const xl = await mkVar('staff1', sal, 'XL', 100, 'sal-xl-1'); const xxl = await mkVar('staff1', sal, 'XXL', 200, ' Sal-XXL-1 '); const xxxl = await mkVar('manager1', sal, 'XXXL', 300, 'SAL-XXXL-1')
+      const xl = await mkVar('manager1', sal, 'XL', 100, 'sal-xl-1'); const xxl = await mkVar('manager1', sal, 'XXL', 200, ' Sal-XXL-1 '); const xxxl = await mkVar('manager1', sal, 'XXXL', 300, 'SAL-XXXL-1')
       check(xl.status === 201 && xxl.status === 201 && xxxl.status === 201, 'three variants with their own barcodes are created')
       check(xl.body.variant.barcode === 'SAL-XL-1' && xxl.body.variant.barcode === 'SAL-XXL-1', 'barcodes are stored trimmed and in upper case')
       for (const [code, name, price] of [['sal-xl-1', 'XL', 100], ['SAL-XXL-1', 'XXL', 200], ['sal-xxxl-1', 'XXXL', 300]] as const) {
@@ -883,52 +983,52 @@ async function run() {
       }
 
       // 2. a second variant can NOT take a code that already belongs to another item
-      const dupSame = await mkVar('staff1', sal, 'Dup1', 50, 'SAL-XL-1')
-      const dupCase = await mkVar('staff1', sal, 'Dup2', 50, '  sal-xl-1 ')
+      const dupSame = await mkVar('manager1', sal, 'Dup1', 50, 'SAL-XL-1')
+      const dupCase = await mkVar('manager1', sal, 'Dup2', 50, '  sal-xl-1 ')
       check(dupSame.status === 409 && /already used by another item/.test(dupSame.body.error), 'creating a variant with an existing barcode is refused (409, clear message)', JSON.stringify(dupSame.body))
       check(dupCase.status === 409, 'the same code in another case / with spaces is refused too')
-      const patchDup = await call('PATCH', `/api/variants/${xxl.body.variant.id}`, { cookie: cookies.staff1, body: { barcode: 'sal-xl-1' } })
+      const patchDup = await call('PATCH', `/api/variants/${xxl.body.variant.id}`, { cookie: cookies.manager1, body: { barcode: 'sal-xl-1' } })
       check(patchDup.status === 409, 'changing a variant to another variant\'s barcode is refused (409)')
-      check((await call('PATCH', `/api/variants/${xxl.body.variant.id}`, { cookie: cookies.staff1, body: { barcode: 'SAL-XXL-1', price: 210 } })).status === 200, 'saving a variant with its OWN barcode again is fine')
+      check((await call('PATCH', `/api/variants/${xxl.body.variant.id}`, { cookie: cookies.manager1, body: { barcode: 'SAL-XXL-1', price: 210 } })).status === 200, 'saving a variant with its OWN barcode again is fine')
       check((await scan('staff1', 'SAL-XXL-1')).body.record.variant.price == 210, 'the scan returns the updated price of that variant')
 
       // 3. product-level code vs variant code (same branch): refused both ways
       const prodPatch = await call('PATCH', `/api/products/${sal}`, { cookie: cookies.manager1, body: { barcode: 'SAL-XL-1' } })
       check(prodPatch.status === 409, 'a product cannot take a barcode that a variant already has (409)')
       const other = await mkProd('pos1', 'Other product', 'PROD-ONLY-9')
-      check((await mkVar('staff1', sal, 'Dup3', 50, 'PROD-ONLY-9')).status === 409, 'a variant cannot take a barcode that a product already has (409)')
+      check((await mkVar('manager1', sal, 'Dup3', 50, 'PROD-ONLY-9')).status === 409, 'a variant cannot take a barcode that a product already has (409)')
       check(other > 0, 'setup product exists')
 
       // 4. every branch has its own codes: the same manufacturer code in another branch is fine and stays separate
       const sal2 = await mkProd('pos2', 'Salwar Barcode Test')
-      const b2 = await mkVar('staff2', sal2, 'XL', 999, 'SAL-XL-1')
+      const b2 = await mkVar('manager2', sal2, 'XL', 999, 'SAL-XL-1')
       check(b2.status === 201, 'the same code in ANOTHER branch is allowed (codes are unique per branch)')
       check(Number((await scan('staff2', 'SAL-XL-1')).body.record.variant.price) === 999 && Number((await scan('staff1', 'SAL-XL-1')).body.record.variant.price) === 100, 'each branch scans its own variant')
 
       // 5. the registry can no longer be silently re-pointed from one variant to another
       const reg = (a: Actor, product_id: number, variant_id: string | null, barcode_value: string) => call('PUT', '/api/barcodes/register', { cookie: cookies[a], body: { product_id, variant_id, barcode_value } })
-      check((await reg('staff1', sal, xl.body.variant.id, 'sal-xl-1')).status === 200, 'registering a variant\'s own code again is fine (idempotent)')
-      const steal = await reg('staff1', sal, xxl.body.variant.id, 'SAL-XL-1')
+      check((await reg('manager1', sal, xl.body.variant.id, 'sal-xl-1')).status === 200, 'registering a variant\'s own code again is fine (idempotent)')
+      const steal = await reg('manager1', sal, xxl.body.variant.id, 'SAL-XL-1')
       check(steal.status === 409, 'registering a code that belongs to ANOTHER variant is refused (409), not re-pointed', JSON.stringify(steal.body))
       check((await scan('staff1', 'SAL-XL-1')).body.record.variant.variant_name === 'XL', 'the code still scans as XL')
-      check((await reg('staff1', sal, xxxl.body.variant.id, 'brand-new-77')).status === 200 && (await scan('staff1', 'BRAND-NEW-77')).body.record.variant.variant_name === 'XXXL', 'a new code can be registered for a variant and scans as that variant')
+      check((await reg('manager1', sal, xxxl.body.variant.id, 'brand-new-77')).status === 200 && (await scan('staff1', 'BRAND-NEW-77')).body.record.variant.variant_name === 'XXXL', 'a new code can be registered for a variant and scans as that variant')
 
       // 6. the generated way (Add Barcode for each variant) stays correct
       const gp = await mkProd('pos1', 'Generated Variants')
-      const gv = [await mkVar('staff1', gp, 'Green', 40), await mkVar('staff1', gp, 'Blue', 45)]
+      const gv = [await mkVar('manager1', gp, 'Green', 40), await mkVar('manager1', gp, 'Blue', 45)]
       const gcodes: string[] = []
-      for (const v of gv) gcodes.push((await call('POST', '/api/barcodes/receive', { cookie: cookies.staff1, body: { product_id: gp, variant_id: v.body.variant.id, quantity_received: 2, unit_cost: 10 } })).body.barcode_value)
+      for (const v of gv) gcodes.push((await call('POST', '/api/barcodes/receive', { cookie: cookies.manager1, body: { product_id: gp, variant_id: v.body.variant.id, quantity_received: 2, unit_cost: 10 } })).body.barcode_value)
       check(new Set(gcodes).size === 2 && gcodes.every((c) => /^PBV\d{8}$/.test(c)), 'Add Barcode makes a different PBV code for each variant', gcodes.join(','))
       check((await scan('staff1', gcodes[0])).body.record.variant.variant_name === 'Green' && (await scan('staff1', gcodes[1])).body.record.variant.variant_name === 'Blue', 'each generated code scans as its own variant')
       const colCodes = (await rows(`SELECT barcode FROM product_variants WHERE product_id = $1 ORDER BY variant_name`, [gp])).map((r) => r.barcode)
       check(colCodes.join() === [gcodes[1], gcodes[0]].join(), 'the printed-label column and the registry agree', colCodes.join())
 
       // 7. a removed (inactive) variant lets go of its code
-      check((await call('PATCH', `/api/variants/${xl.body.variant.id}`, { cookie: cookies.staff1, body: { is_active: false } })).status === 200, 'a variant can be deactivated')
-      const reuse = await mkVar('staff1', sal, 'XL new', 120, 'SAL-XL-1')
+      check((await call('PATCH', `/api/variants/${xl.body.variant.id}`, { cookie: cookies.manager1, body: { is_active: false } })).status === 200, 'a variant can be deactivated')
+      const reuse = await mkVar('manager1', sal, 'XL new', 120, 'SAL-XL-1')
       check(reuse.status === 409 || reuse.status === 201, 'reusing the code of a deactivated variant is decided by the registry (see next check)')
       await client.query(`UPDATE barcode_registry SET is_active = false WHERE branch_id = 'pos1' AND barcode_value = 'SAL-XL-1'`)
-      const reuse2 = await mkVar('staff1', sal, 'XL again', 120, 'SAL-XL-1')
+      const reuse2 = await mkVar('manager1', sal, 'XL again', 120, 'SAL-XL-1')
       check(reuse2.status === 201 && (await scan('staff1', 'SAL-XL-1')).body.record.variant.variant_name === 'XL again', 'once its registry entry is also inactive the code can be given to a new variant and scans as it')
 
       // 8. old data: the repair function clears duplicates and the unique index can then be built

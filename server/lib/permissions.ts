@@ -29,21 +29,25 @@ export const PERMISSIONS = {
   // store settings (rows 24, 25)
   'settings.read':         { roles: AMS, scope: 'branch' as Scope },
   'settings.write':        { roles: AM, scope: 'branch' as Scope },
-  // catalog (rows 3, 4, 6). categories.create is the inline "add category" inside product forms.
+  // catalog (rows 3, 4, 6). Staff only READS the catalog (the POS needs it to sell); creating / editing products, variants and
+  // categories is Admin / Manager. categories.create is the inline "add category" inside product forms.
   'categories.read':       { roles: AMS, scope: 'branch' as Scope },
-  'categories.create':     { roles: AMS, scope: 'branch' as Scope },
+  'categories.create':     { roles: AM, scope: 'branch' as Scope },
   'categories.manage':     { roles: AM, scope: 'branch' as Scope },
   'products.read':         { roles: AMS, scope: 'branch' as Scope },
-  'products.write':        { roles: AMS, scope: 'branch' as Scope },
+  'products.write':        { roles: AM, scope: 'branch' as Scope },
   'variants.read':         { roles: AMS, scope: 'branch' as Scope },
-  'variants.write':        { roles: AMS, scope: 'branch' as Scope },
-  // inventory (rows 5, 7, 8, 9)
-  'inventory.read':        { roles: AMS, scope: 'branch' as Scope },
-  'inventory.adjust':      { roles: AMS, scope: 'branch' as Scope },
+  'variants.write':        { roles: AM, scope: 'branch' as Scope },
+  // inventory (rows 5, 7, 8, 9): stock list, ledger, adjust, price edits, receive stock are Admin / Manager only.
+  // inventory.alerts is the ONE narrow read Staff keeps: name, quantity and threshold of low-stock items, nothing else.
+  'inventory.read':        { roles: AM, scope: 'branch' as Scope },
+  'inventory.alerts':      { roles: AMS, scope: 'branch' as Scope },
+  'inventory.adjust':      { roles: AM, scope: 'branch' as Scope },
   'inventory.delete':      { roles: AM, scope: 'branch' as Scope },
-  // barcodes (rows 10-13)
-  'barcodes.read':         { roles: AMS, scope: 'branch' as Scope },
-  'barcodes.write':        { roles: AMS, scope: 'branch' as Scope },
+  // barcodes (rows 10-13): Staff keeps only the POS scan lookup; list, label data, generate, receive stock, register are Admin / Manager.
+  'barcodes.lookup':       { roles: AMS, scope: 'branch' as Scope },
+  'barcodes.read':         { roles: AM, scope: 'branch' as Scope },
+  'barcodes.write':        { roles: AM, scope: 'branch' as Scope },
   // POS + coupons (rows 15-17)
   'pos.sale':              { roles: AMS, scope: 'branch' as Scope },
   'pos.unregistered':      { roles: AMS, scope: 'branch' as Scope },
@@ -58,7 +62,7 @@ export const PERMISSIONS = {
   // advance orders (row 21)
   'advance.read':          { roles: AMS, scope: 'branch' as Scope },
   'advance.write':         { roles: AMS, scope: 'branch' as Scope },
-  'advance.delete':        { roles: AMS, scope: 'branch' as Scope },
+  'advance.delete':        { roles: AM, scope: 'branch' as Scope },
   // expenses (row 23)
   'expenses.read':         { roles: AM, scope: 'branch' as Scope },
   'expenses.write':        { roles: AM, scope: 'branch' as Scope },
@@ -67,7 +71,7 @@ export const PERMISSIONS = {
   // cross-branch views (row 29): admin only
   'global.read':           { roles: A, scope: 'global' as Scope },
   // uploads (rows 32-34)
-  'uploads.product-images': { roles: AMS, scope: 'branch' as Scope },
+  'uploads.product-images': { roles: AM, scope: 'branch' as Scope }, // only product forms upload these
   'uploads.invoices':      { roles: AMS, scope: 'branch' as Scope },
   'uploads.branding':      { roles: AM, scope: 'branch' as Scope },
   'uploads.avatars':       { roles: AM, scope: 'branch' as Scope },

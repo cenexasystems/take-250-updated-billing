@@ -14,7 +14,7 @@ export const ROLES: Role[] = ['admin', 'manager', 'staff']
 export type TabKey =
   | 'overview' | 'whatsapp' | 'pos_analytics' | 'billing' | 'advance_orders' | 'inventory' | 'expenses' | 'products' | 'categories'
   | 'coupons' | 'users' | 'history' | 'branch_hub' | 'business_overview' | 'cross_branch_sales' | 'consolidated_stock'
-  | 'staff_memberships' | 'business_reports' | 'barcode_hub' | 'attendance' | 'store_settings'
+  | 'staff_memberships' | 'business_reports' | 'barcode_hub' | 'attendance' | 'store_settings' | 'returns'
 
 /** Tabs the original hid even from the admin (ADMIN_REMOVED_TABS): nobody gets them. */
 export const REMOVED_TABS: TabKey[] = ['branch_hub', 'categories', 'attendance', 'barcode_hub', 'cross_branch_sales', 'consolidated_stock', 'business_reports']
@@ -28,6 +28,7 @@ export const TAB_ACCESS: Record<TabKey, Role[]> = {
   branch_hub: ['staff'],
   expenses: ['admin', 'manager'],
   coupons: ['admin'],
+  returns: ['admin', 'manager'], // reached from Order History (a Returns button), not a sidebar item
   store_settings: ['admin'],
   whatsapp: ['admin', 'manager'],
   products: ['admin', 'manager'],

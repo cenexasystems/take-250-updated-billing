@@ -23,6 +23,7 @@ export type DashboardTab =
   | 'barcode_hub'
   | 'attendance'
   | 'store_settings'
+  | 'returns'
 
 interface NavigationState {
   currentTab: DashboardTab

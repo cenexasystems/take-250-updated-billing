@@ -203,6 +203,21 @@ export async function returnsSuite(c: ReturnsCtx) {
     check(ap.body.products.some((x: any) => x.id === u1.body.id && x.category === 'Unregistered'), `${L} Admin sees it too`)
     check(!(await call('GET', '/api/products', { cookie: cookies[otherStaff] })).body.products.some((x: any) => x.id === u1.body.id), `${L} another branch never sees it`)
 
+    // ================= 12. the Returns list (Admin + Manager): newest RETURN time first, totals for the cash drawer
+    const rl = await call('GET', '/api/returns', { cookie: cookies[mgr] })
+    const list: any[] = rl.body.returns ?? []
+    check(rl.status === 200 && list.length >= 5 && list.every((x) => x.return_no.startsWith(`RET-POS${n}-`)), `${L} Manager lists this branch's returns only`, String(rl.status))
+    check(list.every((x, i) => i === 0 || new Date(list[i - 1].created_at).getTime() >= new Date(x.created_at).getTime()), `${L} the list is ordered by RETURN time, newest first`)
+    const mine = list.find((x) => x.return_no === r1.body.return_no)
+    check(!!mine && mine.invoice_no === o1.invoice_no && num(mine.refund_amount) === 300 && mine.refund_mode === 'cash' && mine.created_by_role === 'staff' && mine.reason === 'Wrong size' && /Ret B/.test(mine.items?.[0]?.name ?? ''), `${L} a row carries return no, original invoice, items, refund, mode, reason and role`, JSON.stringify(mine))
+    check(Math.abs(rl.body.totals.refund - list.reduce((t, x) => t + num(x.refund_amount), 0)) < 0.005 && Math.abs(rl.body.totals.cash + rl.body.totals.original - rl.body.totals.refund) < 0.005, `${L} the totals add up to the rows (cash + original = refunded)`)
+    check((await call('GET', '/api/returns', { cookie: cookies.admin, query: { branch_id: b } })).body.returns.length === list.length, `${L} Admin sees the same list for the selected branch`)
+    check((await call('GET', '/api/returns', { cookie: cookies[staff] })).status === 403, `${L} Staff has no Returns list (403)`)
+    check(!(await call('GET', '/api/returns', { cookie: cookies[`manager${other.slice(-1)}` as Actor] })).body.returns.some((x: any) => x.return_no === r1.body.return_no), `${L} another branch's manager never sees it`)
+    check((await call('GET', '/api/returns', { cookie: cookies[mgr], query: { to: new Date(Date.now() - 30 * 86400000).toISOString() } })).body.returns.length === 0, `${L} the date filter works on the return date (nothing 30 days ago)`)
+    check((await call('GET', '/api/returns', { cookie: cookies[mgr], query: { mode: 'original' } })).body.returns.every((x: any) => x.refund_mode === 'original'), `${L} the refund-mode filter works`)
+    check((await call('GET', '/api/returns', { cookie: cookies[mgr], query: { branch_id: other } })).status === 400, `${L} a forged ?branch_id is refused`)
+
     // another branch's return numbers are separate counters
     check(num((await one(`SELECT count(*)::int n FROM order_returns r JOIN orders o ON o.id = r.order_id AND o.branch_id = r.branch_id WHERE r.branch_id <> o.branch_id`)).n) === 0, `${L} every return belongs to its bill's own branch`)
   }

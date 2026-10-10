@@ -43,6 +43,7 @@ import { debounce } from '../lib/debounce'
 import { useProductStore, useAdminAuthStore, useBranchStore, resolveBranch, type Product, type PosBranch } from '../store/store'
 import { useBranchPolling } from '../hooks/useBranchPolling'
 import ReturnModal from '../components/returns/ReturnModal'
+import ReturnsList from '../components/returns/ReturnsList'
 import { can, canOpenTab, hasAdminPowers, roleLabel, type TabKey as PermTabKey } from '../lib/permissions'
 import { useAlarmStore } from '../store/alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
@@ -110,7 +111,7 @@ type DashboardCoupon = {
 }
 export type TabKey = 'overview' | 'whatsapp' | 'pos_analytics' | 'billing' | 'advance_orders' | 'inventory' | 'expenses' | 'products' | 'categories' | 'coupons' | 'users' | 'history'
   | 'branch_hub' | 'business_overview' | 'cross_branch_sales' | 'consolidated_stock' | 'staff_memberships' | 'business_reports' | 'barcode_hub'
-  | 'attendance' | 'store_settings'
+  | 'attendance' | 'store_settings' | 'returns'
 const GLOBAL_TABS: TabKey[] = ['business_overview', 'staff_memberships']
 // Pages removed from the admin panel — old links / bookmarks fall back to a live page
 const ADMIN_REMOVED_TABS: TabKey[] = ['branch_hub', 'categories', 'attendance', 'barcode_hub', 'cross_branch_sales', 'consolidated_stock', 'business_reports']
@@ -3269,6 +3270,11 @@ export default function Dashboard() {
                 <h2 className="mt-1 text-xl font-black text-[#111111]">{l('Order Management', 'ஆர்டர் மேலாண்மை')} <span className="text-[11px] font-semibold text-[#374151]">({l('POS + Advance Bills', 'POS பில்கள் மட்டுமே')})</span></h2>
               </div>
               <div className="flex gap-2">
+                {canOpenTab(role, 'returns') && (
+                  <button type="button" onClick={() => setTab('returns')} className="inline-flex items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white px-4 py-2 text-[13px] font-bold text-[#111111] shadow-sm hover:bg-[#F9FAFB] cursor-pointer">
+                    <RotateCcw size={14} /> {l('Returns', 'திரும்பப் பெறுதல்')}
+                  </button>
+                )}
                 <Link to="/pos" className="inline-flex items-center gap-2 rounded-xl bg-[#111111] px-4 py-2 text-[13px] font-bold text-white shadow-sm hover:bg-[#1f281d]">
                   <ShoppingCart size={14} /> Open POS
                 </Link>
@@ -4552,6 +4558,8 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        {tab === 'returns' && canOpenTab(role, 'returns') && <ReturnsList branch={branch} onBack={() => setTab('history')} />}
 
         {/* ── EXPENSES TAB ── */}
         {tab === 'expenses' && (

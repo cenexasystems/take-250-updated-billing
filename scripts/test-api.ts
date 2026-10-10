@@ -177,7 +177,7 @@ async function run() {
           check(server !== 'public' && same(server, FEATURE_ACCESS[feature as keyof typeof FEATURE_ACCESS]), `UI feature "${feature}" has the same roles as server permission "${p}"`)
         }
       }
-      const tabPerm: Partial<Record<TabKey, PermKey>> = { pos_analytics: 'analytics.read', staff_memberships: 'passcodes.list', business_overview: 'global.read', expenses: 'expenses.read', coupons: 'coupons.read', store_settings: 'settings.write', billing: 'pos.sale', inventory: 'inventory.read', advance_orders: 'advance.read', history: 'orders.read' }
+      const tabPerm: Partial<Record<TabKey, PermKey>> = { pos_analytics: 'analytics.read', staff_memberships: 'passcodes.list', business_overview: 'global.read', expenses: 'expenses.read', coupons: 'coupons.read', store_settings: 'settings.write', returns: 'returns.list', billing: 'pos.sale', inventory: 'inventory.read', advance_orders: 'advance.read', history: 'orders.read' }
       for (const [tab, perm] of Object.entries(tabPerm) as [TabKey, PermKey][]) {
         const server = PERMISSIONS[perm].roles
         const extra = TAB_ACCESS[tab].filter((r) => server === 'public' || !server.includes(r))

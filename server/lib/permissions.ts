@@ -60,6 +60,8 @@ export const PERMISSIONS = {
   'orders.delete':         { roles: A, scope: 'branch' as Scope },
   // returns replace the old cancel: Staff, Manager and Admin may return a completed bill of their own branch (Staff stays view-only otherwise)
   'orders.return':         { roles: AMS, scope: 'branch' as Scope },
+  // the Returns list (daily cash reconciliation): Admin and Manager only
+  'returns.list':          { roles: AM, scope: 'branch' as Scope },
   // advance orders (row 21)
   'advance.read':          { roles: AMS, scope: 'branch' as Scope },
   'advance.write':         { roles: AMS, scope: 'branch' as Scope },

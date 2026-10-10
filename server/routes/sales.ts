@@ -289,6 +289,29 @@ export const salesRoutes = [
       })
     },
   }),
+  // ---- returns list: every return of this branch by RETURN date (not the sale date), for daily cash reconciliation ----
+  route({
+    method: 'get', path: '/api/returns', perm: 'returns.list',
+    query: z.object({
+      from: date.optional(), to: date.optional(), mode: z.enum(['cash', 'original']).optional(),
+      limit: z.coerce.number().int().min(1).max(1000).default(200), offset: z.coerce.number().int().min(0).default(0),
+    }).strict(),
+    async handler({ db, branch, query }) {
+      const where = `r.branch_id = $1 AND ($2::timestamptz IS NULL OR r.created_at >= $2) AND ($3::timestamptz IS NULL OR r.created_at <= $3) AND ($4::text IS NULL OR r.refund_mode = $4)`
+      const p = [branch, query.from ?? null, query.to ?? null, query.mode ?? null]
+      const rows = await db.query(
+        `SELECT r.id, r.return_no, r.order_id, r.invoice_no, r.refund_amount, r.refund_mode, r.reason, r.note, r.created_by_role, r.created_at,
+                COALESCE((SELECT json_agg(json_build_object('name', i.item_name, 'quantity', i.quantity, 'restocked', i.restocked, 'refund_amount', i.refund_amount) ORDER BY i.id)
+                            FROM public.order_return_items i WHERE i.return_id = r.id AND i.branch_id = r.branch_id), '[]'::json) AS items
+           FROM public.order_returns r WHERE ${where} ORDER BY r.created_at DESC, r.return_no DESC LIMIT ${query.limit} OFFSET ${query.offset}`, p)
+      const t = (await db.query(
+        `SELECT count(*)::int AS n, COALESCE(sum(r.refund_amount), 0) AS refund_total,
+                COALESCE(sum(r.refund_amount) FILTER (WHERE r.refund_mode = 'cash'), 0) AS cash_total,
+                COALESCE(sum(r.refund_amount) FILTER (WHERE r.refund_mode = 'original'), 0) AS original_total
+           FROM public.order_returns r WHERE ${where}`, p)).rows[0]
+      return { returns: rows.rows, total: t.n, totals: { refund: Number(t.refund_total), cash: Number(t.cash_total), original: Number(t.original_total) } }
+    },
+  }),
   // ---- returns (replace the old cancel action) ----
   // Everything money- or stock-related happens in SQL (process_order_return): one transaction, row locks, idempotent.
   // Narrowest read the Return modal needs: the bill's lines with bought / already-returned quantities. No prices, no customer data.

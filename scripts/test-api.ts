@@ -39,10 +39,14 @@ const ROLE_OF = (a: Actor) => (a === 'admin' ? 'admin' : a.startsWith('manager')
 const BRANCH_OF = (a: Actor): B | null => (a === 'admin' ? null : (`pos${a.slice(-1)}` as B))
 
 // The run is split in two so one database connection never has to stay open for the whole (slow, remote) run:
-//   --part=1  sections A to M      --part=2  sections M2 and N (billing safety, then the login lockouts, which must run last)
+//   --part=1  sections A to M      --part=2  sections M2, O, N (billing safety, manager / staff matrices, then the login lockouts, which must run last)
+//   --part=3  section P, the order-returns suite (its own short connection)
+//   --part=4  sections M3 and the login lockouts (split from part 2: a remote database can reset a connection after a few minutes)
 // With no argument everything runs in one go. npm run test:api runs both parts.
 const PART = (process.argv.find((a) => a.startsWith('--part=')) || '').slice('--part='.length)
 
+// --part=3 --branch=posN runs the returns suite for one branch only (a shorter connection against a remote database)
+const RETURNS_BRANCH = (process.argv.find((a) => a.startsWith('--branch=')) || '').slice('--branch='.length) as B | ''
 let passed = 0
 let failed = 0
 const results: string[] = []
@@ -131,7 +135,7 @@ async function run() {
     const stockOf = async (id: number) => Number((await one(`SELECT stock_quantity::numeric s FROM products WHERE id = $1`, [id])).s)
     const asAdmin = (b: B) => ({ cookie: cookies.admin, query: { branch_id: b } })
 
-    if (PART !== '2') {
+    if (PART === '' || PART === '1') {
     // ================================================================== A. matrix-driven: permission table x routes x roles
     const SUBST = (p: string) => p.replace(/:[a-z]+/g, '999999999')
     const actorsByRole: Record<string, Actor> = { admin: 'admin', manager: 'manager1', staff: 'staff1' }
@@ -709,9 +713,11 @@ async function run() {
     }
 
     }
+    const sec2 = PART === '' || PART === '2'   // billing safety, manager / staff matrices
+    const sec4 = PART === '' || PART === '4'   // one barcode = one item, then the login lockouts (must run last)
     if (PART !== '1') {
     // ================================================================== M2. duplicate-proof bills, cancel + restock, CGST / SGST
-    {
+    if (sec2) {
       const mkProduct = async (b: B, stock = 20, name = 'Idem Product') => Number((await one(`INSERT INTO products (name, category, price, stock_quantity, stock, branch_id, is_active) VALUES ($3, 'x', 50, $2::int, $2::int, $1, true) RETURNING id`, [b, stock, name])).id)
       const stockOfP = async (id: number) => Number((await one(`SELECT stock_quantity::numeric s FROM products WHERE id = $1`, [id])).s)
       const pid = await mkProduct('pos1')
@@ -889,12 +895,12 @@ async function run() {
       check(listed && /^\d{4}-\d{2}-\d{2}$/.test(String(listed.expected_delivery_date)), 'a delivery date comes back as plain YYYY-MM-DD (it used to become a full timestamp that the screen showed as "Invalid Date")', JSON.stringify(listed?.expected_delivery_date))
     }
     // ================================================================== P. ORDER RETURNS (replace the old cancel action): shared suite, all 3 branches
-    {
-      await returnsSuite({ branches: BRANCHES, cookies, call: (m, p, o) => call(m, p, o), q: (sql, params) => rows(sql, params), check, concurrent: false })
+    if (PART === '' || PART === '3') {
+      await returnsSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o), q: (sql, params) => rows(sql, params), check, concurrent: false })
     }
 
     // ================================================================== O. MANAGER: no Coupons management, Store Settings writes, branding upload or delete (Admin only)
-    {
+    if (sec2) {
       const FAKE = '00000000-0000-4000-8000-000000000000'
       const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
       for (const b of BRANCHES) {
@@ -943,7 +949,7 @@ async function run() {
     }
 
     // ================================================================== N. STAFF: billing, advance orders, order history and the low-stock alert only
-    {
+    if (sec2) {
       const SECRETS = ['purchase_price', 'unit_cost', 'cost_price']
       const FAKE = '00000000-0000-4000-8000-000000000000'
       for (const b of BRANCHES) {
@@ -1025,7 +1031,7 @@ async function run() {
       check((await call('GET', '/api/inventory/low-stock-alerts')).status === 401, 'low-stock alerts need a session (401)')
     }
     // ================================================================== M3. one barcode = exactly one item (variants never share a code)
-    {
+    if (sec4) {
       const mkProd = async (b: B, name: string, extra = '') => Number((await one(`INSERT INTO products (name, category, price, stock_quantity, stock, branch_id, is_active, has_variants${extra ? ', barcode' : ''}) VALUES ($2, 'x', 100, 0, 0, $1, true, true${extra ? ', $3' : ''}) RETURNING id`, extra ? [b, name, extra] : [b, name])).id)
       const mkVar = (a: Actor, product_id: number, variant_name: string, price: number, barcode?: string | null) =>
         call('POST', '/api/variants', { cookie: cookies[a], body: { product_id, variant_name, price, stock: 5, ...(barcode !== undefined ? { barcode } : {}) } })
@@ -1117,7 +1123,7 @@ async function run() {
       check((await one(`SELECT count(*)::int n FROM pg_indexes WHERE indexname IN ('product_variants_branch_barcode_unique', 'products_branch_barcode_unique')`)).n === 2, 'the simulation was rolled back: the real indexes are still there')
     }
     // ================================================================== N. login rate limits (run last: they lock logins)
-    {
+    if (sec4) {
       // The sign-in lockout counts one DEVICE (a random yg_dev cookie the server hands out) per IP, so phones sharing
       // a public IP (4G, shop Wi-Fi) do not lock each other out; a wider per-IP guard catches clients that drop the cookie.
       const D = (n: number) => `yg_dev=${n.toString(16).padStart(24, '0')}`

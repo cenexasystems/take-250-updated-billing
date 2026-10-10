@@ -9,6 +9,8 @@ export interface ReturnsCtx {
   check: (ok: boolean, label: string, detail?: string) => void
   /** false when requests share one transaction (test-api's savepoints): the race test then runs one after the other */
   concurrent: boolean
+  /** run for this branch only (the other branches are still used as the "foreign" branch) */
+  only?: string
 }
 
 const day = (offset: number) => { const d = new Date(Date.now() + offset * 86400000); return d.toISOString().slice(0, 10) }
@@ -19,7 +21,7 @@ export async function returnsSuite(c: ReturnsCtx) {
   const num = (v: unknown) => Number(v)
   const FAKE = '00000000-0000-4000-8000-000000000000'
 
-  for (const b of c.branches) {
+  for (const b of c.branches.filter((x) => !c.only || x === c.only)) {
     const n = b.slice(-1)
     const staff = `staff${n}` as Actor, mgr = `manager${n}` as Actor
     const other = c.branches.find((x) => x !== b)!

@@ -9,8 +9,7 @@ import CenexaFooter from '../components/common/CenexaFooter'
 import { THEME_PALETTE } from '../lib/brand'
 import { uploadInvoicePdf } from '../lib/storage'
 import { isUuid, normalizeStructuredOrderItem, formatInvoiceNo, formatPaymentMode } from '../lib/retail'
-import { buildProfessionalWhatsAppMessage } from '../lib/whatsappMessage'
-import { toWhatsAppUrl } from '../lib/phone'
+import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
 
 function buildLookupCandidates(id: string): string[] {
   const raw = decodeURIComponent(id || '').trim()
@@ -273,50 +272,28 @@ export default function DigitalInvoice() {
     }
   }
 
+  // WhatsApp = the invoice PDF only (no text, no link to this page), from the tap on the WhatsApp button.
   const shareViaWhatsApp = () => {
-    // Synchronously prepare message to guarantee execution within user click gesture
-    const items = invoiceItems.map((item: ReturnType<typeof normalizeStructuredOrderItem>) => ({
-      name: item.name,
-      qty: item.quantity,
-      unit: item.unit,
-      unitType: item.unit_type,
-      rate: item.base_price,
-      lineTotal: item.line_total,
-    }))
-    const message = buildProfessionalWhatsAppMessage({
-      customerName: invoice.customer_name,
-      phone: invoice.phone,
-      invoiceNumber: invoice.invoice_no,
-      invoiceDate: invoice.created_at,
-      items,
-      subtotal,
-      couponDiscount: invoice.discount_amount,
-      manualDiscountAmount: invoice.manual_discount_amount,
-      shipping: invoice.delivery_charge,
-      gstAmount: invoice.total_gst || invoice.gst_amount || 0,
-      total: invoice.total,
-      paymentMode: payLabel,
-    })
-
-    const invoiceUrl = window.location.href
     const pdfUrl = invoice.pdf_url || invoice.invoice_pdf_url
-    const linkSection = pdfUrl
-      ? `\n\n📄 View Invoice: ${invoiceUrl}\n📥 Download PDF: ${pdfUrl}`
-      : `\n\n📄 View Invoice: ${invoiceUrl}`
-
-    const whatsappMessage = `${message}${linkSection}`
-    const waUrl = toWhatsAppUrl(invoice.phone, whatsappMessage)
-
-    // Open WhatsApp synchronously in user click gesture to avoid iOS Safari popup blocking
-    const isMobile =
-      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-
-    if (isMobile) {
-      window.location.href = waUrl
-    } else {
-      window.open(waUrl, '_blank', 'noopener,noreferrer')
-    }
+    const shareItems = (Array.isArray(invoice.items) ? invoice.items : []).map((item: Record<string, unknown>) => normalizeStructuredOrderItem(item))
+    const pdf = pdfNamed(invoicePdfFile({
+      invoiceNo: invoice.invoice_no,
+      date: invoice.created_at,
+      customerName: invoice.customer_name || 'Walk-in Customer',
+      phone: invoice.phone || '',
+      address: invoice.address || '',
+      branch: invoice.branch as any,
+      items: invoice.items || [],
+      subtotal: shareItems.reduce((sum: number, item: any) => sum + (item.line_total || 0), 0),
+      shipping: deliveryCharge,
+      total: invoice.total || 0,
+      discountAmount: invoice.discount_amount,
+      manualDiscountAmount: invoice.manual_discount_amount,
+      gstAmount: invoice.gst_amount,
+      couponCode: invoice.coupon_code,
+      paymentMode: payLabel,
+    }), invoicePdfShareName(invoice.invoice_no))
+    void sharePdfOnWhatsApp(pdf, invoice.phone)
 
     // Proactively upload invoice PDF in background if needed
     if (!pdfUrl) {

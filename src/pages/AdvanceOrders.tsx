@@ -5,8 +5,8 @@ import { api } from '../lib/apiClient'
 import { formatCurrency } from '../lib/retail'
 import { invoicePdfFile } from '../lib/invoicePdf'
 import { printThermalReceipt } from '../lib/thermalPrint'
-import { buildAdvanceDepositWhatsAppMessage, buildProfessionalWhatsAppMessage, publicInvoiceUrl } from '../lib/whatsappMessage'
-import { formatPhoneForDisplay, toWhatsAppUrl } from '../lib/phone'
+import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
+import { formatPhoneForDisplay } from '../lib/phone'
 import { advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/advanceReceipt'
 import { useAdminAuthStore, useProductStore, resolveBranch } from '../store/store'
 import { fetchVariantsByProduct, type ProductVariant } from '../services/variantService'
@@ -210,21 +210,8 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
     try {
       const created = await createAdvanceOrder({ ...form, totalAmount: total, depositAmount: deposit, referenceNumber: form.reference_number, createdByName: role || 'Staff', products: [{ ...(chosenVariant ? { product_id: Number(chosenVariant.productId), variant_id: chosenVariant.id, variant_name: chosenVariant.variantName } : {}), name: form.productName, category: form.category, description: form.description, quantity: 1, base_price: total, line_total: total, unit: 'piece', unit_type: 'unit', source: 'advance_order' }], branch, idempotencyKey: createKey.current.key })
       createKey.current = null // saved: the next advance order is a new one
-      setOrders(current => current.some(o => o.id === created.id) ? current : [created, ...current]); setForm(initialForm); pickProduct(undefined); setCreateOpen(false); setNotice(`${created.deposit_id} created. Deposit is tracked separately and has not been added to revenue.`)
+      setOrders(current => current.some(o => o.id === created.id) ? current : [created, ...current]); setForm(initialForm); pickProduct(undefined); setCreateOpen(false); setNotice(`${created.deposit_id} created. Deposit is tracked separately and has not been added to revenue. Tap WhatsApp to send the receipt PDF.`)
 
-      // Redirect to WhatsApp with advance deposit receipt
-      const advanceMsg = buildAdvanceDepositWhatsAppMessage({
-        customerName: created.customer_name,
-        depositId: created.deposit_id,
-        productName: created.product_name,
-        totalAmount: created.total_amount,
-        depositAmount: created.deposit_amount,
-        remainingBalance: created.remaining_balance,
-        expectedDeliveryDate: created.expected_delivery_date,
-        paymentMethod: form.paymentMethod,
-        branch: created.branch,
-      })
-      window.open(toWhatsAppUrl(created.phone, advanceMsg), '_blank', 'noopener,noreferrer')
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to create advance order') } finally { createLock.current = false; setSaving(false) }
   }
 
@@ -292,10 +279,8 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
       }
 
       const completed: AdvanceOrder = { ...paymentOrder, status: 'completed', remaining_balance: finalAmount, completed_at: result.completed_at, completed_order_id: result.order_id, invoice_number: result.invoice_no, final_payment_method: finalMethodStr }
-      setOrders(rows => rows.map(row => row.id === completed.id ? completed : row)); onOrderCompleted?.(completed); setPaymentOrder(null); setPaymentForm({ method: 'cash', remarks: '' }); setSplitP1Amount(''); setAppliedCoupon(null); setCouponInput(''); setCouponError(''); setManualDiscount(''); setManualDiscountType('rm'); setNotice(`${result.invoice_no} generated once. The full ${formatCurrency(completed.total_amount)} is now recognized as revenue.`)
+      setOrders(rows => rows.map(row => row.id === completed.id ? completed : row)); onOrderCompleted?.(completed); setPaymentOrder(null); setPaymentForm({ method: 'cash', remarks: '' }); setSplitP1Amount(''); setAppliedCoupon(null); setCouponInput(''); setCouponError(''); setManualDiscount(''); setManualDiscountType('rm'); setNotice(`${result.invoice_no} generated once. The full ${formatCurrency(completed.total_amount)} is now recognized as revenue. Tap WhatsApp to send the invoice PDF.`)
 
-      // Redirect to WhatsApp with final invoice URL + Instagram + Feedback form
-      whatsappInvoice(completed)
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to complete payment') } finally { setSaving(false) }
   }
 
@@ -303,30 +288,9 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
   const invoiceFile = (order: AdvanceOrder) => invoicePdfFile({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, address: order.address, branch: order.branch, items: productRows(order), subtotal: order.total_amount, shipping: 0, total: order.total_amount, paymentMode: order.final_payment_method || 'Paid' })
   const printFinal = (order: AdvanceOrder) => printThermalReceipt({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, branch: order.branch, items: productRows(order).map(item => ({ name: String(item.name || 'Product'), qty: Number(item.quantity || 1), unit: String(item.unit || 'piece'), price: Number(item.base_price || 0), line_total: Number(item.line_total || 0) })), subtotal: order.total_amount, shipping: 0, total: order.total_amount, paymentMode: order.final_payment_method || 'Paid' })
   
-  const whatsappDepositReceipt = (order: AdvanceOrder) => {
-    const message = buildAdvanceDepositWhatsAppMessage({
-      customerName: order.customer_name,
-      depositId: order.deposit_id,
-      productName: order.product_name,
-      totalAmount: order.total_amount,
-      depositAmount: order.deposit_amount,
-      remainingBalance: order.remaining_balance,
-      expectedDeliveryDate: order.expected_delivery_date,
-      branch: order.branch,
-    })
-    window.open(toWhatsAppUrl(order.phone, message), '_blank', 'noopener,noreferrer')
-  }
-
-  const whatsappInvoice = (order: AdvanceOrder) => {
-    const invNum = order.invoice_number || order.deposit_id
-    const message = buildProfessionalWhatsAppMessage({
-      customerName: order.customer_name,
-      phone: order.phone,
-      invoiceNumber: invNum,
-      invoiceUrl: publicInvoiceUrl(invNum),
-    })
-    window.open(toWhatsAppUrl(order.phone, message), '_blank', 'noopener,noreferrer')
-  }
+  // WhatsApp = the PDF only (no text, no link), from the tap on the WhatsApp button; nothing is sent automatically
+  const whatsappDepositReceipt = (order: AdvanceOrder) => { void sharePdfOnWhatsApp(advanceReceiptPdf(order), order.phone) }
+  const whatsappInvoice = (order: AdvanceOrder) => { void sharePdfOnWhatsApp(pdfNamed(invoiceFile(order), invoicePdfShareName(order.invoice_number || order.deposit_id)), order.phone) }
 
   const addEvent = async (order: AdvanceOrder, eventType: string, label: string) => {
     try { await addAdvanceEvent(order.id, eventType, label); await openDetails(order); setNotice(`${label} added to ${order.deposit_id}.`) } catch (err) { setError(err instanceof Error ? err.message : 'Unable to add timeline event') }

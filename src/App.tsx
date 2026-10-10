@@ -8,6 +8,7 @@ import { useBranchPolling } from './hooks/useBranchPolling'
 import { LowStockAlarmModal } from './components/dashboard/LowStockAlarmModal'
 import { useLowStockMonitor } from './hooks/useLowStockMonitor'
 import { applyActiveTheme } from './lib/branchTheme'
+import ShareToast from './components/common/ShareToast'
 
 function lazyWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>
@@ -228,6 +229,7 @@ function AppShell() {
 
       {/* Global Low Stock Sound & Visual Alarm for Admin and Staff Panels */}
       {hasStaffOrAdminAccess && <LowStockAlarmModal />}
+      <ShareToast />
     </div>
   )
 }

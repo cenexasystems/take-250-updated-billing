@@ -56,15 +56,13 @@ export function normalizePhoneForWhatsApp(input: string): string {
   return digits
 }
 
-export function toWhatsAppUrl(phone: string, text?: string): string {
+/** WhatsApp chat with the customer's number. Deliberately has NO text parameter: bills go as a PDF, never as a message. */
+export function toWhatsAppUrl(phone: string): string {
   const normalized = normalizePhoneForWhatsApp(phone) || normalizePhone(phone)
   const queryParams: string[] = []
 
   if (normalized) {
     queryParams.push(`phone=${normalized}`)
-  }
-  if (text) {
-    queryParams.push(`text=${encodeURIComponent(text)}`)
   }
 
   return `https://api.whatsapp.com/send${queryParams.length > 0 ? `?${queryParams.join('&')}` : ''}`

@@ -26,7 +26,7 @@ import { uploadInvoicePdf } from '../lib/storage'
 import { createOrderWithStock } from '../services/orderService'
 import { isCouponExpired } from '../services/couponService'
 import { createAdvanceOrder, type AdvanceOrder, type AdvancePaymentMethod } from '../services/advanceOrderService'
-import { printAdvanceReceipt } from '../lib/advanceReceipt'
+import { advanceReceiptPdf, printAdvanceReceipt } from '../lib/advanceReceipt'
 import { printThermalReceipt } from '../lib/thermalPrint'
 import Toggle from '../components/common/Toggle'
 import {
@@ -37,8 +37,8 @@ import {
   formatQuantityDisplay,
   formatInvoiceNo,
 } from '../lib/retail'
-import { buildProfessionalWhatsAppMessage, buildAdvanceDepositWhatsAppMessage, publicInvoiceUrl } from '../lib/whatsappMessage'
-import { formatPhoneForDisplay, normalizePhone, toWhatsAppUrl } from '../lib/phone'
+import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
+import { formatPhoneForDisplay, normalizePhone } from '../lib/phone'
 import { useLangStore } from '../store/langStore'
 import { fetchVariantsByProduct, type ProductVariant } from '../services/variantService'
 import { BarcodeScannerInput, type ScannedItemPayload } from '../components/pos/BarcodeScannerInput'
@@ -944,36 +944,8 @@ export default function Pos(props: PosProps = {}) {
   const change = cashReceived && Number(cashReceived) >= total
     ? Number(cashReceived) - total : null
 
-  const sendPosWhatsApp = (inv: InvoiceSnap) => {
-    const invoiceUrl = publicInvoiceUrl(inv.invoiceNo)
-    const message = buildProfessionalWhatsAppMessage({
-      customerName: inv.customerName,
-      phone: inv.phone,
-      invoiceNumber: inv.invoiceNo,
-      invoiceUrl,
-      paymentMode: inv.paymentMode || 'POS',
-      items: inv.items.map((item) => ({
-        name: item.name,
-        qty: item.qty,
-        unit: item.selectedUnit,
-        unitType: item.unitType,
-        rate: Number(item.basePrice) || 0,
-        lineTotal: item.lineTotal,
-      })),
-      subtotal: inv.subtotal,
-      couponDiscount: inv.couponDiscount,
-      manualDiscountAmount: inv.manualDiscountAmount,
-      shipping: inv.shipping,
-      gstAmount: inv.gstAmount,
-      total: inv.total,
-      branch: branch, // Branch passed through for branch-specific receipt details
-    })
-    window.open(toWhatsAppUrl(inv.phone || customer.phone || '', message), '_blank', 'noopener,noreferrer')
-  }
-
-  const persistInvoicePdf = async (inv: InvoiceSnap) => {
-    try {
-      const file = invoicePdfFile({
+  // the bill as the invoice PDF generator wants it (used to store the PDF and to send it on WhatsApp)
+  const invoicePdfDataOf = (inv: InvoiceSnap) => ({
         invoiceNo: inv.invoiceNo,
         date: inv.date,
         customerName: inv.customerName,
@@ -990,6 +962,16 @@ export default function Pos(props: PosProps = {}) {
         paymentMode: inv.paymentMode,
         total: inv.total,
       })
+
+  // WhatsApp = the invoice PDF only (no text, no link). Called from the tap on "WhatsApp Invoice", never automatically.
+  const sendPosWhatsApp = (inv: InvoiceSnap) => {
+    const file = pdfNamed(invoicePdfFile(invoicePdfDataOf(inv)), invoicePdfShareName(inv.invoiceNo))
+    void sharePdfOnWhatsApp(file, inv.phone || customer.phone || '')
+  }
+
+  const persistInvoicePdf = async (inv: InvoiceSnap) => {
+    try {
+      const file = invoicePdfFile(invoicePdfDataOf(inv))
       // Upload PDF and save its URL — total fields already saved immediately after RPC
       const url = await uploadInvoicePdf(file, inv.invoiceNo)
       setInvoice(current => current?.id === inv.id ? { ...current, invoicePdfUrl: url } : current)
@@ -1953,7 +1935,7 @@ export default function Pos(props: PosProps = {}) {
             <p className="mt-4 text-[11px] font-black uppercase tracking-[.16em] text-violet-600">Deposit order saved</p>
             <h3 className="mt-1 text-2xl font-black text-[#111111]">{depositCreated.deposit_id}</h3>
             <p className="mt-2 text-sm text-[#6B7280]">Deposit {formatCurrency(depositCreated.deposit_amount)} · Balance {formatCurrency(depositCreated.remaining_balance)}</p>
-            <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={() => printAdvanceReceipt(depositCreated)} className="rounded-xl border border-violet-200 py-3 text-sm font-black text-violet-700"><Printer size={16} className="mr-1 inline"/>Print Receipt</button><button onClick={() => { const msg = buildAdvanceDepositWhatsAppMessage({ customerName: depositCreated.customer_name, depositId: depositCreated.deposit_id, productName: depositCreated.product_name, totalAmount: depositCreated.total_amount, depositAmount: depositCreated.deposit_amount, remainingBalance: depositCreated.remaining_balance, expectedDeliveryDate: depositCreated.expected_delivery_date }); window.open(toWhatsAppUrl(depositCreated.phone, msg), '_blank', 'noopener,noreferrer') }} className="rounded-xl bg-[#25D366] py-3 text-sm font-black text-white"><MessageCircle size={16} className="mr-1 inline -mt-0.5"/>WhatsApp</button></div>
+            <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={() => printAdvanceReceipt(depositCreated)} className="rounded-xl border border-violet-200 py-3 text-sm font-black text-violet-700"><Printer size={16} className="mr-1 inline"/>Print Receipt</button><button onClick={() => void sharePdfOnWhatsApp(advanceReceiptPdf(depositCreated), depositCreated.phone)} className="rounded-xl bg-[#25D366] py-3 text-sm font-black text-white"><MessageCircle size={16} className="mr-1 inline -mt-0.5"/>WhatsApp</button></div>
             <button onClick={() => { setDepositCreated(null); searchRef.current?.focus() }} className="mt-3 w-full rounded-xl bg-[#111111] py-3 text-sm font-black text-white">Start New Order</button>
           </div>
         </div>,

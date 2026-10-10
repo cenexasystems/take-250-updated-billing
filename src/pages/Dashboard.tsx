@@ -52,7 +52,7 @@ import { formatCurrency, normalizeOrderMode, normalizeUnitType, toNumber, type U
 import { normalizeStructuredOrderItem, formatInvoiceNo, formatPaymentMode } from '../lib/retail'
 import { Invoice } from '../components/Invoice'
 import { printThermalReceipt } from '../lib/thermalPrint'
-import { buildProfessionalWhatsAppMessage } from '../lib/whatsappMessage'
+import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
 import { invoicePdfFile } from '../lib/invoicePdf'
 import { formatPhoneForCSV, formatPhoneForDisplay } from '../lib/phone'
 // toWhatsAppUrl removed - using direct link building in handlers
@@ -1007,26 +1007,7 @@ export default function Dashboard() {
     if (!items.length) return null
 
     const subtotal = items.reduce((sum, item) => sum + toNumber(item.line_total, 0), 0)
-    const message = buildProfessionalWhatsAppMessage({
-      customerName: order.customer_name,
-      phone: order.phone,
-      invoiceNumber: order.invoice_no || order.id,
-      invoiceDate: order.created_at,
-      items: items.map(item => ({
-        name: item.name,
-        qty: item.quantity,
-        unit: item.unit,
-        unitType: item.unit_type,
-        rate: item.base_price,
-        lineTotal: item.line_total,
-      })),
-      subtotal,
-      couponDiscount: order.discount_amount,
-      shipping: order.delivery_charge,
-      total: order.total,
-      branch: branch, // Branch passed through for branch-specific receipt details
-    })
-    return { items, subtotal, message, fileName: `Invoice-${order.invoice_no || order.id}.pdf` }
+    return { items, subtotal, fileName: `Invoice-${order.invoice_no || order.id}.pdf` }
   }
 
 
@@ -1065,6 +1046,29 @@ export default function Dashboard() {
       total: order.total,
       paymentMode: formatPaymentMode(order.payment_mode, order.split_details),
     })
+  }
+
+  // WhatsApp = the invoice PDF only (no text, no link). From the tap on "Send PDF"; the same generator and layout as Download.
+  const sendOrderPdfOnWhatsApp = (order: DashboardOrder) => {
+    const preview = getOrderWhatsAppPreview(order)
+    if (!preview) { alert('This order has no invoice details available.'); return }
+    const file = invoicePdfFile({
+      invoiceNo: order.invoice_no || order.id,
+      date: order.created_at,
+      customerName: order.customer_name,
+      phone: order.phone,
+      address: order.address,
+      branch: order.branch,
+      items: preview.items as unknown as Array<Record<string, unknown>>,
+      subtotal: preview.subtotal,
+      shipping: order.delivery_charge,
+      discountAmount: order.discount_amount,
+      manualDiscountAmount: order.manual_discount_amount,
+      gstAmount: order.total_gst,
+      paymentMode: formatPaymentMode(order.payment_mode, order.split_details),
+      total: order.total,
+    })
+    void sharePdfOnWhatsApp(pdfNamed(file, invoicePdfShareName(order.invoice_no || order.id)), order.phone)
   }
 
   const openOrderInvoice = async (order: DashboardOrder, mode: 'view' | 'download' | 'print') => {
@@ -2211,25 +2215,6 @@ export default function Dashboard() {
                         const isExpanded = waExpandedId === order.id
 
                         const normalizedItems = its.map(raw => normalizeStructuredOrderItem(raw as Record<string, unknown>))
-                        const waMsg = buildProfessionalWhatsAppMessage({
-                          customerName: order.customer_name,
-                          phone: order.phone,
-                          invoiceNumber: formatInvoiceNo(order.invoice_no || order.id),
-                          invoiceDate: order.created_at,
-                          items: normalizedItems.map(item => ({
-                            name: item.name,
-                            qty: item.quantity,
-                            unit: item.unit,
-                            unitType: item.unit_type,
-                            rate: item.base_price,
-                            lineTotal: item.line_total,
-                          })),
-                          subtotal: normalizedItems.reduce((sum, item) => sum + item.line_total, 0),
-                          total: getOrderTotal(order),
-                          paymentMode: formatPaymentMode(order.payment_mode || order.payment_method, order.split_details),
-                          branch: branch, // Branch passed through for branch-specific receipt details
-                        })
-
                         return (
                           <React.Fragment key={order.id}>
                             <tr className={`hover:bg-blue-50/40 align-middle ${isExpanded ? 'bg-blue-50/30' : ''}`}>
@@ -2349,18 +2334,17 @@ export default function Dashboard() {
                                       </div>
                                     )}
 
-                                    {/* WhatsApp message */}
+                                    {/* WhatsApp: the invoice PDF only (no text, no link) */}
                                     <div className="bg-white rounded-xl border border-blue-100 p-4">
-                                      <div className="flex items-center justify-between mb-2">
-                                        <span className="text-[11px] font-black text-[#374151] uppercase tracking-wider">{l('WhatsApp Message', 'வாட்ஸ் அப் செய்தி')}</span>
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[11px] font-black text-[#374151] uppercase tracking-wider">{l('WhatsApp Invoice', 'வாட்ஸ் அப் இன்வாய்ஸ்')}</span>
                                         <button
                                           type="button"
-                                          onClick={() => void navigator.clipboard.writeText(waMsg)}
+                                          onClick={() => sendOrderPdfOnWhatsApp(order)}
                                           className="px-3 py-1 rounded-lg bg-[#25D366] text-white text-[11px] font-black hover:bg-[#1da851] transition-colors">
-                                          {l('Copy Message', 'நகல் எடு')}
+                                          {l('Send PDF', 'PDF அனுப்பு')}
                                         </button>
                                       </div>
-                                      <pre className="text-[12px] text-[#111111] bg-[#F9FAFB] rounded-xl p-3 whitespace-pre-wrap font-sans leading-relaxed select-all">{waMsg}</pre>
                                     </div>
                                   </div>
                                 </td>

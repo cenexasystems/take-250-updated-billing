@@ -22,6 +22,7 @@ import { Invoice } from '../components/Invoice'
 import CatalogModal from '../components/CatalogModal'
 import CenexaFooter from '../components/common/CenexaFooter'
 import { invoicePdfFile } from '../lib/invoicePdf'
+import { invoiceDocFromBill } from '../lib/invoiceDoc'
 import { uploadInvoicePdf } from '../lib/storage'
 import { createOrderWithStock } from '../services/orderService'
 import { isCouponExpired } from '../services/couponService'
@@ -68,6 +69,7 @@ type InvoiceSnap = {
   subtotal: number
   shipping: number
   couponCode?: string
+  couponPercentage?: number
   couponDiscount: number
   manualDiscountAmount: number
   manualDiscountType: 'flat' | 'percent'
@@ -81,6 +83,7 @@ type InvoiceSnap = {
   balanceReturned: number
   paymentMode: string
   paymentMethod?: string
+  splitDetails?: unknown
   invoicePdfUrl?: string
 }
 
@@ -911,6 +914,7 @@ export default function Pos(props: PosProps = {}) {
         subtotal,
         shipping: Number(shipping || 0),
         couponCode: effectiveCouponCode,
+        couponPercentage: isValidCoupon ? Number(appliedCoupon?.percentage || 0) : 0,
         couponDiscount,
         manualDiscountAmount,
         manualDiscountType,
@@ -924,6 +928,7 @@ export default function Pos(props: PosProps = {}) {
         balanceReturned: balanceToReturn,
         paymentMode: ordermode === 'online' ? 'Online' : isSplit ? splitModeLabel : paymentType === 'qr' ? 'QR' : paymentType === 'card' ? 'Card' : 'Cash',
         paymentMethod: paymentMode,
+        splitDetails,
       }
       setInvoice(createdInvoice)
       saleKey.current = null // the whole bill is done: the next one is a new bill (until then a retry returns THIS bill, never a second one)
@@ -948,24 +953,17 @@ export default function Pos(props: PosProps = {}) {
   const change = cashReceived && Number(cashReceived) >= total
     ? Number(cashReceived) - total : null
 
-  // the bill as the invoice PDF generator wants it (used to store the PDF and to send it on WhatsApp)
-  const invoicePdfDataOf = (inv: InvoiceSnap) => ({
-        invoiceNo: inv.invoiceNo,
-        date: inv.date,
-        customerName: inv.customerName,
-        phone: inv.phone,
-        address: inv.address,
-        branch,
-        items: inv.items.map(item => ({ name: item.name, qty: item.qty, unit: item.selectedUnit, price: Number(item.basePrice) || 0, line_total: item.lineTotal })),
-        subtotal: inv.subtotal,
-        shipping: inv.shipping,
-        discountAmount: inv.couponDiscount,
-        manualDiscountAmount: inv.manualDiscountAmount,
-        gstAmount: inv.gstAmount,
-        couponCode: inv.couponCode,
-        paymentMode: inv.paymentMode,
-        total: inv.total,
-      })
+  // the bill just made, as the shared invoice data (the same values the sale stored): screen, PDF, WhatsApp and thermal
+  const invoicePdfDataOf = (inv: InvoiceSnap) => invoiceDocFromBill({
+    invoice_no: inv.invoiceNo, created_at: inv.date, customer_name: inv.customerName, phone: inv.phone, address: inv.address, branch,
+    status: 'completed', subtotal: inv.subtotal, discount_amount: inv.couponDiscount, coupon_code: inv.couponCode ?? null, coupon_percentage: inv.couponPercentage ?? 0,
+    manual_discount_amount: inv.manualDiscountAmount, manual_discount_type: inv.manualDiscountType, manual_discount_value: inv.manualDiscountValue,
+    total_gst: inv.gstAmount, shipping: inv.shipping, total: inv.total,
+    payment_mode: inv.paymentMethod === 'split' ? 'split' : inv.paymentMode, split_details: inv.splitDetails,
+  }, inv.items.map(item => ({
+    name: item.name, tamil_name: item.tamilName || item.nameTa || null, quantity: item.qty, unit: item.selectedUnit, unit_type: item.unitType,
+    base_quantity: item.baseQuantity, base_price: Number(item.basePrice) || 0, line_total: item.lineTotal,
+  })))
 
   // WhatsApp = the invoice PDF only (no text, no link). Called from the tap on "WhatsApp Invoice", never automatically.
   const sendPosWhatsApp = (inv: InvoiceSnap) => {
@@ -986,39 +984,11 @@ export default function Pos(props: PosProps = {}) {
 
   const printReceipt = (inv: InvoiceSnap) => {
     // Print a Bluetooth/thermal receipt directly
-    printThermalReceipt({
-      invoiceNo: inv.invoiceNo,
-      date: inv.date,
-      customerName: inv.customerName,
-      phone: inv.phone,
-      branch,
-      items: inv.items.map(item => ({ name: item.name, qty: item.qty, unit: item.selectedUnit, price: Number(item.basePrice) || 0, line_total: item.lineTotal })),
-      subtotal: inv.subtotal,
-      shipping: inv.shipping,
-      couponDiscount: inv.couponDiscount,
-      manualDiscount: inv.manualDiscountAmount,
-      totalGst: inv.gstAmount,
-      total: inv.total,
-      paymentMode: inv.paymentMode,
-    })
+    printThermalReceipt(invoicePdfDataOf(inv))
   }
 
   // ══ INVOICE SCREEN ════════════════════════════════════════════════════
   if (invoice) {
-    const invoiceItems = invoice.items.map(item => ({
-      id: String(item.id),
-      name: item.name,
-      nameTa: item.nameTa,
-      qty: item.qty,
-      quantity: item.qty,
-      unit: item.selectedUnit,
-      unit_type: item.unitType,
-      base_quantity: item.baseQuantity,
-      base_price: Number(item.basePrice) || 0,
-      line_total: item.lineTotal,
-      price: item.price,
-      offerPrice: item.offerPrice ?? undefined,
-    }))
 
     return (
       <div className="mobile-page-shell print:bg-white print:min-h-0 min-h-[100dvh] flex flex-col justify-between">
@@ -1124,23 +1094,7 @@ export default function Pos(props: PosProps = {}) {
 
         {/* Print view — full A4 invoice */}
         <div className="hidden print:block">
-          <Invoice
-            invoiceNo={invoice.invoiceNo}
-            date={invoice.date}
-            customerName={invoice.customerName}
-            phone={invoice.phone}
-            address={invoice.address}
-            branch={branch}
-            items={invoiceItems}
-            subtotal={invoice.subtotal}
-            shipping={invoice.shipping}
-            total={invoice.total}
-            status="Completed"
-            discountAmount={invoice.couponDiscount || 0}
-            manualDiscountAmount={invoice.manualDiscountAmount || 0}
-            gstAmount={invoice.gstAmount || 0}
-            couponCode={invoice.couponCode}
-          />
+          <Invoice doc={invoicePdfDataOf(invoice)} />
         </div>
         <CenexaFooter />
       </div>

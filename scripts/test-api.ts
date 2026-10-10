@@ -16,6 +16,7 @@ import { allRoutes, createApp } from '../server/app'
 import { getPool, singleClientDb } from '../server/lib/db'
 import { returnsSuite } from './lib/returnsSuite'
 import { couponSuite } from './lib/couponSuite'
+import { invoiceSuite } from './lib/invoiceSuite'
 import { repairSequences, restoreSequences, snapshotSequences } from './lib/devState'
 import { PERMISSIONS, type PermKey } from '../server/lib/permissions'
 import { slowdownMs } from '../server/lib/rateLimit'
@@ -44,6 +45,7 @@ const BRANCH_OF = (a: Actor): B | null => (a === 'admin' ? null : (`pos${a.slice
 //   --part=3  section P, the order-returns suite (its own short connection)
 //   --part=4  sections M3 and the login lockouts (split from part 2: a remote database can reset a connection after a few minutes)
 //   --part=5  section Q, customer lookup + coupon sending (migration 0012), all 3 branches (--branch=posN: one branch)
+//   --part=6  section R, invoice breakdown / split payment / return details, all 3 branches (--branch=posN: one branch)
 // With no argument everything runs in one go. npm run test:api runs both parts.
 const PART = (process.argv.find((a) => a.startsWith('--part=')) || '').slice('--part='.length)
 
@@ -903,6 +905,10 @@ async function run() {
     // ================================================================== Q. CUSTOMER LOOKUP + COUPON SENDING (0012): shared suite, all 3 branches
     if (PART === '' || PART === '5') {
       await couponSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o), q: (sql, params) => rows(sql, params), check })
+    }
+    // ================================================================== R. INVOICE BREAKDOWN, SPLIT PAYMENT, RETURN DETAILS: shared suite, all 3 branches
+    if (PART === '' || PART === '6') {
+      await invoiceSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o), q: (sql, params) => rows(sql, params), check })
     }
 
     // ================================================================== O. MANAGER: no Coupons management, Store Settings writes, branding upload or delete (Admin only)

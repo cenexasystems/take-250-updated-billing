@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { ApiError, notFound } from '../lib/errors.js'
 import { enforce, LIMITS, record } from '../lib/rateLimit.js'
 import { route } from '../lib/route.js'
+import { invoiceExtras } from '../lib/invoiceExtras.js'
 import type { PermKey } from '../lib/permissions.js'
 
 // ---------------------------------------------------------------- uploads (Vercel Blob)
@@ -102,7 +103,7 @@ const publicRoutes = [
       const order = (await db.query(`SELECT * FROM public.get_public_invoice_by_number($1) LIMIT 1`, [ref])).rows[0]
       if (order) {
         const items = await db.query(`SELECT * FROM public.order_items WHERE order_id = $1 AND branch_id = $2 ORDER BY id`, [order.id, order.branch_id])
-        return { kind: 'order', order, items: items.rows }
+        return { kind: 'order', order, items: items.rows, extras: await invoiceExtras(db, order.branch_id, order.id) }
       }
       const stripped = ref.replace(/^(INV|PB)[-_ ]*/i, '')
       const adv = (await db.query(

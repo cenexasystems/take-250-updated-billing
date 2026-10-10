@@ -8,7 +8,8 @@ import { invoicePdfFile, invoicePdfFileFromElement } from '../lib/invoicePdf'
 import CenexaFooter from '../components/common/CenexaFooter'
 import { THEME_PALETTE } from '../lib/brand'
 import { uploadInvoicePdf } from '../lib/storage'
-import { isUuid, normalizeStructuredOrderItem, formatInvoiceNo, formatPaymentMode } from '../lib/retail'
+import { isUuid, formatInvoiceNo } from '../lib/retail'
+import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBill } from '../lib/invoiceDoc'
 import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
 
 function buildLookupCandidates(id: string): string[] {
@@ -45,6 +46,8 @@ export default function DigitalInvoice() {
   const navigate = useNavigate()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [invoice, setInvoice] = useState<any>(null)
+  // the shared invoice data every output here draws (screen, PDF, WhatsApp PDF, thermal)
+  const [doc, setDoc] = useState<InvoiceDoc | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [downloadingPdf, setDownloadingPdf] = useState(false)
@@ -80,14 +83,18 @@ export default function DigitalInvoice() {
         const candidates = buildLookupCandidates(rawId)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let row: any = null
+        let built: InvoiceDoc | null = null
 
         // One public lookup per candidate, in priority order (the server rate-limits per IP, answers a miss with a
         // generic "not found", and returns exactly one bill: an order, or an advance order).
         for (const candidate of candidates) {
           try {
-            const res = await api<{ kind: 'order' | 'advance'; order: any }>('GET', `/api/public/invoice/${encodeURIComponent(candidate)}`)
+            const res = await api<{ kind: 'order' | 'advance'; order: any; items?: Array<Record<string, unknown>>; extras?: InvoiceExtras }>('GET', `/api/public/invoice/${encodeURIComponent(candidate)}`)
             if (res.kind === 'order') {
               row = { ...res.order, branch: res.order.branch_id }
+              // the bill's own lines (with ids, so a returned line can say "Returned 1 of 3"), else the copy on the bill
+              const lines = res.items && res.items.length ? res.items : (Array.isArray(res.order.items) ? res.order.items : [])
+              built = invoiceDocFromBill(row as StoredBill, lines, res.extras ?? {})
             } else {
               const adv = res.order
               const advItems = Array.isArray(adv.products) && adv.products.length > 0
@@ -130,6 +137,7 @@ export default function DigitalInvoice() {
         if (!row) throw new Error('Invoice not found')
 
         setInvoice(row)
+        setDoc(built ?? invoiceDocFromBill(row as StoredBill, Array.isArray(row.items) ? row.items : []))
       } catch (err: unknown) {
         if (err instanceof Error) {
           setError(err.message)
@@ -151,7 +159,7 @@ export default function DigitalInvoice() {
     )
   }
 
-  if (error || !invoice) {
+  if (error || !invoice || !doc) {
     return (
       <div className="min-h-screen bg-[#f9faf6] flex flex-col items-center justify-center text-center p-6">
         <h1 className="text-2xl font-bold text-sageDark mb-2">Invoice Not Found</h1>
@@ -165,13 +173,6 @@ export default function DigitalInvoice() {
       </div>
     )
   }
-
-  const invoiceItems = (Array.isArray(invoice.items) ? invoice.items : [])
-    .map((item: Record<string, unknown>) => normalizeStructuredOrderItem(item))
-  const subtotal = invoiceItems.reduce((sum: number, item: ReturnType<typeof normalizeStructuredOrderItem>) => sum + item.line_total, 0)
-  // "Cash ₹100.00 + QR ₹900.00" for a split bill, "Cash" / "QR" / "Card" otherwise
-  const payLabel = formatPaymentMode(invoice.payment_mode || invoice.payment_method, invoice.split_details)
-  const deliveryCharge = Number(invoice.delivery_charge) || Number(invoice.shipping) || 0
 
   const downloadPdf = async () => {
     if (downloadingPdf) return
@@ -204,26 +205,7 @@ export default function DigitalInvoice() {
     setDownloadingPdf(true)
     try {
       // Use jsPDF-based generation which is more reliable and matches tax invoice format
-      const invoiceItems = (Array.isArray(invoice.items) ? invoice.items : [])
-        .map((item: Record<string, unknown>) => normalizeStructuredOrderItem(item))
-
-      const file = invoicePdfFile({
-        invoiceNo: invoice.invoice_no,
-        date: invoice.created_at,
-        customerName: invoice.customer_name || 'Walk-in Customer',
-        phone: invoice.phone || '',
-        address: invoice.address || '',
-        branch: invoice.branch as any,
-        items: invoice.items || [],
-        subtotal: invoiceItems.reduce((sum: number, item: any) => sum + (item.line_total || 0), 0),
-        shipping: deliveryCharge,
-        total: invoice.total || 0,
-        discountAmount: invoice.discount_amount,
-        manualDiscountAmount: invoice.manual_discount_amount,
-        gstAmount: invoice.gst_amount,
-        couponCode: invoice.coupon_code,
-        paymentMode: payLabel,
-      })
+      const file = invoicePdfFile(doc)
 
       if (!file || file.size === 0) {
         console.error('Generated PDF file is empty')
@@ -275,50 +257,14 @@ export default function DigitalInvoice() {
   // WhatsApp = the invoice PDF only (no text, no link to this page), from the tap on the WhatsApp button.
   const shareViaWhatsApp = () => {
     const pdfUrl = invoice.pdf_url || invoice.invoice_pdf_url
-    const shareItems = (Array.isArray(invoice.items) ? invoice.items : []).map((item: Record<string, unknown>) => normalizeStructuredOrderItem(item))
-    const pdf = pdfNamed(invoicePdfFile({
-      invoiceNo: invoice.invoice_no,
-      date: invoice.created_at,
-      customerName: invoice.customer_name || 'Walk-in Customer',
-      phone: invoice.phone || '',
-      address: invoice.address || '',
-      branch: invoice.branch as any,
-      items: invoice.items || [],
-      subtotal: shareItems.reduce((sum: number, item: any) => sum + (item.line_total || 0), 0),
-      shipping: deliveryCharge,
-      total: invoice.total || 0,
-      discountAmount: invoice.discount_amount,
-      manualDiscountAmount: invoice.manual_discount_amount,
-      gstAmount: invoice.gst_amount,
-      couponCode: invoice.coupon_code,
-      paymentMode: payLabel,
-    }), invoicePdfShareName(invoice.invoice_no))
+    const pdf = pdfNamed(invoicePdfFile(doc), invoicePdfShareName(invoice.invoice_no))
     void sharePdfOnWhatsApp(pdf, invoice.phone)
 
     // Proactively upload invoice PDF in background if needed
     if (!pdfUrl) {
       void (async () => {
         try {
-          const invoiceItems = (Array.isArray(invoice.items) ? invoice.items : [])
-            .map((item: Record<string, unknown>) => normalizeStructuredOrderItem(item))
-
-          const file = invoicePdfFile({
-            invoiceNo: invoice.invoice_no,
-            date: invoice.created_at,
-            customerName: invoice.customer_name || 'Walk-in Customer',
-            phone: invoice.phone || '',
-            address: invoice.address || '',
-            branch: invoice.branch as any,
-            items: invoice.items || [],
-            subtotal: invoiceItems.reduce((sum: number, item: any) => sum + (item.line_total || 0), 0),
-            shipping: deliveryCharge,
-            total: invoice.total || 0,
-            discountAmount: invoice.discount_amount,
-            manualDiscountAmount: invoice.manual_discount_amount,
-            gstAmount: invoice.gst_amount,
-            couponCode: invoice.coupon_code,
-            paymentMode: payLabel,
-          })
+          const file = invoicePdfFile(doc)
           await uploadInvoicePdf(file, invoice.invoice_no)
         } catch { /* best-effort background upload */ }
       })()
@@ -326,27 +272,7 @@ export default function DigitalInvoice() {
   }
 
   const printReceipt = () => {
-    printThermalReceipt({
-      invoiceNo: invoice.invoice_no,
-      date: invoice.created_at,
-      customerName: invoice.customer_name,
-      phone: invoice.phone,
-      branch: invoice.branch,
-      items: (invoice.items || []).map((item: Record<string, unknown>) => ({
-        name: item.name || item.product_name,
-        qty: item.qty || item.quantity,
-        unit: item.unit,
-        price: item.price || item.base_price || 0,
-        line_total: item.line_total
-      })),
-      subtotal,
-      shipping: deliveryCharge,
-      couponDiscount: invoice.discount_amount || 0,
-      manualDiscount: invoice.manual_discount_amount || 0,
-      totalGst: invoice.total_gst || invoice.gst_amount || 0,
-      total: invoice.total > 0 ? invoice.total : (subtotal + (invoice.delivery_charge || 0) + (invoice.total_gst || invoice.gst_amount || 0) - (invoice.discount_amount || 0) - (invoice.manual_discount_amount || 0)),
-      paymentMode: payLabel,
-    })
+    printThermalReceipt(doc)
   }
 
   return (
@@ -385,24 +311,7 @@ export default function DigitalInvoice() {
 
       <div className="max-w-3xl mx-auto pb-12 print:mt-0 print:mb-0 print:p-0 print:max-w-full px-2 sm:px-0">
         <div ref={invoiceElementRef} className="bg-white shadow-xl rounded-2xl print:shadow-none print:rounded-none border border-sand/20 print:border-none print:m-0 print:p-0">
-          <Invoice
-            invoiceNo={invoice.invoice_no}
-            date={invoice.created_at}
-            customerName={invoice.customer_name}
-            phone={invoice.phone}
-            address={invoice.address}
-            branch={invoice.branch}
-            items={invoice.items || []}
-            subtotal={subtotal}
-            shipping={deliveryCharge}
-            discountAmount={invoice.discount_amount || 0}
-            manualDiscountAmount={invoice.manual_discount_amount || 0}
-            gstAmount={invoice.total_gst || invoice.gst_amount || 0}
-            couponCode={invoice.coupon_code}
-            total={invoice.total > 0 ? invoice.total : (subtotal + (invoice.delivery_charge || 0) + (invoice.total_gst || invoice.gst_amount || 0) - (invoice.discount_amount || 0) - (invoice.manual_discount_amount || 0))}
-            status={invoice.status}
-            paymentMode={payLabel}
-          />
+          <Invoice doc={doc} />
         </div>
       </div>
       </div>

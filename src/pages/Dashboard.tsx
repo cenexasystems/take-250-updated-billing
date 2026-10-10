@@ -55,6 +55,7 @@ import { Invoice } from '../components/Invoice'
 import { printThermalReceipt } from '../lib/thermalPrint'
 import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
 import { invoicePdfFile } from '../lib/invoicePdf'
+import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBill } from '../lib/invoiceDoc'
 import { formatPhoneForCSV, formatPhoneForDisplay } from '../lib/phone'
 // toWhatsAppUrl removed - using direct link building in handlers
 import { createVariant, updateVariant, deleteVariant, setDefaultVariant, type ProductVariant } from '../services/variantService'
@@ -98,6 +99,9 @@ type DashboardOrder = {
   branch?: PosBranch
   /** refunds paid out on this bill so far (goods + tax). Reports subtract it from THIS bill's own day. */
   returned_amount?: number
+  /** the stored bill amounts the invoice reads (src/lib/invoiceDoc.ts) */
+  subtotal?: number; shipping?: number; coupon_percentage?: number; manual_discount_type?: string; manual_discount_value?: number
+  taxable_amount?: number; cgst_amount?: number; sgst_amount?: number
 }
 type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null }
 type DashboardCoupon = {
@@ -307,6 +311,7 @@ export default function Dashboard() {
   const [analyticsTab, setAnalyticsTab] = useState('revenue')
 
   const [invoicePreviewOrder, setInvoicePreviewOrder] = useState<DashboardOrder | null>(null)
+  const [invoicePreviewDoc, setInvoicePreviewDoc] = useState<InvoiceDoc | null>(null)
   useBodyScrollLock(Boolean(invoicePreviewOrder))
 
   // WA detail expansion
@@ -448,6 +453,10 @@ export default function Dashboard() {
     remarks: row.remarks ? String(row.remarks) : undefined,
     reference_number: row.reference_number ? String(row.reference_number) : undefined,
     returned_amount: toNumber(row.returned_amount, 0),
+    subtotal: toNumber(row.subtotal, 0), shipping: toNumber(row.shipping, 0),
+    coupon_percentage: toNumber(row.coupon_percentage, 0),
+    manual_discount_type: String(row.manual_discount_type || 'flat'), manual_discount_value: toNumber(row.manual_discount_value, 0),
+    taxable_amount: toNumber(row.taxable_amount, 0), cgst_amount: toNumber(row.cgst_amount, 0), sgst_amount: toNumber(row.sgst_amount, 0),
   })
 
   // Load dashboard data
@@ -1013,73 +1022,42 @@ export default function Dashboard() {
   }
 
 
-  const handlePrintReceipt = (order: DashboardOrder) => {
+  // A returned bill (per-line "Returned 1 of 3", return numbers) and an advance-order bill (deposits) need the bill's details
+  // from the server; any other bill is drawn straight from its list row. Either way: the shared invoice data.
+  const needsBillDetail = (order: DashboardOrder) => ['partially_returned', 'returned'].includes(order.status) || order.order_type === 'advance_order'
+  const orderInvoiceDoc = async (order: DashboardOrder): Promise<InvoiceDoc | null> => {
+    if (needsBillDetail(order)) {
+      const res = await api<{ order: StoredBill; items: Array<Record<string, unknown>>; extras: InvoiceExtras }>('GET', `/api/orders/${order.id}`, { branchId: order.branch || branch })
+      return invoiceDocFromBill({ ...res.order, branch: order.branch }, res.items, res.extras)
+    }
     const preview = getOrderWhatsAppPreview(order)
-    if (!preview) { alert('This order has no invoice details available.'); return }
-    const subtotal = preview.subtotal // the bill's own line items, so Subtotal - Coupon - Discount + GST + Delivery = Total
+    if (!preview) return null
+    return invoiceDocFromBill(order as unknown as StoredBill, preview.items as unknown as Array<Record<string, unknown>>)
+  }
 
-    printThermalReceipt({
-      invoiceNo: order.invoice_no || order.id,
-      date: order.created_at,
-      customerName: order.customer_name,
-      phone: order.phone,
-      branch: order.branch,
-      items: (preview.items as Array<{
-        name?: string
-        product_name?: string
-        qty?: number
-        quantity?: number
-        unit?: string
-        price?: number
-        base_price?: number
-        line_total?: number
-      }>).map((item) => ({
-        name: item.name || item.product_name || '',
-        qty: item.qty || item.quantity || 0,
-        unit: item.unit || '',
-        price: item.price || item.base_price || 0,
-        line_total: item.line_total || 0
-      })),
-      subtotal,
-      shipping: order.delivery_charge || 0,
-      couponDiscount: order.discount_amount || 0,
-      manualDiscount: order.manual_discount_amount || 0,
-      totalGst: order.total_gst || 0,
-      total: order.total,
-      paymentMode: formatPaymentMode(order.payment_mode, order.split_details),
-    })
+  const handlePrintReceipt = async (order: DashboardOrder) => {
+    const doc = await orderInvoiceDoc(order).catch(() => null)
+    if (!doc) { alert('This order has no invoice details available.'); return }
+    printThermalReceipt(doc)
   }
 
   // WhatsApp = the invoice PDF only (no text, no link). From the tap on "Send PDF"; the same generator and layout as Download.
-  const sendOrderPdfOnWhatsApp = (order: DashboardOrder) => {
-    const preview = getOrderWhatsAppPreview(order)
-    if (!preview) { alert('This order has no invoice details available.'); return }
-    const file = invoicePdfFile({
-      invoiceNo: order.invoice_no || order.id,
-      date: order.created_at,
-      customerName: order.customer_name,
-      phone: order.phone,
-      address: order.address,
-      branch: order.branch,
-      items: preview.items as unknown as Array<Record<string, unknown>>,
-      subtotal: preview.subtotal,
-      shipping: order.delivery_charge,
-      discountAmount: order.discount_amount,
-      manualDiscountAmount: order.manual_discount_amount,
-      gstAmount: order.total_gst,
-      paymentMode: formatPaymentMode(order.payment_mode, order.split_details),
-      total: order.total,
-    })
-    void sharePdfOnWhatsApp(pdfNamed(file, invoicePdfShareName(order.invoice_no || order.id)), order.phone)
+  const sendOrderPdfOnWhatsApp = async (order: DashboardOrder) => {
+    const doc = await orderInvoiceDoc(order).catch(() => null)
+    if (!doc) { alert('This order has no invoice details available.'); return }
+    void sharePdfOnWhatsApp(pdfNamed(invoicePdfFile(doc), invoicePdfShareName(order.invoice_no || order.id)), order.phone)
   }
 
   const openOrderInvoice = async (order: DashboardOrder, mode: 'view' | 'download' | 'print') => {
     if (mode === 'view') {
       setInvoicePreviewOrder(order)
+      setInvoicePreviewDoc(null)
+      orderInvoiceDoc(order).then(setInvoicePreviewDoc).catch(() => setInvoicePreviewDoc(null))
       return
     }
 
-    if (order.invoice_pdf_url) {
+    // the PDF saved at billing time knows nothing of later returns: such a bill is drawn again from its current data
+    if (order.invoice_pdf_url && !needsBillDetail(order)) {
       const link = document.createElement('a')
       link.href = order.invoice_pdf_url
       if (mode === 'download') link.download = `Invoice-${order.invoice_no || order.id}.pdf`
@@ -1088,24 +1066,9 @@ export default function Dashboard() {
       if (mode === 'print') opened?.addEventListener('load', () => opened.print())
       return
     }
-    const preview = getOrderWhatsAppPreview(order)
-    if (!preview) { alert('This order has no invoice details available.'); return }
-    const file = invoicePdfFile({
-      invoiceNo: order.invoice_no || order.id,
-      date: order.created_at,
-      customerName: order.customer_name,
-      phone: order.phone,
-      address: order.address,
-      branch: order.branch,
-      items: preview.items as unknown as Array<Record<string, unknown>>,
-      subtotal: preview.subtotal,
-      shipping: order.delivery_charge,
-      discountAmount: order.discount_amount,
-      manualDiscountAmount: order.manual_discount_amount,
-      gstAmount: order.total_gst,
-      paymentMode: formatPaymentMode(order.payment_mode, order.split_details),
-      total: order.total,
-    })
+    const doc = await orderInvoiceDoc(order).catch(() => null)
+    if (!doc) { alert('This order has no invoice details available.'); return }
+    const file = invoicePdfFile(doc)
     const url = URL.createObjectURL(file)
     if (mode === 'download') {
       const link = document.createElement('a'); link.href = url; link.download = file.name; link.click()
@@ -2342,7 +2305,7 @@ export default function Dashboard() {
                                         <span className="text-[11px] font-black text-[#374151] uppercase tracking-wider">{l('WhatsApp Invoice', 'வாட்ஸ் அப் இன்வாய்ஸ்')}</span>
                                         <button
                                           type="button"
-                                          onClick={() => sendOrderPdfOnWhatsApp(order)}
+                                          onClick={() => void sendOrderPdfOnWhatsApp(order)}
                                           className="px-3 py-1 rounded-lg bg-[#25D366] text-white text-[11px] font-black hover:bg-[#1da851] transition-colors">
                                           {l('Send PDF', 'PDF அனுப்பு')}
                                         </button>
@@ -4570,9 +4533,7 @@ export default function Dashboard() {
       </main>
 
 
-      {invoicePreviewOrder && (() => {
-        const preview = getOrderWhatsAppPreview(invoicePreviewOrder)
-        if (!preview) return null
+      {invoicePreviewOrder && invoicePreviewDoc && (() => {
 
         return createPortal(
           <div
@@ -4593,7 +4554,7 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => handlePrintReceipt(invoicePreviewOrder)}
+                    onClick={() => void handlePrintReceipt(invoicePreviewOrder)}
                     className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#E5E7EB]/70 px-3 text-xs font-black text-[#111111] hover:bg-[#F9FAFB]"
                   >
                     <Printer size={15} /> Print
@@ -4617,24 +4578,7 @@ export default function Dashboard() {
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 pb-[calc(env(safe-area-inset-bottom)+8px)] sm:p-5">
                 <div className="mx-auto max-w-3xl overflow-hidden rounded-xl bg-white shadow-sm">
-                  <Invoice
-                    invoiceNo={formatInvoiceNo(invoicePreviewOrder.invoice_no || invoicePreviewOrder.id)}
-                    date={invoicePreviewOrder.created_at}
-                    customerName={invoicePreviewOrder.customer_name}
-                    phone={invoicePreviewOrder.phone}
-                    address={invoicePreviewOrder.address}
-                    branch={invoicePreviewOrder.branch}
-                    items={preview.items as unknown as import('../components/Invoice').InvoiceItem[]}
-                    subtotal={preview.subtotal}
-                    shipping={invoicePreviewOrder.delivery_charge}
-                    deliveryCharge={invoicePreviewOrder.delivery_charge}
-                    discountAmount={invoicePreviewOrder.discount_amount}
-                    manualDiscountAmount={invoicePreviewOrder.manual_discount_amount}
-                    gstAmount={invoicePreviewOrder.total_gst}
-                    paymentMode={formatPaymentMode(invoicePreviewOrder.payment_mode, invoicePreviewOrder.split_details)}
-                    total={invoicePreviewOrder.total}
-                    status={invoicePreviewOrder.status}
-                  />
+                  <Invoice doc={invoicePreviewDoc} />
                 </div>
               </div>
             </div>

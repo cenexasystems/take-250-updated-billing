@@ -3,6 +3,7 @@ import type { Db } from '../lib/db.js'
 import { ApiError, notFound } from '../lib/errors.js'
 import { route } from '../lib/route.js'
 import { insertRow, updateRow } from '../lib/sql.js'
+import { invoiceExtras } from '../lib/invoiceExtras.js'
 
 const money = z.number().finite().min(0)
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}([T ][0-9:.+Z-]+)?$/)
@@ -273,7 +274,8 @@ export const salesRoutes = [
       const o = await db.query(`SELECT * FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])
       if (!o.rows[0]) throw notFound()
       const items = await db.query(`SELECT * FROM public.order_items WHERE order_id = $1 AND branch_id = $2 ORDER BY id`, [params.id, branch])
-      return { order: o.rows[0], items: items.rows }
+      // returns (per line) and advance-order payments: what View Invoice shows besides the bill itself
+      return { order: o.rows[0], items: items.rows, extras: await invoiceExtras(db, branch!, params.id) }
     },
   }),
   route({

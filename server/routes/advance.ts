@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { actorName } from '../lib/auth.js'
-import { notFound } from '../lib/errors.js'
+import { ApiError, notFound } from '../lib/errors.js'
 import { route } from '../lib/route.js'
 
 const money = z.number().finite().min(0)
@@ -87,6 +87,8 @@ export const advanceRoutes = [
       payment_method: z.enum(['cash', 'upi', 'card']), final_amount: money,
       coupon_code: z.string().max(60).nullish(), coupon_percentage: z.number().finite().min(0).max(100).default(0),
       manual_discount: money.default(0), remarks: z.string().max(1000).default(''),
+      // a split balance payment: stored on the bill (orders.split_details) like a POS split, so every invoice can list it
+      split_details: z.object({ payments: z.array(z.object({ method: z.enum(['cash', 'upi', 'card']), amount: z.number().finite().positive() }).strict()).min(2).max(3) }).strict().optional(),
     }).strict(),
     async handler({ db, branch, body, params, session }) {
       return db.tx(async (t) => {
@@ -95,6 +97,16 @@ export const advanceRoutes = [
           [params.id, body.payment_method, body.final_amount, body.coupon_code ?? null, body.coupon_percentage, body.manual_discount, body.remarks, branch])
         // the bill this produced belongs to this login session (it may re-save the split payment text, nothing else)
         await t.query(`UPDATE public.orders SET created_by_role = $1, created_by_sid = $2 WHERE id = $3 AND branch_id = $4`, [session!.role, session!.sid, r.rows[0].order_id, branch])
+        const parts = body.split_details?.payments
+        if (parts) {
+          if (new Set(parts.map((p) => p.method)).size !== parts.length) throw new ApiError(400, 'Use a different payment method for each part of a split payment')
+          const paid = Math.round(parts.reduce((s, p) => s + p.amount, 0) * 100) / 100
+          if (Math.abs(paid - body.final_amount) > 0.01) throw new ApiError(400, `Split amounts (₹${paid.toFixed(2)}) must add up to the balance (₹${body.final_amount.toFixed(2)})`)
+          const label = `Split (${parts.map((p) => `${p.method === 'upi' ? 'QR' : p.method === 'card' ? 'Card' : 'Cash'} ₹${p.amount}`).join(' + ')})`
+          await t.query(`UPDATE public.orders SET payment_method = 'split', payment_mode = 'split', split_details = $1::jsonb WHERE id = $2 AND branch_id = $3`,
+            [JSON.stringify({ payments: parts }), r.rows[0].order_id, branch])
+          await t.query(`UPDATE public.advance_orders SET final_payment_method = $1 WHERE id = $2 AND branch_id = $3`, [label, params.id, branch])
+        }
         return { result: r.rows[0] }
       })
     },

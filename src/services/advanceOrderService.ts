@@ -119,7 +119,9 @@ export async function completeAdvanceOrder(
   couponCode: string | null = null,
   couponPercentage: number = 0,
   manualDiscountAmount: number = 0,
-  remarks = ''
+  remarks = '',
+  /** split balance: one part per mode, adding up to finalAmount (saved on the bill like a POS split) */
+  splitPayments?: Array<{ method: AdvancePaymentMethod; amount: number }>,
 ) {
   try {
     const res = await api<{ result: { order_id: string; invoice_no: string; completed_at: string } }>('POST', `/api/advance-orders/${orderId}/complete`, {
@@ -130,6 +132,7 @@ export async function completeAdvanceOrder(
         coupon_percentage: couponPercentage,
         manual_discount: manualDiscountAmount,
         remarks,
+        ...(splitPayments ? { split_details: { payments: splitPayments } } : {}),
       },
     })
     return res.result

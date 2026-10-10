@@ -4,6 +4,7 @@ import { CalendarDays, CheckCircle2, Clock3, Download, Eye, FileText, MessageCir
 import { api } from '../lib/apiClient'
 import { formatCurrency } from '../lib/retail'
 import { invoicePdfFile } from '../lib/invoicePdf'
+import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBill } from '../lib/invoiceDoc'
 import { printThermalReceipt } from '../lib/thermalPrint'
 import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
 import { formatPhoneForDisplay } from '../lib/phone'
@@ -261,6 +262,9 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
       }
 
       const rpcMethod: AdvancePaymentMethod = paymentForm.method === 'split' ? splitP1Type : paymentForm.method
+      const splitPayments = paymentForm.method === 'split'
+        ? (() => { const p1 = Number(splitP1Amount) || 0; return [{ method: splitP1Type, amount: p1 }, { method: splitP2Type, amount: Math.round((finalAmount - p1) * 100) / 100 }] })()
+        : undefined
       const result = await completeAdvanceOrder(
         paymentOrder.id,
         rpcMethod,
@@ -268,15 +272,9 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
         null, // No coupon codes for advance orders
         0, // No coupon percentage
         manualDisc,
-        remarksWithCoupon
+        remarksWithCoupon,
+        splitPayments,
       )
-
-      if (paymentForm.method === 'split') {
-        try {
-          await api('PATCH', `/api/orders/${result.order_id}/finalize`, { body: { payment_mode: finalMethodStr, payment_method: finalMethodStr }, branchId: branch })
-          await api('PATCH', `/api/advance-orders/${paymentOrder.id}/final-method`, { body: { final_payment_method: finalMethodStr }, branchId: branch })
-        } catch { /* best effort db update */ }
-      }
 
       const completed: AdvanceOrder = { ...paymentOrder, status: 'completed', remaining_balance: finalAmount, completed_at: result.completed_at, completed_order_id: result.order_id, invoice_number: result.invoice_no, final_payment_method: finalMethodStr }
       setOrders(rows => rows.map(row => row.id === completed.id ? completed : row)); onOrderCompleted?.(completed); setPaymentOrder(null); setPaymentForm({ method: 'cash', remarks: '' }); setSplitP1Amount(''); setAppliedCoupon(null); setCouponInput(''); setCouponError(''); setManualDiscount(''); setManualDiscountType('rm'); setNotice(`${result.invoice_no} generated once. The full ${formatCurrency(completed.total_amount)} is now recognized as revenue. Tap WhatsApp to send the invoice PDF.`)
@@ -285,12 +283,24 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
   }
 
   const productRows = (order: AdvanceOrder) => order.products.length ? order.products : [{ name: order.product_name, quantity: 1, base_price: order.total_amount, line_total: order.total_amount, unit: 'piece', unit_type: 'unit' }]
-  const invoiceFile = (order: AdvanceOrder) => invoicePdfFile({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, address: order.address, branch: order.branch, items: productRows(order), subtotal: order.total_amount, shipping: 0, total: order.total_amount, paymentMode: order.final_payment_method || 'Paid' })
-  const printFinal = (order: AdvanceOrder) => printThermalReceipt({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, branch: order.branch, items: productRows(order).map(item => ({ name: String(item.name || 'Product'), qty: Number(item.quantity || 1), unit: String(item.unit || 'piece'), price: Number(item.base_price || 0), line_total: Number(item.line_total || 0) })), subtotal: order.total_amount, shipping: 0, total: order.total_amount, paymentMode: order.final_payment_method || 'Paid' })
+  // The final tax invoice is the BILL that completing the order created (orders row: discount, GST, split payment) plus the
+  // deposit(s) and the balance payment, through the shared invoice data. It used to be drawn from this advance-order record,
+  // which knows only the total: Subtotal = TOTAL, no discount / tax rows, payment "cash".
+  const finalInvoiceDoc = async (order: AdvanceOrder): Promise<InvoiceDoc> => {
+    if (!order.completed_order_id) throw new Error('This order has no final bill yet')
+    const res = await api<{ order: StoredBill; items: Array<Record<string, unknown>>; extras: InvoiceExtras }>('GET', `/api/orders/${order.completed_order_id}`, { branchId: branch })
+    return invoiceDocFromBill({ ...res.order, branch: order.branch }, res.items.length ? res.items : productRows(order), res.extras)
+  }
+  const invoiceFile = async (order: AdvanceOrder) => invoicePdfFile(await finalInvoiceDoc(order))
+  const printFinal = async (order: AdvanceOrder) => { try { printThermalReceipt(await finalInvoiceDoc(order)) } catch (err) { setError(err instanceof Error ? err.message : 'Could not load the invoice') } }
+  const downloadFinal = async (order: AdvanceOrder) => { try { downloadFile(await invoiceFile(order)) } catch (err) { setError(err instanceof Error ? err.message : 'Could not load the invoice') } }
   
   // WhatsApp = the PDF only (no text, no link), from the tap on the WhatsApp button; nothing is sent automatically
   const whatsappDepositReceipt = (order: AdvanceOrder) => { void sharePdfOnWhatsApp(advanceReceiptPdf(order), order.phone) }
-  const whatsappInvoice = (order: AdvanceOrder) => { void sharePdfOnWhatsApp(pdfNamed(invoiceFile(order), invoicePdfShareName(order.invoice_number || order.deposit_id)), order.phone) }
+  const whatsappInvoice = async (order: AdvanceOrder) => {
+    try { void sharePdfOnWhatsApp(pdfNamed(await invoiceFile(order), invoicePdfShareName(order.invoice_number || order.deposit_id)), order.phone) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not load the invoice') }
+  }
 
   const addEvent = async (order: AdvanceOrder, eventType: string, label: string) => {
     try { await addAdvanceEvent(order.id, eventType, label); await openDetails(order); setNotice(`${label} added to ${order.deposit_id}.`) } catch (err) { setError(err instanceof Error ? err.message : 'Unable to add timeline event') }
@@ -411,7 +421,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
                       {/* Print Receipt / Invoice */}
                       <button
                         type="button"
-                        onClick={() => order.status === 'completed' ? printFinal(order) : printAdvanceReceipt(order)}
+                        onClick={() => order.status === 'completed' ? void printFinal(order) : printAdvanceReceipt(order)}
                         className="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
                         title={order.status === 'completed' ? "Print Final Receipt" : "Print Advance Receipt"}
                       >
@@ -421,7 +431,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
                       {/* Download PDF Receipt / Invoice */}
                       <button
                         type="button"
-                        onClick={() => downloadFile(order.status === 'completed' ? invoiceFile(order) : advanceReceiptPdf(order))}
+                        onClick={() => order.status === 'completed' ? void downloadFinal(order) : downloadFile(advanceReceiptPdf(order))}
                         className="w-8 h-8 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-700 flex items-center justify-center transition-colors cursor-pointer shrink-0"
                         title={order.status === 'completed' ? "Download PDF Invoice" : "Download PDF Receipt"}
                       >
@@ -749,7 +759,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => downloadFile(selected.status === 'completed' ? invoiceFile(selected) : advanceReceiptPdf(selected))}
+                onClick={() => selected.status === 'completed' ? void downloadFinal(selected) : downloadFile(advanceReceiptPdf(selected))}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 bg-white text-xs font-bold text-gray-700 hover:bg-gray-100 cursor-pointer transition shadow-xs"
                 title={selected.status === 'completed' ? 'Download PDF Invoice' : 'Download PDF Receipt'}
               >

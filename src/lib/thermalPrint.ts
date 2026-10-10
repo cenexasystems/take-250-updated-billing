@@ -1,31 +1,14 @@
 import { BRAND_EN } from './brand'
 import { thermalLogoFor } from './branchLogo'
-import { formatCurrency, formatInvoiceNo, splitGst } from './retail'
+import { formatCurrency, formatInvoiceNo, formatQuantityValue } from './retail'
+import type { InvoiceDoc } from './invoiceDoc'
 import { formatPhoneForDisplay } from './phone'
 import type { PosBranch } from '../store/store'
 import { getBranchProfile } from './branchProfile'
 import { useSettingsStore } from '../store/store'
 
-export interface ThermalReceiptData {
-  invoiceNo: string
-  date: string
-  customerName?: string
-  phone?: string
-  branch?: PosBranch
-  items: Array<{
-    name: string
-    qty: number
-    unit?: string
-    price: number
-    line_total?: number
-  }>
-  subtotal: number
-  shipping: number
-  couponDiscount?: number
-  manualDiscount?: number
-  totalGst?: number
-  total: number
-  paymentMode?: string
+/** The thermal receipt draws the shared invoice data (src/lib/invoiceDoc.ts), like the screen and the PDF. */
+export type ThermalReceiptData = InvoiceDoc & {
   storeName?: string
   storePhone?: string
   storeAddress?: string
@@ -108,7 +91,8 @@ export function printThermalReceipt(data: ThermalReceiptData) {
         <div class="border-bottom border-top" style="font-size: 11px;">
           <div>Inv: #${formatInvoiceNo(data.invoiceNo)}</div>
           <div>Date: ${dateStr}</div>
-          ${data.paymentMode ? `<div>Payment: ${data.paymentMode}</div>` : ''}
+          ${!data.payment.split ? `<div>Payment: ${data.payment.label}</div>` : `<div>Payment (Split)</div>${data.payment.parts.map((p) => `<div style="display:flex;justify-content:space-between;padding-left:8px;"><span>${p.label}</span><span>${formatCurrency(p.amount)}</span></div>`).join('')}`}
+          ${data.returns ? `<div class="font-bold mt-1">${data.returns.badge}</div><div style="font-size: 9px;">${data.returns.records.join(' / ')}</div>` : ''}
           ${data.customerName ? `<div>Name: ${data.customerName}</div>` : ''}
           ${data.phone ? `<div>Tel: ${formatPhoneForDisplay(data.phone)}</div>` : ''}
         </div>
@@ -123,17 +107,18 @@ export function printThermalReceipt(data: ThermalReceiptData) {
           </thead>
           <tbody>
             ${data.items.map(item => {
-              const lineTotal = item.line_total ?? (item.qty * item.price)
+              const lineTotal = item.line_total
               const unit = item.unit && item.unit !== 'unit' && item.unit !== 'piece' ? item.unit : ''
-              const rateDisplay = `${formatCurrency(item.price)}${unit ? `/${unit}` : ''}`
+              const rateDisplay = `${formatCurrency(item.base_price)}${unit ? `/${unit}` : ''}`
               return `
                 <tr>
                   <td style="text-align: left; padding: 3px 2px 3px 0; vertical-align: top; word-break: break-word;">
                     <div style="font-size: 11px; font-weight: bold; line-height: 1.25;">${item.name}</div>
                     <div style="font-size: 9px; color: #444; margin-top: 1px;">@ ${rateDisplay}</div>
+                    ${item.returnNote ? `<div style="font-size: 9px; font-weight: bold; margin-top: 1px;">${item.returnNote}</div>` : ''}
                   </td>
                   <td style="text-align: center; vertical-align: top; padding: 3px 0; font-size: 11px;">
-                    ${item.qty}
+                    ${formatQuantityValue(item.quantity)}
                   </td>
                   <td style="text-align: right; vertical-align: top; padding: 3px 0; font-size: 11px; font-weight: bold;">
                     ${formatCurrency(lineTotal)}
@@ -146,44 +131,23 @@ export function printThermalReceipt(data: ThermalReceiptData) {
 
         <div class="border-bottom" style="font-size: 12px;">
           <table style="width: 100%;">
-            ${data.subtotal !== data.total ? `
-              <tr>
-                <td class="text-left">Subtotal</td>
-                <td class="text-right">${formatCurrency(data.subtotal)}</td>
-              </tr>
-            ` : ''}
-            ${(data.couponDiscount || 0) > 0 ? `
-              <tr style="font-size: 13px; font-weight: bold;">
-                <td class="text-left">Coupon</td>
-                <td class="text-right">-${formatCurrency(data.couponDiscount || 0)}</td>
-              </tr>
-            ` : ''}
-            ${(data.manualDiscount || 0) > 0 ? `
-              <tr>
-                <td class="text-left">Manual Disc.</td>
-                <td class="text-right">-${formatCurrency(data.manualDiscount || 0)}</td>
-              </tr>
-            ` : ''}
-            ${(data.totalGst || 0) > 0 ? `
-              <tr style="font-size: 10px;">
-                <td class="text-left">CGST</td>
-                <td class="text-right">+${formatCurrency(splitGst(data.totalGst).cgst)}</td>
-              </tr>
-              <tr style="font-size: 10px;">
-                <td class="text-left">SGST</td>
-                <td class="text-right">+${formatCurrency(splitGst(data.totalGst).sgst)}</td>
-              </tr>
-            ` : ''}
-            ${data.shipping > 0 ? `
-              <tr>
-                <td class="text-left">Delivery</td>
-                <td class="text-right">${formatCurrency(data.shipping)}</td>
-              </tr>
-            ` : ''}
+            ${data.rows.filter((r) => r.kind !== 'subtotal' || data.rows.length > 1 || r.amount !== data.total).map((r) => `
+              <tr${r.kind === 'tax' ? ' style="font-size: 10px;"' : ''}>
+                <td class="text-left">${r.label}</td>
+                <td class="text-right">${r.kind === 'discount' ? '-' : r.kind === 'tax' ? '+' : ''}${formatCurrency(r.amount)}</td>
+              </tr>`).join('')}
             <tr class="font-bold" style="font-size: 14px;">
               <td class="text-left">Total</td>
               <td class="text-right">${formatCurrency(data.total)}</td>
             </tr>
+            ${data.advance ? [
+              ...data.advance.deposits.map((d) => `<tr style="font-size: 10px;"><td class="text-left">${d.label}</td><td class="text-right">${formatCurrency(d.amount)}</td></tr>`),
+              data.advance.balance ? `<tr style="font-size: 10px;"><td class="text-left">${data.advance.balance.label}</td><td class="text-right">${formatCurrency(data.advance.balance.amount)}</td></tr>` : '',
+              ...(data.advance.balance?.parts ?? []).map((p) => `<tr style="font-size: 10px;"><td class="text-left" style="padding-left: 8px;">${p.label}</td><td class="text-right">${formatCurrency(p.amount)}</td></tr>`),
+            ].join('') : ''}
+            ${data.returns ? `
+              <tr><td class="text-left">Returned</td><td class="text-right">-${formatCurrency(data.returns.returned)}</td></tr>
+              <tr class="font-bold"><td class="text-left">Net amount</td><td class="text-right">${formatCurrency(data.returns.net)}</td></tr>` : ''}
           </table>
         </div>
 

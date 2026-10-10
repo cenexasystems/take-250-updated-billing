@@ -1,68 +1,20 @@
 import React from 'react'
 import { BRAND_ICON, THEME_PALETTE } from '../lib/brand'
 import { formatPhoneForDisplay } from '../lib/phone'
-import { formatCurrency, formatQuantityValue, normalizeStructuredOrderItem, formatInvoiceNo, splitGst } from '../lib/retail'
+import { formatCurrency, formatQuantityValue, formatInvoiceNo } from '../lib/retail'
+import type { InvoiceDoc } from '../lib/invoiceDoc'
 import type { PosBranch } from '../store/store'
 import { getBranchProfile } from '../lib/branchProfile'
 
-export interface InvoiceItem {
-  id: string | number
-  name: string
-  nameTa?: string
-  qty: number
-  quantity?: number
-  unit?: string
-  unit_type?: 'unit' | 'piece' | 'weight' | 'volume' | 'bundle'
-  base_quantity?: number
-  base_price?: number
-  price: number
-  offerPrice?: number | null
-  line_total?: number
-  lineTotal?: number
-}
-
 export interface InvoiceProps {
-  invoiceNo: string
-  date: string
-  customerName?: string
-  phone?: string
-  address?: string
-  items: InvoiceItem[]
-  subtotal: number
-  shipping?: number
-  deliveryCharge?: number
-  discountAmount?: number
-  manualDiscountAmount?: number
-  gstAmount?: number
-  couponCode?: string
-  total: number
-  status?: string
+  /** the shared invoice data (src/lib/invoiceDoc.ts): every output draws the same rows from it */
+  doc: InvoiceDoc
   userId?: string
-  paymentMode?: string
-  branch?: PosBranch
   onPrintReceipt?: () => void
 }
 
-export const Invoice: React.FC<InvoiceProps> = ({
-  invoiceNo,
-  date,
-  customerName,
-  phone,
-  address,
-  items,
-  subtotal,
-  shipping = 0,
-  deliveryCharge = 0,
-  discountAmount = 0,
-  manualDiscountAmount = 0,
-  gstAmount = 0,
-  couponCode,
-  total,
-  status = 'completed',
-  userId,
-  paymentMode,
-  branch,
-}) => {
+export const Invoice: React.FC<InvoiceProps> = ({ doc, userId }) => {
+  const { invoiceNo, date, customerName, phone, address, items, total, status, branch } = doc
   const formattedInvoiceNo = formatInvoiceNo(invoiceNo)
   const dateStr = (() => {
     try { return new Date(date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) }
@@ -70,7 +22,7 @@ export const Invoice: React.FC<InvoiceProps> = ({
   })()
 
   const statusColor = status === 'completed' ? THEME_PALETTE.accentDark : status === 'cancelled' ? '#b91c1c' : '#b45309'
-  const effectiveDelivery = deliveryCharge || shipping
+  const row = { display: 'flex', justifyContent: 'space-between', marginBottom: 6 } as const
   const profile = getBranchProfile(branch)
 
   return (
@@ -119,7 +71,7 @@ export const Invoice: React.FC<InvoiceProps> = ({
                 fontSize: 9, fontWeight: 800, letterSpacing: 0.8, textTransform: 'uppercase', border: `1px solid ${statusColor}40`
               }}
             >
-              {status}
+              {status.replace(/_/g, ' ')}
             </span>
           </div>
           {userId && (
@@ -137,9 +89,26 @@ export const Invoice: React.FC<InvoiceProps> = ({
           <div style={{ fontSize: 9, fontWeight: 800, color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.7, marginTop: 6 }}>Mobile Number</div>
           <div style={{ fontSize: 12, color: '#555', lineHeight: 1.4, wordBreak: 'break-word' }}>{formatPhoneForDisplay(phone) || '—'}</div>
           {address && <div style={{ fontSize: 11, color: '#6B7280', marginTop: 4, lineHeight: 1.4, wordBreak: 'break-word' }}>{address}</div>}
-          {paymentMode && <div style={{ fontSize: 10, color: '#6B7280', marginTop: 4 }}>Payment Mode: {paymentMode}</div>}
+          {!doc.payment.split && <div style={{ fontSize: 10, color: '#6B7280', marginTop: 4 }}>Payment Mode: {doc.payment.label}</div>}
+          {doc.payment.split && (
+            <div style={{ fontSize: 10, color: '#6B7280', marginTop: 4 }} data-testid="invoice-payment-split">
+              <div style={{ fontWeight: 700 }}>Payment (Split)</div>
+              {doc.payment.parts.map((p, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', maxWidth: 200 }}><span>{p.label}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(p.amount)}</span></div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
+
+      {doc.returns && (
+        <div style={{ textAlign: 'center', marginBottom: 14 }} data-testid="invoice-return-status">
+          <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 99, background: '#b4530910', color: '#b45309', fontSize: 9, fontWeight: 800, letterSpacing: 0.8, border: '1px solid #b4530940' }}>
+            {doc.returns.badge}
+          </span>
+          <div style={{ fontSize: 10, color: '#6b7280', marginTop: 4 }}>{doc.returns.records.join(' · ')}</div>
+        </div>
+      )}
 
       {/* ── DIVIDER ──────────────────────────────────────────────── */}
       <div style={{ borderTop: '1px dashed #d0d0d0', marginBottom: 20 }} />
@@ -157,21 +126,18 @@ export const Invoice: React.FC<InvoiceProps> = ({
             </tr>
           </thead>
           <tbody>
-            {items.map((item, idx) => {
-              const normalized = normalizeStructuredOrderItem(item as unknown as Record<string, unknown>)
-              const displayName = normalized.tamil_name || item.nameTa || normalized.name
+            {items.map((normalized, idx) => {
+              const displayName = normalized.tamil_name || normalized.name
               return (
                 <tr key={idx} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   <td style={{ padding: '10px 8px', fontSize: 11, color: '#6B7280', verticalAlign: 'top' }}>{idx + 1}</td>
                   <td style={{ padding: '10px 8px', verticalAlign: 'top' }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: THEME_PALETTE.primary }}>{normalized.name}</div>
                     {displayName && displayName !== normalized.name && <div style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>{displayName}</div>}
-                    {item.offerPrice && item.price !== item.offerPrice && (
-                      <div style={{ fontSize: 10, color: '#6B7280', textDecoration: 'line-through', marginTop: 2 }}>MRP ₹{item.price}</div>
-                    )}
                     <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>
                       {normalized.unit} · {formatCurrency(normalized.base_price)}
                     </div>
+                    {normalized.returnNote && <div style={{ fontSize: 10, color: '#b45309', marginTop: 2, fontWeight: 700 }} data-testid="invoice-return-note">{normalized.returnNote}</div>}
                   </td>
                   <td style={{ padding: '10px 8px', fontSize: 12, fontWeight: 600, textAlign: 'center', verticalAlign: 'top' }}>{formatQuantityValue(normalized.quantity)}</td>
                   <td style={{ padding: '10px 8px', fontSize: 12, fontWeight: 600, textAlign: 'right', verticalAlign: 'top', color: '#555', fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(normalized.base_price)}</td>
@@ -187,42 +153,22 @@ export const Invoice: React.FC<InvoiceProps> = ({
       <div className="invoice-totals" style={{ marginTop: 24, borderTop: '2px solid #D4AF37', paddingTop: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <div style={{ minWidth: 240, width: '100%', maxWidth: 300 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 12, color: '#666' }}>Subtotal</span>
-              <span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(subtotal)}</span>
-            </div>
-            {discountAmount > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ fontSize: 13, color: THEME_PALETTE.accentDark, fontWeight: 600 }}>
-                  Coupon{couponCode ? ` (${couponCode})` : ''}
-                </span>
-                <span style={{ fontSize: 15, fontWeight: 800, color: THEME_PALETTE.accentDark, fontVariantNumeric: 'tabular-nums' }}>−{formatCurrency(discountAmount)}</span>
+            {doc.rows.map((r, i) => r.kind === 'discount' ? (
+              <div key={i} style={row}>
+                <span style={{ fontSize: 12, color: THEME_PALETTE.accentDark, fontWeight: 600 }}>{r.label}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: THEME_PALETTE.accentDark, fontVariantNumeric: 'tabular-nums' }}>−{formatCurrency(r.amount)}</span>
               </div>
-            )}
-            {manualDiscountAmount > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ fontSize: 12, color: THEME_PALETTE.accentDark }}>Manual Discount</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: THEME_PALETTE.accentDark, fontVariantNumeric: 'tabular-nums' }}>−{formatCurrency(manualDiscountAmount)}</span>
+            ) : r.kind === 'tax' ? (
+              <div key={i} style={row}>
+                <span style={{ fontSize: 10, color: '#666' }}>{r.label}</span>
+                <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>+{formatCurrency(r.amount)}</span>
               </div>
-            )}
-            {gstAmount > 0 && (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <span style={{ fontSize: 10, color: '#666' }}>CGST</span>
-                  <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>+{formatCurrency(splitGst(gstAmount).cgst)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <span style={{ fontSize: 10, color: '#666' }}>SGST</span>
-                  <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>+{formatCurrency(splitGst(gstAmount).sgst)}</span>
-                </div>
-              </>
-            )}
-            {effectiveDelivery > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ fontSize: 12, color: '#666' }}>Delivery</span>
-                <span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(effectiveDelivery)}</span>
+            ) : (
+              <div key={i} style={row}>
+                <span style={{ fontSize: 12, color: '#666' }}>{r.label}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(r.amount)}</span>
               </div>
-            )}
+            ))}
             <div
               style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -232,6 +178,27 @@ export const Invoice: React.FC<InvoiceProps> = ({
               <span style={{ fontSize: 15, fontWeight: 900, color: THEME_PALETTE.primary, textTransform: 'uppercase', letterSpacing: 0.5 }}>Total</span>
               <span style={{ fontSize: 20, fontWeight: 900, color: THEME_PALETTE.primary, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(total)}</span>
             </div>
+            {doc.advance && (
+              <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed #d0d0d0' }} data-testid="invoice-advance">
+                {doc.advance.deposits.map((d, i) => (
+                  <div key={i} style={row}><span style={{ fontSize: 12, color: '#666' }}>{d.label}</span><span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(d.amount)}</span></div>
+                ))}
+                {doc.advance.balance && (
+                  <>
+                    <div style={row}><span style={{ fontSize: 12, color: '#666' }}>{doc.advance.balance.label}</span><span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(doc.advance.balance.amount)}</span></div>
+                    {doc.advance.balance.parts.map((p, i) => (
+                      <div key={i} style={{ ...row, paddingLeft: 12 }}><span style={{ fontSize: 10, color: '#666' }}>{p.label}</span><span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(p.amount)}</span></div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+            {doc.returns && (
+              <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed #d0d0d0' }} data-testid="invoice-returns-totals">
+                <div style={row}><span style={{ fontSize: 12, color: '#b45309', fontWeight: 600 }}>Returned</span><span style={{ fontSize: 12, fontWeight: 700, color: '#b45309', fontVariantNumeric: 'tabular-nums' }}>−{formatCurrency(doc.returns.returned)}</span></div>
+                <div style={row}><span style={{ fontSize: 13, fontWeight: 900, color: THEME_PALETTE.primary }}>Net amount</span><span style={{ fontSize: 14, fontWeight: 900, color: THEME_PALETTE.primary, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(doc.returns.net)}</span></div>
+              </div>
+            )}
           </div>
         </div>
       </div>

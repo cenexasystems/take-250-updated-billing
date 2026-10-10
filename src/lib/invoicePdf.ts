@@ -1,29 +1,15 @@
 import { jsPDF } from 'jspdf'
 import html2canvas from 'html2canvas'
 import { BRAND_EN, THEME_PALETTE } from './brand'
-import { formatCurrency, formatQuantityValue, normalizeStructuredOrderItem, normalizeUnitLabel, formatInvoiceNo, splitGst } from './retail'
+import { formatCurrency, formatQuantityValue, normalizeUnitLabel, formatInvoiceNo } from './retail'
+import type { InvoiceDoc } from './invoiceDoc'
 import { printLogoFor } from './branchLogo'
 import type { PosBranch } from '../store/store'
 import { getBranchProfile } from './branchProfile'
 import { formatPhoneForDisplay } from './phone'
 
-export type InvoicePdfData = {
-  invoiceNo: string
-  date: string
-  customerName: string
-  phone: string
-  address: string
-  branch?: PosBranch
-  items: Array<Record<string, unknown>>
-  subtotal: number
-  shipping: number
-  total: number
-  discountAmount?: number
-  manualDiscountAmount?: number
-  gstAmount?: number
-  couponCode?: string | null
-  paymentMode?: string
-}
+/** The PDF draws the shared invoice data (src/lib/invoiceDoc.ts), like the screen and the thermal receipt. */
+export type InvoicePdfData = InvoiceDoc
 
 // jsPDF's built-in Helvetica font does not include the ₹ Unicode glyph (U+20B9).
 // In ISO-8859-1 (WinAnsiEncoding), \u20B9 maps to character code 185 (0xB9), which renders
@@ -82,9 +68,30 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   doc.setTextColor(THEME_PALETTE.primary)
   doc.setFont('helvetica', 'bold')
   doc.text(`Date: ${new Date(data.date).toLocaleDateString('en-IN')}`, right - 2, y + 2, { align: 'right' })
-  const paymentText = `Payment: ${data.paymentMode || 'POS'}`.replace(/[₹\u20b9]/g, 'Rs. ')
-  doc.text(paymentText, right - 2, y + 8, { align: 'right', maxWidth: 70 })
-  y = Math.max(y + logoSize + 3, shopPhoneY + 4) + 4
+  let payY = y + 8
+  if (!data.payment.split) {
+    doc.text(`Payment: ${data.payment.label}`.replace(/[₹\u20b9]/g, 'Rs. '), right - 2, payY, { align: 'right', maxWidth: 70 })
+  } else {
+    // split: a small block, one mode per line
+    doc.text('Payment (Split)', right - 2, payY, { align: 'right' })
+    doc.setFont('helvetica', 'normal')
+    data.payment.parts.forEach((part) => { payY += 4.5; doc.text(`${part.label}   ${money(part.amount)}`, right - 2, payY, { align: 'right' }) })
+    doc.setFont('helvetica', 'bold')
+  }
+  y = Math.max(y + logoSize + 3, shopPhoneY + 4, payY + 4) + 4
+
+  // returned bill: one status line + the return numbers / dates, near the top
+  if (data.returns) {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.setTextColor('#b45309')
+    doc.text(data.returns.badge, pageWidth / 2, y, { align: 'center' })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(muted)
+    doc.text(data.returns.records.join('  ·  '), pageWidth / 2, y + 4.5, { align: 'center', maxWidth: right - left })
+    y += 11
+  }
 
   const customerName = String(data.customerName || 'Walk-in Customer').trim()
   const customerPhone = formatPhoneForDisplay(data.phone) || '—'
@@ -128,8 +135,7 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   doc.text('AMOUNT', right - 3, y + 6, { align: 'right' })
   y += 14
 
-  data.items.forEach((raw, index) => {
-    const item = normalizeStructuredOrderItem(raw)
+  data.items.forEach((item, index) => {
     if (y > 260) { doc.addPage(); y = 20 }
     const name = item.name || 'Item'
     const nameLines = doc.splitTextToSize(name, 105) as string[]
@@ -146,35 +152,31 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
     doc.setFontSize(7)
     doc.setTextColor(muted)
     doc.text(`${unitLabel} · ${money(item.base_price)}`, left + 12, subY)
+    if (item.returnNote) { doc.setTextColor('#b45309'); doc.text(item.returnNote, left + 12, subY + 3.6); doc.setTextColor(muted) }
     doc.text(`${formatQuantityValue(item.quantity)}`, 139, y, { align: 'center' })
     doc.text(money(item.base_price), 164, y, { align: 'right' })
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8)
     doc.setTextColor(ink)
     doc.text(money(item.line_total), right - 3, y, { align: 'right' })
-    y += Math.max(14, (nameLines.length + 1) * 4 + 4)
+    y += Math.max(14, (nameLines.length + 1) * 4 + 4 + (item.returnNote ? 3.6 : 0))
     doc.setDrawColor('#e8eaed')
     doc.line(left, y - 3, right, y - 3)
   })
 
   y = Math.max(y + 6, 150)
-  // Subtotal - Coupon - Discount + GST + Delivery = Total. A row is only drawn when its value is above zero.
-  const rows: Array<[string, string, string, number]> = [['Subtotal', money(data.subtotal), ink, 9]]
-  if ((data.discountAmount || 0) > 0) rows.push([`Coupon${data.couponCode ? ` (${data.couponCode})` : ''}`, `-${money(data.discountAmount || 0)}`, THEME_PALETTE.accentDark, 9])
-  if ((data.manualDiscountAmount || 0) > 0) rows.push(['Discount', `-${money(data.manualDiscountAmount || 0)}`, THEME_PALETTE.accentDark, 9])
-  if ((data.gstAmount || 0) > 0) {
-    const { cgst, sgst } = splitGst(data.gstAmount)
-    rows.push(['CGST', money(cgst), ink, 8], ['SGST', money(sgst), ink, 8])
-  }
-  if ((data.shipping || 0) > 0) rows.push(['Delivery', money(data.shipping), ink, 9])
-  rows.forEach(([label, value, color, fontSize]) => {
+  // the shared rows: Subtotal, then only the non-zero ones (discounts, taxable amount, CGST / SGST, delivery)
+  const roomFor = (h: number) => { if (y + h > 268) { doc.addPage(); y = 20 } }
+  data.rows.forEach((r) => {
+    roomFor(8)
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(fontSize)
-    doc.setTextColor(color === THEME_PALETTE.accentDark ? THEME_PALETTE.accentDark : '#18202a')
-    doc.text(label, 142, y, { align: 'right' })
-    doc.text(value, right - 3, y, { align: 'right' })
+    doc.setFontSize(r.kind === 'tax' ? 8 : 9)
+    doc.setTextColor(r.kind === 'discount' ? THEME_PALETTE.accentDark : ink)
+    doc.text(r.label, 142, y, { align: 'right' })
+    doc.text(r.kind === 'discount' ? `-${money(r.amount)}` : money(r.amount), right - 3, y, { align: 'right' })
     y += 8 // one fixed row height for every row, so no row can overlap the next
   })
+  roomFor(14)
   doc.setDrawColor('#D4AF37')
   doc.setLineWidth(1)
   doc.line(left + 20, y - 3, right - 3, y - 3)
@@ -183,6 +185,29 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   doc.setTextColor(THEME_PALETTE.primary)
   doc.text('TOTAL', 142, y + 6, { align: 'right' })
   doc.text(money(data.total), right - 3, y + 6, { align: 'right' })
+  y += 15
+
+  // advance-order bill: deposits and the balance paid at completion; returned bill: Returned and Net amount (below TOTAL)
+  const extra = (label: string, value: string, opt: { size?: number; color?: string; bold?: boolean } = {}) => {
+    roomFor(7)
+    doc.setFont('helvetica', opt.bold ? 'bold' : 'normal')
+    doc.setFontSize(opt.size ?? 9)
+    doc.setTextColor(opt.color ?? ink)
+    doc.text(label, 142, y, { align: 'right' })
+    doc.text(value, right - 3, y, { align: 'right' })
+    y += 7
+  }
+  if (data.advance) {
+    data.advance.deposits.forEach((d) => extra(d.label, money(d.amount)))
+    if (data.advance.balance) {
+      extra(data.advance.balance.label, money(data.advance.balance.amount))
+      data.advance.balance.parts.forEach((p) => extra(p.label, money(p.amount), { size: 8, color: muted }))
+    }
+  }
+  if (data.returns) {
+    extra('Returned', `-${money(data.returns.returned)}`, { color: '#b45309' })
+    extra('Net amount', money(data.returns.net), { size: 11, color: THEME_PALETTE.primary, bold: true })
+  }
 
   y = 275
   doc.setDrawColor('#D4AF37')

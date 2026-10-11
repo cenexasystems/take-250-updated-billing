@@ -107,7 +107,7 @@ export async function couponSuite(c: CouponCtx) {
     const st = async (phone = X) => Object.fromEntries(((await lookup(phone)).body.coupons as Array<{ code: string; status: string }>).map((x) => [x.code, x.status]))
     let s = await st()
     check(s[SENTG] === 'active' && s[RESTR] === 'active' && s[EXP] === 'expired' && s[LIM] === 'limit_reached' && !(GEN in s), `${L} statuses: sent general Active, customer-specific Active, Expired, Limit reached; unsent coupon not listed`, JSON.stringify(s))
-    check(((await lookup(X)).body.coupons as any[]).every((x) => JSON.stringify(Object.keys(x).sort()) === '["code","status"]'), `${L} each listed coupon carries only code and status`)
+    check(((await lookup(X)).body.coupons as any[]).every((x) => JSON.stringify(Object.keys(x).sort()) === '["code","per_customer_limit","status","uses"]'), `${L} each listed coupon carries only code, status, this customer's uses and the per-customer limit`)
     check(Object.keys(await st(Y)).length === 0, `${L} another phone sees none of these coupons`)
 
     // ================= 6. the sale function: customer-specific rule, expired, limit, inactive, foreign code
@@ -120,7 +120,7 @@ export async function couponSuite(c: CouponCtx) {
     check(rX.status === 201, `${L} customer-specific coupon is ACCEPTED for the right phone (any format)`, `${rX.status} ${rX.body.error ?? ''}`)
     check(await usage(id.restr) === u0 + 1, `${L} its use is counted once`)
     const rX2 = await sell(X, RESTR)
-    check(rX2.status === 400 && /already been used/i.test(rX2.body.error), `${L} the same customer cannot use it again ("already used")`, `${rX2.status} ${rX2.body.error}`)
+    check(rX2.status === 400 && /already used this coupon the maximum number of times/i.test(rX2.body.error), `${L} the same customer cannot use it again (customer-specific: 1 use per phone by default)`, `${rX2.status} ${rX2.body.error}`)
     s = await st()
     check(s[RESTR] === 'used', `${L} status becomes Used`, JSON.stringify(s))
     const re = await sell(X, EXP)
@@ -166,6 +166,70 @@ export async function couponSuite(c: CouponCtx) {
     for (let i = 1; i <= 61 && !first429; i++) if ((await lookup(i % 2 ? X : '98765', mgr)).status === 429) first429 = i
     check(first429 === 61, `${L} the 61st lookup by the same user within 5 minutes is refused (429), malformed ones count too`, `first 429 at ${first429}`)
     check((await lookup(X, staff)).status === 200, `${L} another user of the branch is not blocked by it`)
+    await resetLookupLimit()
+
+    // ================= 11. (0014) per-customer limit: enforced in SQL under the coupon row lock
+    const A = `9${n}20000001`, B2 = `9${n}20000002`
+    const mk = async (code: string, per: number | null, extra: Record<string, unknown> = {}) =>
+      num((await one(`INSERT INTO coupons (code, percentage, branch_id, per_customer_limit, usage_limit) VALUES ($1, 10, $2, $3, $4) RETURNING id`, [code, b, per, extra.usage_limit ?? null])).id)
+    const pc1 = await mk(`PC1${n}`, 1), pc2 = await mk(`PC2${n}`, 2), tot = await mk(`PCT${n}`, 1, { usage_limit: 50 })
+    await mk(`PCR${n}`, 1)
+    const r1 = await sell(A, `PC1${n}`)
+    check(r1.status === 201, `${L} limit 1: the first use is accepted`, `${r1.status} ${r1.body.error ?? ''}`)
+    const r1b = await sell(`+91 ${A.slice(0, 5)} ${A.slice(5)}`, `PC1${n}`)
+    check(r1b.status === 400 && r1b.body.error === 'You have already used this coupon the maximum number of times', `${L} limit 1: the second use by the same phone (other format) is refused with the agreed message`, `${r1b.status} ${r1b.body.error}`)
+    check((await sell(B2, `PC1${n}`)).status === 201, `${L} limit 1: another phone can still use it`)
+    const r1n = await sell('', `PC1${n}`)
+    check(r1n.status === 400 && r1n.body.error === "Enter the customer's phone number to use this coupon", `${L} with a per-customer limit, a bill without a phone is refused`, `${r1n.status} ${r1n.body.error}`)
+    const r2a = await sell(A, `PC2${n}`), r2b = await sell(A, `PC2${n}`), r2c = await sell(A, `PC2${n}`)
+    check(r2a.status === 201 && r2b.status === 201 && r2c.status === 400 && /maximum number of times/.test(r2c.body.error), `${L} limit 2: two uses accepted, the third refused`, `${r2a.status}/${r2b.status}/${r2c.status}`)
+    const t1 = await sell(A, `PCT${n}`), t2 = await sell(A, `PCT${n}`), t3 = await sell(B2, `PCT${n}`)
+    check(t1.status === 201 && t2.status === 400 && t3.status === 201 && await usage(tot) === 2, `${L} total limit 50 + per-customer 1 work together (A once, B once, usage 2)`, `${t1.status}/${t2.status}/${t3.status} usage ${await usage(tot)}`)
+    await q(`UPDATE coupons SET usage_count = usage_limit WHERE id = $1`, [tot])
+    const t4 = await sell(`9${n}20000003`, `PCT${n}`)
+    check(t4.status === 400 && /usage limit has been reached/i.test(t4.body.error), `${L} the total usage limit still applies as before`, `${t4.status} ${t4.body.error}`)
+    // a fully returned bill gives the use back
+    const rb = await sell(A, `PCR${n}`)
+    const rline = num((await one(`SELECT id FROM order_items WHERE order_id = $1`, [rb.body.order_id])).id)
+    check((await sell(A, `PCR${n}`)).status === 400, `${L} PCR: second use refused before the return`)
+    const back = await call('POST', `/api/orders/${rb.body.order_id}/return`, { cookie: cookies[staff], body: { items: [{ order_item_id: rline, quantity: 1, restock: true }], reason: 'Wrong size', idempotency_key: `pcr-${b}-${Date.now()}` } })
+    check(back.status === 201 && back.body.order_status === 'returned', `${L} fixture: the bill is fully returned`, `${back.status} ${back.body.order_status}`)
+    check((await sell(A, `PCR${n}`)).status === 201, `${L} a fully returned bill frees the use: the customer can use the coupon again`)
+    // another branch: the same phone and the same code there are counted separately
+    await q(`INSERT INTO coupons (code, percentage, branch_id, per_customer_limit) VALUES ($1, 10, $2, 1)`, [`PC1${n}`, other])
+    const oStaff = `staff${other.slice(-1)}` as Actor
+    const op = num((await one(`INSERT INTO products (name, category, price, stock_quantity, stock, branch_id, is_active) VALUES ('Cpn Other', 'Cpn Cat', 1000, 5, 5, $1, true) RETURNING id`, [other])).id)
+    const ox2 = await call('POST', '/api/pos/sale', { cookie: cookies[oStaff], body: { customer_name: 'x', phone: A, payment_method: 'cash', items: [{ product_id: op, quantity: 1, unit_price: 1000, name: 'Cpn Other' }], coupon_code: `PC1${n}`, coupon_percentage: 10, discount_amount: 100 } })
+    check(ox2.status === 201, `${L} the customer's use in ${b} does not count in ${other} (same phone, same code there: accepted)`, `${ox2.status} ${ox2.body.error ?? ''}`)
+    // customer-specific coupons follow per_customer_limit (here 2); the phone restriction stays
+    const cs = await mk(`PCS${n}`, 2)
+    check((await send(cs, A, true)).status === 201, `${L} fixture: customer-specific coupon with limit 2 sent to A`)
+    const cs1 = await sell(A, `PCS${n}`), cs2 = await sell(A, `PCS${n}`), cs3 = await sell(A, `PCS${n}`), csB = await sell(B2, `PCS${n}`)
+    check(cs1.status === 201 && cs2.status === 201 && cs3.status === 400 && /maximum number of times/.test(cs3.body.error), `${L} customer-specific + limit 2: two uses, the third refused`, `${cs1.status}/${cs2.status}/${cs3.status}`)
+    check(csB.status === 400 && /only works for the customer/.test(csB.body.error), `${L} customer-specific: another phone is still refused`, csB.body.error)
+    // POS badge data: Used 2 of 2 / Active 1 of 2
+    check((await send(pc2, A)).status === 201, `${L} fixture: PC2 sent to A (toggle off)`)
+    await resetLookupLimit()
+    const lkA = ((await lookup(A)).body.coupons as any[])
+    const st2 = lkA.find((x) => x.code === `PC2${n}`), stS = lkA.find((x) => x.code === `PCS${n}`)
+    check(st2?.status === 'used' && st2.uses === 2 && st2.per_customer_limit === 2 && stS?.status === 'used', `${L} lookup: PC2 is Used (2 of 2) for A`, JSON.stringify(lkA))
+    const lkB = ((await lookup(B2)).body.coupons as any[])
+    check(lkB.length === 0, `${L} lookup: another phone does not see A's sent coupons`)
+    // advance-order completion cannot bypass it (the order-insert check): A already used PC1 here
+    const advA = await call('POST', '/api/advance-orders', { cookie: cookies[staff], body: { customer_name: 'Cpn Adv', phone: A, product_name: 'Item', total_amount: 900, deposit_amount: 100, expected_delivery_date: '2030-01-01', payment_method: 'cash',
+      products: [{ name: 'Item', quantity: 1, base_price: 1000, line_total: 1000 }], cart: { subtotal: 1000, coupon_code: `PC1${n}`, coupon_percentage: 10, coupon_discount: 100 } } })
+    const advDone = await call('POST', `/api/advance-orders/${advA.body.order?.id}/complete`, { cookie: cookies[staff], body: { payment_method: 'cash', final_amount: 800 } })
+    check(advA.status === 201 && advDone.status === 400 && /maximum number of times/.test(advDone.body.error), `${L} advance-order completion with the coupon is refused for a customer at the limit`, `${advA.status}/${advDone.status} ${advDone.body.error ?? ''}`)
+    // only the Admin can set it
+    for (const who of [mgr, staff] as Actor[]) {
+      check((await call('PATCH', `/api/coupons/${pc1}`, { cookie: cookies[who], body: { per_customer_limit: 5 } })).status === 403, `${L} ${who} cannot edit the per-customer limit (403)`)
+      check((await call('POST', '/api/coupons', { cookie: cookies[who], body: { code: `PCX${n}${who}`, percentage: 5, per_customer_limit: 1 } })).status === 403, `${L} ${who} cannot create a coupon with it (403)`)
+    }
+    const ap = await call('PATCH', `/api/coupons/${pc1}`, { cookie: cookies.admin, query: { branch_id: b }, body: { per_customer_limit: 3 } })
+    check(ap.status === 200 && num(ap.body.coupon?.per_customer_limit) === 3, `${L} admin edits it (3)`, JSON.stringify(ap.body).slice(0, 150))
+    check((await call('PATCH', `/api/coupons/${pc1}`, { cookie: cookies.admin, query: { branch_id: b }, body: { per_customer_limit: 0 } })).status === 400, `${L} 0 is refused (whole number >= 1, or blank)`)
+    check((await call('PATCH', `/api/coupons/${pc1}`, { cookie: cookies.admin, query: { branch_id: b }, body: { per_customer_limit: null } })).status === 200, `${L} blank (null) = unlimited is accepted`)
+    check((await sell(A, `PC1${n}`)).status === 201 && (await sell(A, `PC1${n}`)).status === 201 && (await sell('', `PC1${n}`)).status === 201, `${L} with the limit cleared the coupon behaves exactly as before (repeat use, no phone needed)`)
     await resetLookupLimit()
   }
 }

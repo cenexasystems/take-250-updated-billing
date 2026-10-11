@@ -13,6 +13,8 @@ export type CouponPdfData = {
   percentage: number
   expiryDate: string | null
   usageLimit: number | null
+  /** how many times one customer may use it; shown only when set */
+  perCustomerLimit?: number | null
   minOrderValue: number
   /** the customer it is sent to (name optional) */
   customerName?: string
@@ -93,8 +95,9 @@ export function createCouponPdf(data: CouponPdfData): Blob {
     ['Discount', `${Number(data.percentage)}% off`],
     ['Minimum order', Number(data.minOrderValue) > 0 ? money(data.minOrderValue) : 'No minimum'],
     ['Valid till', data.expiryDate ? new Date(data.expiryDate).toLocaleDateString('en-IN') : 'No expiry'],
-    ['Usage limit', data.usageLimit ? `${data.usageLimit} use${data.usageLimit === 1 ? '' : 's'} in total` : 'Unlimited'],
+    ['Total usage limit', data.usageLimit ? `${data.usageLimit} use${data.usageLimit === 1 ? '' : 's'} in total` : 'Unlimited'],
   ]
+  if (data.perCustomerLimit) rows.push(['Per-customer limit', `${data.perCustomerLimit} use${data.perCustomerLimit === 1 ? '' : 's'} per customer`])
   const customer = String(data.customerName || '').trim()
   const phone = data.phone ? formatPhoneForDisplay(data.phone) : ''
   const boxH = 8 + rows.length * 9 + (phone ? 10 : 0)

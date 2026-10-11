@@ -8,7 +8,7 @@ export type CustomerLookup = {
   exists_in_this_branch: boolean
   name: string | null
   /** this branch's coupons sent to the number, status computed by the server (SQL) */
-  coupons: Array<{ code: string; status: CouponStatus }>
+  coupons: Array<{ code: string; status: CouponStatus; uses?: number; per_customer_limit?: number | null }>
   /** display names of OTHER branches where the number is a customer (nothing else from those branches) */
   other_branches: string[]
 }
@@ -45,6 +45,15 @@ export const COUPON_STATUS_BADGE: Record<CouponStatus, { label: string; classNam
   limit_reached: { label: 'Limit reached', className: 'bg-amber-50 text-amber-800 border-amber-200' },
 }
 
+/** "Used 2 of 2" / "Active · 1 of 2" when a per-customer limit above 1 is set, else the plain status */
+const badgeLabel = (c: CustomerLookup['coupons'][number]) => {
+  const limit = c.per_customer_limit ?? null
+  const uses = c.uses ?? 0
+  if (limit && limit > 1 && c.status === 'used') return `Used ${Math.min(uses, limit)} of ${limit}`
+  if (limit && limit > 1 && c.status === 'active' && uses > 0) return `Active · ${uses} of ${limit} used`
+  return COUPON_STATUS_BADGE[c.status].label
+}
+
 /** Status line under a phone field + that customer's sent coupons (this branch). Renders nothing until there is an answer. */
 export default function CustomerLookupStatus({ lookup }: { lookup: CustomerLookup | null }) {
   if (!lookup) return null
@@ -65,7 +74,7 @@ export default function CustomerLookupStatus({ lookup }: { lookup: CustomerLooku
           {lookup.coupons.map((c) => (
             <span key={c.code} className="inline-flex items-center gap-1" data-testid="customer-coupon">
               <span className="text-[11px] font-mono font-black uppercase tracking-wider text-[#7A1220]">{c.code}</span>
-              <span className={`rounded-full px-2.5 py-0.5 text-[9px] font-black uppercase tracking-wider border ${COUPON_STATUS_BADGE[c.status].className}`}>{COUPON_STATUS_BADGE[c.status].label}</span>
+              <span className={`rounded-full px-2.5 py-0.5 text-[9px] font-black uppercase tracking-wider border ${COUPON_STATUS_BADGE[c.status].className}`}>{badgeLabel(c)}</span>
             </span>
           ))}
         </div>

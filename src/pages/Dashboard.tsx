@@ -112,6 +112,8 @@ type DashboardCoupon = {
   expiry_date: string | null
   usage_limit: number | null
   usage_count: number
+  /** how many times one customer (phone) may use it; null = unlimited */
+  per_customer_limit?: number | null
   min_order_value: number
 }
 export type TabKey = 'overview' | 'whatsapp' | 'pos_analytics' | 'billing' | 'advance_orders' | 'inventory' | 'expenses' | 'products' | 'categories' | 'coupons' | 'users' | 'history'
@@ -292,7 +294,7 @@ export default function Dashboard() {
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false)
   const [openCategoryMenuId, setOpenCategoryMenuId] = useState<string | number | null>(null)
   const [coupons, setCoupons] = useState<DashboardCoupon[]>([])
-  const [couponForm, setCouponForm] = useState({ code: '', percentage: 10, expiry_date: '', usage_limit: '', min_order_value: '' })
+  const [couponForm, setCouponForm] = useState({ code: '', percentage: 10, expiry_date: '', usage_limit: '', per_customer_limit: '', min_order_value: '' })
   const [couponSaveError, setCouponSaveError] = useState('')
   const [couponSaveSuccess, setCouponSaveSuccess] = useState('')
   const [editingCouponId, setEditingCouponId] = useState<number | null>(null)
@@ -1096,6 +1098,9 @@ export default function Dashboard() {
     if (!(toNumber(couponForm.percentage, 0) > 0 && toNumber(couponForm.percentage, 0) <= 100)) {
       setCouponSaveError('Discount must be between 1% and 100%'); return
     }
+    if (couponForm.per_customer_limit.trim() && !/^[1-9]\d*$/.test(couponForm.per_customer_limit.trim())) {
+      setCouponSaveError('Per-customer limit must be a whole number of 1 or more (blank = unlimited)'); return
+    }
     const code = couponForm.code.trim().toUpperCase()
     const payload = {
       code,
@@ -1103,6 +1108,7 @@ export default function Dashboard() {
       is_active: true,
       expiry_date: couponForm.expiry_date || null,
       usage_limit: couponForm.usage_limit ? toNumber(couponForm.usage_limit, 0) : null,
+      per_customer_limit: couponForm.per_customer_limit.trim() ? toNumber(couponForm.per_customer_limit, 0) : null,
       min_order_value: toNumber(couponForm.min_order_value, 0),
     }
     let error: unknown = null
@@ -1121,7 +1127,7 @@ export default function Dashboard() {
         setCouponSaveError(msg.includes('unique') || msg.includes('duplicate') || msg.includes('already exists') ? `Coupon code "${code}" already exists` : msg)
       }
     } else {
-      setCouponForm({ code: '', percentage: 10, expiry_date: '', usage_limit: '', min_order_value: '' })
+      setCouponForm({ code: '', percentage: 10, expiry_date: '', usage_limit: '', per_customer_limit: '', min_order_value: '' })
       setEditingCouponId(null)
       setCouponSaveSuccess(editingCouponId !== null ? 'Coupon updated!' : 'Coupon created!')
       await loadCoupons()
@@ -1135,6 +1141,7 @@ export default function Dashboard() {
       percentage: coupon.percentage,
       expiry_date: coupon.expiry_date ? coupon.expiry_date.slice(0, 10) : '',
       usage_limit: coupon.usage_limit !== null ? String(coupon.usage_limit) : '',
+      per_customer_limit: coupon.per_customer_limit ? String(coupon.per_customer_limit) : '',
       min_order_value: coupon.min_order_value ? String(coupon.min_order_value) : '',
     })
     setCouponSaveError('')
@@ -1143,7 +1150,7 @@ export default function Dashboard() {
 
   const cancelEditCoupon = () => {
     setEditingCouponId(null)
-    setCouponForm({ code: '', percentage: 10, expiry_date: '', usage_limit: '', min_order_value: '' })
+    setCouponForm({ code: '', percentage: 10, expiry_date: '', usage_limit: '', per_customer_limit: '', min_order_value: '' })
     setCouponSaveError('')
     setCouponSaveSuccess('')
   }
@@ -4375,7 +4382,7 @@ export default function Dashboard() {
                       </div>
                       <div className="space-y-1.5">
                         <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-700">
-                          {l('Usage Limit', 'பயன்பாட்டு வரம்பு')}
+                          {l('Total Usage Limit', 'மொத்த பயன்பாட்டு வரம்பு')}
                         </label>
                         <input
                           type="number"
@@ -4386,6 +4393,24 @@ export default function Dashboard() {
                           onChange={e => setCouponForm(f => ({ ...f, usage_limit: e.target.value }))}
                         />
                       </div>
+                    </div>
+
+                    {/* Per-customer limit */}
+                    <div className="space-y-1.5">
+                      <label htmlFor="coupon-per-customer-limit" className="block text-[11px] font-bold uppercase tracking-wider text-gray-700">
+                        {l('Per-Customer Limit', 'ஒரு வாடிக்கையாளர் வரம்பு')}
+                      </label>
+                      <input
+                        id="coupon-per-customer-limit"
+                        type="number"
+                        min="1"
+                        step="1"
+                        className="w-full rounded-xl border border-gray-300 bg-[#FAFAFA] px-3.5 py-2.5 text-[13px] font-bold text-[#111111] outline-none transition-all focus:border-[#7A1220] focus:bg-white focus:ring-1 focus:ring-[var(--theme-primary)]"
+                        placeholder="Unlimited"
+                        value={couponForm.per_customer_limit}
+                        onChange={e => setCouponForm(f => ({ ...f, per_customer_limit: e.target.value }))}
+                      />
+                      <p className="text-[10px] font-medium text-[#6B7280]">{l('How many times one customer (phone number) can use this coupon', 'ஒரு வாடிக்கையாளர் (தொலைபேசி எண்) இந்த கூப்பனை எத்தனை முறை பயன்படுத்தலாம்')}</p>
                     </div>
                   </div>
                 </div>
@@ -4461,6 +4486,7 @@ export default function Dashboard() {
 
                             <p className="text-[11px] font-medium text-[#6B7280]">
                               Used {coupon.usage_count}{coupon.usage_limit ? `/${coupon.usage_limit}` : ''} times
+                              {coupon.per_customer_limit ? ` • ${coupon.per_customer_limit} per customer` : ''}
                               {coupon.expiry_date ? ` • expires ${new Date(coupon.expiry_date).toLocaleDateString('en-IN')}` : ' • no expiry'}
                             </p>
                           </div>

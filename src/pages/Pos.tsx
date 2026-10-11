@@ -942,7 +942,10 @@ export default function Pos(props: PosProps = {}) {
       clearCustomerLookupCache() // a coupon on this bill is now Used: the next lookup must ask again
       void fetchProducts(branch, true)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to generate bill')
+      const msg = err instanceof Error ? err.message : 'Failed to generate bill'
+      setError(msg)
+      // a coupon the server refused (per-customer limit, phone needed, expired, ...): also say it at the coupon field
+      if (/coupon/i.test(msg)) setCouponError(msg)
     } finally {
       submitLock.current = false
       setSaving(false)

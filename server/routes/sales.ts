@@ -64,6 +64,8 @@ const couponFields = {
   is_active: z.boolean(),
   expiry_date: date.nullable(),
   usage_limit: z.number().int().positive().nullable(),
+  // 0014: how many times one customer (phone) may use the coupon; null = unlimited
+  per_customer_limit: z.number().int().positive().nullable(),
   min_order_value: money,
 }
 

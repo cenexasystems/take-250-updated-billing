@@ -8,7 +8,7 @@ import Toggle from '../common/Toggle'
 import CustomerLookupStatus, { clearCustomerLookupCache, useCustomerLookup } from '../pos/CustomerLookupStatus'
 import type { PosBranch } from '../../store/store'
 
-export type SendableCoupon = { id: number; code: string; percentage: number; expiry_date: string | null; usage_limit: number | null; min_order_value: number }
+export type SendableCoupon = { id: number; code: string; percentage: number; expiry_date: string | null; usage_limit: number | null; per_customer_limit?: number | null; min_order_value: number }
 
 /**
  * Admin: send one coupon of the selected branch to a customer as a PDF FILE (no text, title or link), with the same share
@@ -32,7 +32,7 @@ export default function SendCouponModal({ coupon, branch, onClose, onSent }: { c
       const customerName = name.trim() || (lookup?.exists_in_this_branch ? lookup.name || '' : '')
       const file = couponPdfFile({
         branch, code: coupon.code, percentage: Number(coupon.percentage), expiryDate: coupon.expiry_date,
-        usageLimit: coupon.usage_limit, minOrderValue: Number(coupon.min_order_value || 0), customerName, phone: canonical,
+        usageLimit: coupon.usage_limit, perCustomerLimit: coupon.per_customer_limit ?? null, minOrderValue: Number(coupon.min_order_value || 0), customerName, phone: canonical,
       })
       const shared = await sharePdfOnWhatsApp(file, canonical, 'Coupon downloaded. Attach it in WhatsApp.')
       if (shared === 'cancelled') { setError('Sharing was cancelled. Nothing was recorded.'); return }

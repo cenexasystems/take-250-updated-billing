@@ -20,13 +20,18 @@ async function canonical(db: { query: (s: string, p: unknown[]) => Promise<{ row
 /** This branch's sent coupons for one phone: the latest send per coupon, with the status computed in SQL. */
 async function sentCoupons(db: { query: (s: string, p: unknown[]) => Promise<{ rows: any[] }> }, branch: string, phone: string) {
   const r = await db.query(
-    `SELECT code, status FROM (
-       SELECT DISTINCT ON (s.coupon_id) c.code, public.coupon_status_for_phone(s.branch_id, s.coupon_id, s.phone) AS status, s.sent_at
+    `SELECT code, status, uses, per_customer_limit FROM (
+       SELECT DISTINCT ON (s.coupon_id) c.code, public.coupon_status_for_phone(s.branch_id, s.coupon_id, s.phone) AS status, s.sent_at,
+              -- this customer's uses in THIS branch (same rule as the status) and the per-customer limit, for "Used 1 of 2"
+              (SELECT count(*)::int FROM public.orders o WHERE o.branch_id = s.branch_id AND o.coupon_id = c.id
+                  AND public.canonical_phone(o.phone) = s.phone AND o.status NOT IN ('cancelled', 'returned')) AS uses,
+              c.per_customer_limit
          FROM public.coupon_sends s JOIN public.coupons c ON c.id = s.coupon_id AND c.branch_id = s.branch_id
         WHERE s.branch_id = $1 AND s.phone = $2
         ORDER BY s.coupon_id, s.sent_at DESC) x
       ORDER BY sent_at DESC LIMIT 20`, [branch, phone])
-  return r.rows as Array<{ code: string; status: 'active' | 'used' | 'expired' | 'limit_reached' }>
+  return r.rows.map((x) => ({ code: String(x.code), status: x.status, uses: Number(x.uses), per_customer_limit: x.per_customer_limit === null ? null : Number(x.per_customer_limit) })) as
+    Array<{ code: string; status: 'active' | 'used' | 'expired' | 'limit_reached'; uses: number; per_customer_limit: number | null }>
 }
 
 export const customerRoutes = [

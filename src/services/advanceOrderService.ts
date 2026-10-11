@@ -80,12 +80,20 @@ export async function getAdvanceOrderHistory(orderId: string) {
   return { timeline: res.timeline, payments: res.payments }
 }
 
+/** The POS cart's breakdown for a deposit order (0013): item prices stay real; subtotal - discounts + GST + delivery = total */
+export type AdvanceCart = {
+  subtotal: number; coupon_code?: string | null; coupon_percentage?: number; coupon_discount?: number
+  manual_discount?: number; manual_discount_type?: 'flat' | 'percent'; manual_discount_value?: number; total_gst?: number; delivery_charge?: number
+}
+
 export async function createAdvanceOrder(input: {
   customerName: string; phone: string; address: string; productName: string; category: string; description: string
   totalAmount: number; depositAmount: number; expectedDeliveryDate: string; remarks: string; referenceNumber: string
   paymentMethod: AdvancePaymentMethod; createdByName: string; products?: Array<Record<string, unknown>>; branch?: PosBranch
   /** one random key per form: a repeated request returns the first advance order instead of making another */
   idempotencyKey?: string
+  /** from the POS cart: the bill breakdown, kept on the order and carried to its final invoice */
+  cart?: AdvanceCart
 }): Promise<AdvanceOrder> {
   const res = await api<{ order: Record<string, unknown> }>('POST', '/api/advance-orders', {
     body: {
@@ -95,6 +103,7 @@ export async function createAdvanceOrder(input: {
       payment_method: input.paymentMethod, products: input.products || [],
       ...(input.referenceNumber.trim() ? { reference_number: input.referenceNumber.trim() } : {}),
       ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
+      ...(input.cart ? { cart: input.cart } : {}),
     },
     branchId: input.branch,
   })

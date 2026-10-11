@@ -758,13 +758,10 @@ export default function Pos(props: PosProps = {}) {
     if (!depositKey.current || depositKey.current.fp !== depositFp) depositKey.current = { key: crypto.randomUUID(), fp: depositFp }
     setSaving(true); setError('')
     try {
-      const allocationBase = items.reduce((sum, item) => sum + item.lineTotal, 0)
-      let allocated = 0
-      const productsSnapshot = items.map((item, index) => {
-        const lineTotal = index === items.length - 1
-          ? Math.max(0, Math.round((total - allocated) * 100) / 100)
-          : Math.max(0, Math.round((allocationBase > 0 ? total * item.lineTotal / allocationBase : total / items.length) * 100) / 100)
-        allocated += lineTotal
+      // item prices stay as sold; the cart's discount / GST / delivery go with the order as its breakdown (0013) and are
+      // carried to the final bill, so the final invoice shows Subtotal - Discount + GST + Delivery = TOTAL
+      const productsSnapshot = items.map((item) => {
+        const lineTotal = Math.round(item.lineTotal * 100) / 100
         return {
           product_id: item.parentProductId || toProductId(item.id), variant_id: item.variantId || null,
           variant_name: item.variantName || null, name: item.name, category: item.category,
@@ -784,6 +781,13 @@ export default function Pos(props: PosProps = {}) {
         products: productsSnapshot,
         branch,
         idempotencyKey: depositKey.current.key,
+        cart: {
+          subtotal: Math.round(subtotal * 100) / 100,
+          coupon_code: effectiveCouponCode ?? null, coupon_percentage: isValidCoupon ? Number(appliedCoupon?.percentage || 0) : 0,
+          coupon_discount: couponDiscount, manual_discount: manualDiscountAmount,
+          manual_discount_type: manualDiscountType, manual_discount_value: manualDiscountNumeric,
+          total_gst: totalGst, delivery_charge: Number(shipping || 0) || 0,
+        },
       })
       depositKey.current = null // saved: the next deposit order is a new one
       setDepositCreated(created)

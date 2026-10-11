@@ -39,8 +39,20 @@ export const advanceRoutes = [
       // one random key per form from the browser: a repeated request (double tap, slow-network retry) returns the first
       // advance order instead of creating another (see advance_orders_branch_idempotency_key)
       idempotency_key: z.string().trim().min(8).max(100).optional(),
+      // 0013: an order made from the POS cart sends the cart's breakdown; item prices stay real and
+      // subtotal - coupon - manual (never below 0) + GST + delivery must equal total_amount
+      cart: z.object({
+        subtotal: z.number().finite().gt(0), coupon_code: z.string().trim().max(60).nullish(), coupon_percentage: z.number().finite().min(0).max(100).default(0),
+        coupon_discount: z.number().finite().min(0).default(0), manual_discount: z.number().finite().min(0).default(0),
+        manual_discount_type: z.enum(['flat', 'percent']).default('flat'), manual_discount_value: z.number().finite().min(0).default(0),
+        total_gst: z.number().finite().min(0).default(0), delivery_charge: z.number().finite().min(0).default(0),
+      }).strict().optional(),
     }).strict(),
     async handler({ db, branch, body, session }) {
+      const cart = body.cart
+      const r2 = (v: number) => Math.round(v * 100) / 100
+      const total = cart ? r2(Math.max(0, r2(cart.subtotal) - r2(cart.coupon_discount) - r2(cart.manual_discount)) + r2(cart.total_gst) + r2(cart.delivery_charge)) : body.total_amount
+      if (cart && Math.abs(total - body.total_amount) > 0.01) throw new ApiError(400, `The bill breakdown (₹${total.toFixed(2)}) does not match the order total (₹${body.total_amount.toFixed(2)})`)
       // NOTE: `SELECT * FROM fn()`, never `SELECT (fn()).*`: Postgres expands the second form into one call of fn() PER COLUMN,
       // which made a single tap insert 25 identical advance orders (one per column of the table).
       const key = body.idempotency_key
@@ -51,11 +63,20 @@ export const advanceRoutes = [
         return await db.tx(async (t) => {
           const r = await t.query(
             `SELECT * FROM public.create_advance_order($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)`,
-            [body.customer_name, body.phone, body.address, body.product_name, body.category, body.description, body.total_amount, body.deposit_amount,
+            [body.customer_name, body.phone, body.address, body.product_name, body.category, body.description, total, body.deposit_amount,
              body.expected_delivery_date, body.remarks, body.payment_method, session!.role, JSON.stringify(body.products), branch])
           // reference_number is accepted but not stored: the original database had no such column on advance orders
           // (its update call failed silently), so an exact copy keeps ignoring it.
           if (key) await t.query(`UPDATE public.advance_orders SET idempotency_key = $1 WHERE id = $2 AND branch_id = $3`, [key, r.rows[0].id, branch])
+          if (cart) {
+            const saved = await t.query(
+              `UPDATE public.advance_orders SET cart_subtotal = $1, cart_coupon_code = $2, cart_coupon_percentage = $3, cart_coupon_discount = $4,
+                      cart_manual_discount = $5, cart_manual_discount_type = $6, cart_manual_discount_value = $7, cart_total_gst = $8, cart_delivery_charge = $9
+                WHERE id = $10 AND branch_id = $11 RETURNING *`,
+              [r2(cart.subtotal), cart.coupon_code || null, cart.coupon_percentage, r2(cart.coupon_discount), r2(cart.manual_discount), cart.manual_discount_type,
+               cart.manual_discount_value, r2(cart.total_gst), r2(cart.delivery_charge), r.rows[0].id, branch])
+            return { order: saved.rows[0] }
+          }
           return { order: { ...r.rows[0], ...(key ? { idempotency_key: key } : {}) } }
         })
       } catch (e) {

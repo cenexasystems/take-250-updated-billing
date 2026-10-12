@@ -141,6 +141,7 @@ export function printThermalReceipt(data: ThermalReceiptData) {
               <td class="text-right">${formatCurrency(data.total)}</td>
             </tr>
             ${data.advance ? [
+              data.advance.reference ? `<tr style="font-size: 10px;"><td class="text-left">Advance order</td><td class="text-right">${data.advance.reference}</td></tr>` : '',
               ...data.advance.deposits.map((d) => `<tr style="font-size: 10px;"><td class="text-left">${d.label}</td><td class="text-right">${formatCurrency(d.amount)}</td></tr>`),
               data.advance.balance ? `<tr style="font-size: 10px;"><td class="text-left">${data.advance.balance.label}</td><td class="text-right">${formatCurrency(data.advance.balance.amount)}</td></tr>` : '',
               ...(data.advance.balance?.parts ?? []).map((p) => `<tr style="font-size: 10px;"><td class="text-left" style="padding-left: 8px;">${p.label}</td><td class="text-right">${formatCurrency(p.amount)}</td></tr>`),

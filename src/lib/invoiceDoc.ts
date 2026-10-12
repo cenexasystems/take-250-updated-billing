@@ -48,6 +48,8 @@ export type InvoiceExtras = {
     records: Array<{ return_no: string; created_at: string }>
   } | null
   advance?: {
+    /** the advance order this bill completed (DEP-...) */
+    deposit_id?: string
     deposits: Array<{ amount: number; method: string; received_at: string }>
     balance: { amount: number; method: string; received_at?: string } | null
   } | null
@@ -70,7 +72,7 @@ export type InvoiceDoc = {
   /** single: label "Cash" (parts empty), drawn as today; split: "Payment (Split)" + one part per mode */
   payment: { split: boolean; label: string; parts: Array<{ label: string; amount: number }> }
   /** advance-order bill: deposits (date, mode) and the balance paid at completion */
-  advance: { deposits: Array<{ label: string; amount: number }>; balance: { label: string; amount: number; parts: Array<{ label: string; amount: number }> } | null } | null
+  advance: { reference?: string; deposits: Array<{ label: string; amount: number }>; balance: { label: string; amount: number; parts: Array<{ label: string; amount: number }> } | null } | null
   /** partially / fully returned bill */
   returns: { badge: string; returned: number; net: number; records: string[] } | null
 }
@@ -101,6 +103,70 @@ function gstRate(gst: number, taxable: number): number | null {
   if (gst <= 0 || taxable <= 0) return null
   const rate = Math.round((gst / taxable) * 100 * 4) / 4 // nearest 0.25 %
   return rate > 0 && Math.abs(roundTo(taxable * rate / 100) - gst) <= 0.01 ? rate : null
+}
+
+/** "Deposit paid (11/10/2026, Cash)": the same words on the advance receipt and on the final invoice */
+const depositLabel = (at: string | null | undefined, method: string | null | undefined) =>
+  `Deposit paid (${[at ? day(at) : '', method ? modeLabel(method) : ''].filter(Boolean).join(', ')})`.replace(' ()', '')
+
+/** The advance order as stored (advance_orders row, 0013 cart_* breakdown) + its deposit payment. */
+export type StoredAdvance = {
+  deposit_id: string
+  created_at: string
+  customer_name?: string | null
+  phone?: string | null
+  address?: string | null
+  branch?: string | null
+  branch_id?: string | null
+  status?: string | null
+  product_name?: string | null
+  products?: Array<Record<string, unknown>> | null
+  total_amount: number | string
+  deposit_amount: number | string
+  remaining_balance?: number | string | null
+  cart_subtotal?: number | string | null
+  cart_coupon_code?: string | null
+  cart_coupon_percentage?: number | string | null
+  cart_coupon_discount?: number | string | null
+  cart_manual_discount?: number | string | null
+  cart_manual_discount_type?: string | null
+  cart_manual_discount_value?: number | string | null
+  cart_total_gst?: number | string | null
+  cart_delivery_charge?: number | string | null
+  /** the deposit payment's mode and time (advance_order_payments, payment_type 'deposit') */
+  deposit_method?: string | null
+  deposit_at?: string | null
+}
+
+/** true for an order made from the POS cart after 0013 (it carries its own breakdown); older orders only have a total */
+export const hasCartBreakdown = (a: StoredAdvance) => n(a.cart_subtotal) > 0
+
+/**
+ * The advance receipt (at creation / deposit), from the SAME builder as every invoice: the stored cart breakdown as rows,
+ * TOTAL = the order total, then the deposit (date, mode) and the balance due. An older order (no breakdown) has
+ * Subtotal = TOTAL; the receipt then keeps its old Total / Deposit / Balance layout (see hasCartBreakdown).
+ */
+export function invoiceDocFromAdvance(a: StoredAdvance): InvoiceDoc {
+  const cart = hasCartBreakdown(a)
+  const items = Array.isArray(a.products) && a.products.length
+    ? a.products
+    : [{ name: a.product_name || 'Advance order item', quantity: 1, unit: 'piece', unit_type: 'unit', base_price: n(a.total_amount), line_total: n(a.total_amount) }]
+  const doc = invoiceDocFromBill({
+    invoice_no: a.deposit_id, created_at: a.created_at, customer_name: a.customer_name, phone: a.phone, address: a.address,
+    branch: a.branch || a.branch_id, status: a.status || 'pending_deposit',
+    subtotal: cart ? n(a.cart_subtotal) : n(a.total_amount),
+    discount_amount: n(a.cart_coupon_discount), coupon_code: a.cart_coupon_code ?? null, coupon_percentage: n(a.cart_coupon_percentage),
+    manual_discount_amount: n(a.cart_manual_discount), manual_discount_type: a.cart_manual_discount_type ?? 'flat', manual_discount_value: n(a.cart_manual_discount_value),
+    total_gst: n(a.cart_total_gst), delivery_charge: n(a.cart_delivery_charge), total: n(a.total_amount),
+    payment_mode: a.deposit_method ?? null,
+  }, items)
+  const remaining = a.remaining_balance === null || a.remaining_balance === undefined ? roundTo(n(a.total_amount) - n(a.deposit_amount)) : n(a.remaining_balance)
+  doc.advance = {
+    reference: a.deposit_id,
+    deposits: [{ label: depositLabel(a.deposit_at || a.created_at, a.deposit_method), amount: n(a.deposit_amount) }],
+    balance: { label: 'Balance due', amount: remaining, parts: [] },
+  }
+  return doc
 }
 
 export function invoiceDocFromBill(bill: StoredBill, rawItems: Array<Record<string, unknown>>, extras: InvoiceExtras = {}): InvoiceDoc {
@@ -164,7 +230,8 @@ export function invoiceDocFromBill(bill: StoredBill, rawItems: Array<Record<stri
   if (extras.advance) {
     const bal = extras.advance.balance
     advance = {
-      deposits: extras.advance.deposits.map((d) => ({ label: `Advance paid (${day(d.received_at)}, ${modeLabel(d.method)})`, amount: n(d.amount) })),
+      reference: extras.advance.deposit_id,
+      deposits: extras.advance.deposits.map((d) => ({ label: depositLabel(d.received_at, d.method), amount: n(d.amount) })),
       balance: bal ? {
         label: `Balance paid at completion (${payment.parts.length ? 'Split' : modeLabel(bal.method)})`,
         amount: n(bal.amount),

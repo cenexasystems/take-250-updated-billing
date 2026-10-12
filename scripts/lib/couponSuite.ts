@@ -218,8 +218,14 @@ export async function couponSuite(c: CouponCtx) {
     // advance-order completion cannot bypass it (the order-insert check): A already used PC1 here
     const advA = await call('POST', '/api/advance-orders', { cookie: cookies[staff], body: { customer_name: 'Cpn Adv', phone: A, product_name: 'Item', total_amount: 900, deposit_amount: 100, expected_delivery_date: '2030-01-01', payment_method: 'cash',
       products: [{ name: 'Item', quantity: 1, base_price: 1000, line_total: 1000 }], cart: { subtotal: 1000, coupon_code: `PC1${n}`, coupon_percentage: 10, coupon_discount: 100 } } })
-    const advDone = await call('POST', `/api/advance-orders/${advA.body.order?.id}/complete`, { cookie: cookies[staff], body: { payment_method: 'cash', final_amount: 800 } })
-    check(advA.status === 201 && advDone.status === 400 && /maximum number of times/.test(advDone.body.error), `${L} advance-order completion with the coupon is refused for a customer at the limit`, `${advA.status}/${advDone.status} ${advDone.body.error ?? ''}`)
+    check(advA.status === 400 && /maximum number of times/.test(advA.body.error), `${L} an advance order with the coupon is refused at creation for a customer at the limit`, `${advA.status} ${advA.body.error ?? ''}`)
+    // completion checks again: a deposit order made while the customer was under the limit, then the customer reaches it
+    const pcl = await mk(`PCL${n}`, 1)
+    const advB = await call('POST', '/api/advance-orders', { cookie: cookies[staff], body: { customer_name: 'Cpn Adv', phone: B2, product_name: 'Item', total_amount: 900, deposit_amount: 100, expected_delivery_date: '2030-01-01', payment_method: 'cash',
+      products: [{ name: 'Item', quantity: 1, base_price: 1000, line_total: 1000 }], cart: { subtotal: 1000, coupon_code: `PCL${n}`, coupon_percentage: 10, coupon_discount: 100 } } })
+    check(advB.status === 201 && (await sell(B2, `PCL${n}`)).status === 201, `${L} fixture: deposit order with the coupon, then the customer uses it at the POS`, `${advB.status} ${advB.body.error ?? ''}`)
+    const advDone = await call('POST', `/api/advance-orders/${advB.body.order?.id}/complete`, { cookie: cookies[staff], body: { payment_method: 'cash', final_amount: 800 } })
+    check(advDone.status === 400 && /maximum number of times/.test(advDone.body.error) && num(pcl) > 0, `${L} advance-order completion is refused once the customer is at the limit (checked again at completion)`, `${advDone.status} ${advDone.body.error ?? ''}`)
     // only the Admin can set it
     for (const who of [mgr, staff] as Actor[]) {
       check((await call('PATCH', `/api/coupons/${pc1}`, { cookie: cookies[who], body: { per_customer_limit: 5 } })).status === 403, `${L} ${who} cannot edit the per-customer limit (403)`)

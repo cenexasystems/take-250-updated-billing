@@ -891,9 +891,11 @@ async function run() {
       const doneA = await call('POST', `/api/advance-orders/${dA.body.order.id}/complete`, { cookie: cookies.staff1, body: { payment_method: 'cash', final_amount: 400 } })
       const billA = await one(`SELECT total::numeric t, subtotal::numeric s, discount_amount::numeric d, manual_discount_amount::numeric m FROM orders WHERE invoice_no = $1 AND branch_id = 'pos1'`, [doneA.body.result.invoice_no])
       check(doneA.status === 200 && Number(billA.t) === 500 && Number(billA.s) === 500 && Number(billA.d) === 0 && Number(billA.m) === 0, 'deposit order, no adjustment: bill total 500, no coupon, no manual discount', JSON.stringify([doneA.status, billA]))
+      // advance orders have no manual adjustment any more: refused, and a lower amount without a coupon is refused too
       const doneB = await call('POST', `/api/advance-orders/${dB.body.order.id}/complete`, { cookie: cookies.staff1, body: { payment_method: 'cash', final_amount: 350, manual_discount: 50 } })
-      const billB = await one(`SELECT total::numeric t, discount_amount::numeric d, manual_discount_amount::numeric m FROM orders WHERE invoice_no = $1 AND branch_id = 'pos1'`, [doneB.body.result.invoice_no])
-      check(doneB.status === 200 && Number(billB.t) === 450 && Number(billB.d) === 0 && Number(billB.m) === 50, 'deposit order with a 50 manual adjustment: stored once (coupon 0, manual 50, total 450), not shown as coupon AND discount', JSON.stringify(billB))
+      check(doneB.status === 400 && /not allowed on advance orders/.test(doneB.body.error), 'a manual adjustment on an advance order is refused (400)', JSON.stringify([doneB.status, doneB.body.error]))
+      const doneB2 = await call('POST', `/api/advance-orders/${dB.body.order.id}/complete`, { cookie: cookies.staff1, body: { payment_method: 'cash', final_amount: 350 } })
+      check(doneB2.status === 400 && /must be paid in full/.test(doneB2.body.error), 'the balance of an advance order must be paid in full (no hidden discount)', JSON.stringify([doneB2.status, doneB2.body.error]))
       const advList = await call('GET', '/api/advance-orders', { cookie: cookies.staff1 })
       const listed = (advList.body.orders as any[]).find((o) => o.id === dA.body.order.id)
       check(listed && /^\d{4}-\d{2}-\d{2}$/.test(String(listed.expected_delivery_date)), 'a delivery date comes back as plain YYYY-MM-DD (it used to become a full timestamp that the screen showed as "Invalid Date")', JSON.stringify(listed?.expected_delivery_date))

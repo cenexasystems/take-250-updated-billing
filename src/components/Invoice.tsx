@@ -180,6 +180,9 @@ export const Invoice: React.FC<InvoiceProps> = ({ doc, userId }) => {
             </div>
             {doc.advance && (
               <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed #d0d0d0' }} data-testid="invoice-advance">
+                {doc.advance.reference && (
+                  <div style={row}><span style={{ fontSize: 12, color: '#666' }}>Advance order</span><span style={{ fontSize: 12, fontWeight: 700 }}>{doc.advance.reference}</span></div>
+                )}
                 {doc.advance.deposits.map((d, i) => (
                   <div key={i} style={row}><span style={{ fontSize: 12, color: '#666' }}>{d.label}</span><span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(d.amount)}</span></div>
                 ))}

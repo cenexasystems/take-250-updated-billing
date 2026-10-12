@@ -2,7 +2,7 @@
 // inside its rolled-back transaction) and by the in-memory-Postgres harness. Every check runs for pos1, pos2 and pos3.
 // It checks the STORED bill (what the cashier entered), the invoice extras the API adds (returns, advance payments) and
 // the shared invoice data (src/lib/invoiceDoc.ts) every output draws: rows present / absent and amounts adding up.
-import { invoiceDocFromBill, type InvoiceDoc } from '../../src/lib/invoiceDoc'
+import { hasCartBreakdown, invoiceDocFromAdvance, invoiceDocFromBill, type InvoiceDoc } from '../../src/lib/invoiceDoc'
 import type { Actor, ReturnsCtx } from './returnsSuite'
 
 export type InvoiceCtx = Omit<ReturnsCtx, 'concurrent'>
@@ -88,72 +88,82 @@ export async function invoiceSuite(c: InvoiceCtx) {
     const pub = await call('GET', `/api/public/invoice/${s5.invoice_no}`, {})
     check(pub.status === 200 && pub.body.extras?.returns?.records?.length === 3 && pub.body.extras.returns.items[0].returned === 3, `${L} the digital invoice gets the same return details`, JSON.stringify(pub.body.extras))
 
-    // ================= 6. advance order: deposit, completed with a manual discount and a split balance
-    // total 1000, deposit 300 -> balance 700; manual discount 100 -> 600 paid as Cash 250 + Card 350
+    // ================= 6. old-style advance order (no cart breakdown): deposit, balance paid in full as a split
+    // total 1000, deposit 300 (QR) -> balance 700 paid as Cash 250 + Card 450
     const adv = await call('POST', '/api/advance-orders', { cookie: cookies[staff], body: { customer_name: `Inv Adv ${n}`, phone: '9876500078', product_name: 'Custom blouse', total_amount: 1000, deposit_amount: 300, expected_delivery_date: '2030-01-01', payment_method: 'upi' } })
     const aid = adv.body.order?.id
-    const badSplit = await call('POST', `/api/advance-orders/${aid}/complete`, { cookie: cookies[mgr], body: { payment_method: 'cash', final_amount: 600, manual_discount: 100, split_details: { payments: [{ method: 'cash', amount: 250 }, { method: 'card', amount: 300 }] } } })
+    const manualAdv = await call('POST', `/api/advance-orders/${aid}/complete`, { cookie: cookies[mgr], body: { payment_method: 'cash', final_amount: 600, manual_discount: 100 } })
+    check(manualAdv.status === 400 && /not allowed on advance orders/.test(manualAdv.body.error), `${L} manual adjustment at completion is refused`, `${manualAdv.status} ${manualAdv.body.error}`)
+    const shortAdv = await call('POST', `/api/advance-orders/${aid}/complete`, { cookie: cookies[mgr], body: { payment_method: 'cash', final_amount: 600 } })
+    check(shortAdv.status === 400 && /must be paid in full/.test(shortAdv.body.error), `${L} a lower balance without a coupon is refused (no hidden discount)`, `${shortAdv.status} ${shortAdv.body.error}`)
+    const badSplit = await call('POST', `/api/advance-orders/${aid}/complete`, { cookie: cookies[mgr], body: { payment_method: 'cash', final_amount: 700, split_details: { payments: [{ method: 'cash', amount: 250 }, { method: 'card', amount: 300 }] } } })
     check(badSplit.status === 400 && /add up/.test(badSplit.body.error), `${L} a split balance that does not add up is refused (nothing completed)`, `${badSplit.status} ${badSplit.body.error}`)
-    const done = await call('POST', `/api/advance-orders/${aid}/complete`, { cookie: cookies[mgr], body: { payment_method: 'cash', final_amount: 600, manual_discount: 100, split_details: { payments: [{ method: 'cash', amount: 250 }, { method: 'card', amount: 350 }] } } })
-    check(done.status === 200, `${L} advance order completed with a manual discount and a split balance`, `${done.status} ${done.body.error ?? ''}`)
+    const done = await call('POST', `/api/advance-orders/${aid}/complete`, { cookie: cookies[mgr], body: { payment_method: 'cash', final_amount: 700, split_details: { payments: [{ method: 'cash', amount: 250 }, { method: 'card', amount: 450 }] } } })
+    check(done.status === 200, `${L} old-style advance order completed with a split balance`, `${done.status} ${done.body.error ?? ''}`)
     const billId = done.body.result?.order_id
-    const ob = await one(`SELECT subtotal, manual_discount_amount m, total, payment_method pm, split_details sd FROM orders WHERE id = $1`, [billId])
-    check(num(ob.subtotal) === 1000 && num(ob.m) === 100 && num(ob.total) === 900 && ob.pm === 'split' && ob.sd?.payments?.length === 2, `${L} the final bill stores subtotal 1000, manual 100, total 900 and the split`, JSON.stringify(ob))
     const d6 = await docOf(billId)
-    check(JSON.stringify(d6.rows.map((r) => `${r.label}=${r.amount}`)) === JSON.stringify(['Subtotal=1000', 'Discount (Manual)=100']) && d6.total === 900 && rowsAddUp(d6), `${L} final invoice: Subtotal 1000, Discount (Manual) 100, TOTAL 900 (it used to show Subtotal = TOTAL)`, JSON.stringify(d6.rows))
-    check(d6.advance?.deposits.length === 1 && d6.advance.deposits[0].amount === 300 && /^Advance paid \(.+, QR\)$/.test(d6.advance.deposits[0].label), `${L} the deposit is listed with its date and mode (QR)`, JSON.stringify(d6.advance?.deposits))
-    check(d6.advance?.balance?.amount === 600 && d6.advance.balance.label === 'Balance paid at completion (Split)' && JSON.stringify(d6.advance.balance.parts) === JSON.stringify([{ label: 'Cash', amount: 250 }, { label: 'Card', amount: 350 }]), `${L} balance paid at completion 600, split Cash 250 + Card 350`, JSON.stringify(d6.advance?.balance))
-    check(r2((d6.advance?.deposits[0].amount ?? 0) + (d6.advance?.balance?.amount ?? 0)) === d6.total, `${L} deposit + balance = TOTAL`)
-    const finalLabel = (await one(`SELECT final_payment_method f FROM advance_orders WHERE id = $1`, [aid])).f
-    check(/^Split \(Cash ₹250 \+ Card ₹350\)$/.test(finalLabel), `${L} the advance order keeps the readable split label`, finalLabel)
-    // the order above was made without a cart breakdown (old style): its cart columns stay 0 and it billed exactly as before
+    check(JSON.stringify(d6.rows.map((r) => `${r.label}=${r.amount}`)) === JSON.stringify(['Subtotal=1000']) && d6.total === 1000, `${L} old-style final invoice looks as before: Subtotal = TOTAL 1000`, JSON.stringify(d6.rows))
+    check(d6.advance?.reference === adv.body.order?.deposit_id && d6.advance?.deposits[0]?.amount === 300 && /^Deposit paid \(.+, QR\)$/.test(d6.advance.deposits[0].label), `${L} final invoice: advance order reference and "Deposit paid (date, QR)"`, JSON.stringify(d6.advance))
+    check(d6.advance?.balance?.amount === 700 && d6.advance.balance.label === 'Balance paid at completion (Split)' && JSON.stringify(d6.advance.balance.parts) === JSON.stringify([{ label: 'Cash', amount: 250 }, { label: 'Card', amount: 450 }]) && r2(300 + 700) === d6.total,
+      `${L} balance 700 (Cash 250 + Card 450); deposit + balance = TOTAL`, JSON.stringify(d6.advance?.balance))
     const oldStyle = await one(`SELECT cart_subtotal, cart_total_gst, cart_coupon_discount, cart_manual_discount FROM advance_orders WHERE id = $1`, [aid])
-    check([oldStyle.cart_subtotal, oldStyle.cart_total_gst, oldStyle.cart_coupon_discount, oldStyle.cart_manual_discount].every((x) => num(x) === 0), `${L} an old-style advance order has no cart breakdown (all 0) and its bill is as before (subtotal = order total)`)
+    check([oldStyle.cart_subtotal, oldStyle.cart_total_gst, oldStyle.cart_coupon_discount, oldStyle.cart_manual_discount].every((x) => num(x) === 0), `${L} an old-style advance order has no cart breakdown (all 0)`)
+    const oldListed = ((await call('GET', '/api/advance-orders', { cookie: cookies[staff] })).body.orders as any[]).find((o) => o.id === aid)
+    const oldReceipt = invoiceDocFromAdvance(oldListed)
+    check(!hasCartBreakdown(oldListed) && oldReceipt.total === 1000 && oldReceipt.rows.length === 1, `${L} old-style receipt: no breakdown, keeps Total / Deposit / Balance`)
 
-    // ================= 7. (0013) advance order from the POS cart: manual 10 % + GST 5 %, deposit, split balance
-    // 3 x ₹400 = ₹1,200; manual 10 % = ₹120; taxable ₹1,080; GST ₹54 (CGST 27 + SGST 27); total ₹1,134; deposit ₹300 -> balance ₹834
+    // ================= 7. advance order from the POS cart: coupon 10 % + GST 5 % + delivery, deposit, split balance
+    // 3 x ₹400 = ₹1,200; coupon 10 % = ₹120; taxable ₹1,080; GST ₹54 (CGST 27 + SGST 27); delivery ₹50; total ₹1,184;
+    // deposit ₹300 (Cash) -> balance ₹884 paid as Cash 400 + Card 484
+    await q(`INSERT INTO coupons (code, percentage, branch_id) VALUES ($1, 10, $2)`, [`INVK${n}`, b])
     const cartBody = (extra: Record<string, unknown> = {}, cart: Record<string, unknown> = {}) => ({
-      customer_name: `Inv Cart ${n}`, phone: '9876500079', product_name: `3x Inv Item ${n}`, total_amount: 1134, deposit_amount: 300, expected_delivery_date: '2030-01-01', payment_method: 'cash',
+      customer_name: `Inv Cart ${n}`, phone: '9876500079', product_name: `3x Inv Item ${n}`, total_amount: 1184, deposit_amount: 300, expected_delivery_date: '2030-01-01', payment_method: 'cash',
       products: [{ product_id: P, name: `Inv Item ${n}`, quantity: 3, unit: 'piece', unit_type: 'unit', base_price: 400, line_total: 1200, source: 'advance_order' }],
-      cart: { subtotal: 1200, manual_discount: 120, manual_discount_type: 'percent', manual_discount_value: 10, total_gst: 54, ...cart }, ...extra })
+      cart: { subtotal: 1200, coupon_code: `INVK${n}`, coupon_percentage: 10, coupon_discount: 120, total_gst: 54, delivery_charge: 50, ...cart }, ...extra })
+    const manualCart = await call('POST', '/api/advance-orders', { cookie: cookies[staff], body: cartBody({ total_amount: 1164 }, { manual_discount: 20, manual_discount_value: 20 }) })
+    check(manualCart.status === 400 && /Manual discount is not allowed on advance orders/.test(manualCart.body.error), `${L} a manual discount in the cart is refused for an advance order`, `${manualCart.status} ${manualCart.body.error}`)
     const bad = await call('POST', '/api/advance-orders', { cookie: cookies[staff], body: cartBody({ total_amount: 1200 }) })
     check(bad.status === 400 && /does not match/.test(bad.body.error), `${L} a cart breakdown that does not add up to the total is refused`, `${bad.status} ${bad.body.error}`)
+    const foreignCoupon = await call('POST', '/api/advance-orders', { cookie: cookies[`staff${other.slice(-1)}` as Actor], body: cartBody() })
+    check(foreignCoupon.status === 400 && /does not belong to this branch/.test(foreignCoupon.body.error), `${L} another branch cannot use this branch's coupon on its advance order`, `${foreignCoupon.status} ${foreignCoupon.body.error}`)
     const ca = await call('POST', '/api/advance-orders', { cookie: cookies[staff], body: cartBody() })
     const cid = ca.body.order?.id
-    const crow = await one(`SELECT total_amount, deposit_amount, remaining_balance, cart_subtotal, cart_manual_discount, cart_manual_discount_type, cart_manual_discount_value, cart_total_gst, products FROM advance_orders WHERE id = $1`, [cid])
-    check(ca.status === 201 && num(crow.total_amount) === 1134 && num(crow.cart_subtotal) === 1200 && num(crow.cart_manual_discount) === 120 && crow.cart_manual_discount_type === 'percent' && num(crow.cart_manual_discount_value) === 10 && num(crow.cart_total_gst) === 54 && num(crow.remaining_balance) === 834,
-      `${L} the deposit order stores the cart breakdown (subtotal 1200, manual 10 % = 120, GST 54, total 1134, balance 834)`, JSON.stringify(crow))
-    check(num(crow.products[0].line_total) === 1200 && num(crow.products[0].base_price) === 400, `${L} item prices stay real (3 x 400 = 1200), nothing spread into them`, JSON.stringify(crow.products))
+    const crow = await one(`SELECT total_amount, remaining_balance, cart_subtotal, cart_coupon_code, cart_coupon_discount, cart_total_gst, cart_delivery_charge, products FROM advance_orders WHERE id = $1`, [cid])
+    check(ca.status === 201 && num(crow.total_amount) === 1184 && num(crow.cart_subtotal) === 1200 && crow.cart_coupon_code === `INVK${n}` && num(crow.cart_coupon_discount) === 120 && num(crow.cart_total_gst) === 54 && num(crow.cart_delivery_charge) === 50 && num(crow.remaining_balance) === 884,
+      `${L} the deposit order stores coupon 120, GST 54, delivery 50, total 1184, balance 884`, JSON.stringify(crow))
+    check(num(crow.products[0].line_total) === 1200 && num(crow.products[0].base_price) === 400, `${L} item prices stay real (3 x 400 = 1200)`)
+    // the advance receipt: same builder, every row, adds up, deposit with date and mode, balance due
+    const listed = ((await call('GET', '/api/advance-orders', { cookie: cookies[staff] })).body.orders as any[]).find((o) => o.id === cid)
+    const rc = invoiceDocFromAdvance(listed)
+    check(JSON.stringify(rc.rows.map((r) => `${r.label}=${r.amount}`)) === JSON.stringify(['Subtotal=1200', `Discount (Coupon INVK${n}, 10%)=120`, 'Taxable amount=1080', 'CGST @ 2.5%=27', 'SGST @ 2.5%=27', 'Delivery=50']) && rc.total === 1184 && rowsAddUp(rc),
+      `${L} advance receipt: Subtotal, Discount (Coupon INVK${n}, 10%), Taxable amount, CGST @ 2.5%, SGST @ 2.5%, Delivery, TOTAL 1184, adds up`, JSON.stringify(rc.rows))
+    check(/^Deposit paid \(.+, Cash\)$/.test(rc.advance?.deposits[0]?.label ?? '') && rc.advance?.deposits[0]?.amount === 300 && rc.advance?.balance?.label === 'Balance due' && rc.advance.balance.amount === 884, `${L} advance receipt: "Deposit paid (date, Cash)" 300 and Balance due 884`, JSON.stringify(rc.advance))
+    check(ca.body.order?.deposit_method === 'cash' && listed.deposit_method === 'cash' && !!listed.deposit_at, `${L} the deposit's own mode and time come with the order`)
     let dbRefused = false
-    // own savepoint: the refused statement must not abort the test's shared transaction
     await q(`SAVEPOINT inv_cart_check`)
     try { await q(`UPDATE advance_orders SET cart_total_gst = 99 WHERE id = $1`, [cid]) } catch { dbRefused = true }
     await q(`ROLLBACK TO SAVEPOINT inv_cart_check`)
     check(dbRefused, `${L} the database itself refuses a breakdown that does not add up (CHECK)`)
     check(!((await call('GET', '/api/advance-orders', { cookie: cookies[`staff${other.slice(-1)}` as Actor] })).body.orders as any[]).some((o) => o.id === cid), `${L} another branch does not see this deposit order`)
-    const foreignDone = await call('POST', `/api/advance-orders/${cid}/complete`, { cookie: cookies[`staff${other.slice(-1)}` as Actor], body: { payment_method: 'cash', final_amount: 834 } })
+    const foreignDone = await call('POST', `/api/advance-orders/${cid}/complete`, { cookie: cookies[`staff${other.slice(-1)}` as Actor], body: { payment_method: 'cash', final_amount: 884 } })
     check(foreignDone.status >= 400 && foreignDone.status < 500, `${L} another branch cannot complete it`, String(foreignDone.status))
-    const cd = await call('POST', `/api/advance-orders/${cid}/complete`, { cookie: cookies[staff], body: { payment_method: 'cash', final_amount: 834, split_details: { payments: [{ method: 'cash', amount: 400 }, { method: 'card', amount: 434 }] } } })
-    check(cd.status === 200, `${L} completed with a split balance (Cash 400 + Card 434)`, `${cd.status} ${cd.body.error ?? ''}`)
+    const cd = await call('POST', `/api/advance-orders/${cid}/complete`, { cookie: cookies[staff], body: { payment_method: 'cash', final_amount: 884, split_details: { payments: [{ method: 'cash', amount: 400 }, { method: 'card', amount: 484 }] } } })
+    check(cd.status === 200, `${L} completed with a split balance (Cash 400 + Card 484)`, `${cd.status} ${cd.body.error ?? ''}`)
     const cbill = cd.body.result?.order_id
-    const cb = await one(`SELECT subtotal, discount_amount d, manual_discount_amount m, manual_discount_type mt, manual_discount_value mv, total_gst g, taxable_amount tx, cgst_amount cg, sgst_amount sg, delivery_charge dc, total FROM orders WHERE id = $1`, [cbill])
-    check(num(cb.subtotal) === 1200 && num(cb.d) === 0 && num(cb.m) === 120 && cb.mt === 'percent' && num(cb.mv) === 10 && num(cb.g) === 54 && num(cb.tx) === 1080 && num(cb.cg) === 27 && num(cb.sg) === 27 && num(cb.dc) === 0 && num(cb.total) === 1134,
-      `${L} the final bill carries the cart breakdown: subtotal 1200, manual 120 (10 %), taxable 1080, CGST 27, SGST 27, total 1134`, JSON.stringify(cb))
+    const cb = await one(`SELECT subtotal, discount_amount d, coupon_code cc, coupon_percentage cp, manual_discount_amount m, total_gst g, taxable_amount tx, cgst_amount cg, sgst_amount sg, delivery_charge dc, total FROM orders WHERE id = $1`, [cbill])
+    check(num(cb.subtotal) === 1200 && num(cb.d) === 120 && cb.cc === `INVK${n}` && num(cb.cp) === 10 && num(cb.m) === 0 && num(cb.g) === 54 && num(cb.tx) === 1080 && num(cb.cg) === 27 && num(cb.sg) === 27 && num(cb.dc) === 50 && num(cb.total) === 1184,
+      `${L} the final bill carries subtotal 1200, coupon INVK${n} 10 % = 120, taxable 1080, CGST 27, SGST 27, delivery 50, total 1184`, JSON.stringify(cb))
     const d7 = await docOf(cbill)
-    check(JSON.stringify(d7.rows.map((r) => `${r.label}=${r.amount}`)) === JSON.stringify(['Subtotal=1200', 'Discount (Manual, 10%)=120', 'Taxable amount=1080', 'CGST @ 2.5%=27', 'SGST @ 2.5%=27']) && d7.total === 1134 && rowsAddUp(d7),
-      `${L} final invoice: Subtotal, Discount (Manual, 10%), Taxable amount, CGST @ 2.5%, SGST @ 2.5%, TOTAL 1134, and it adds up`, JSON.stringify(d7.rows))
-    check(d7.advance?.deposits[0]?.amount === 300 && d7.advance?.balance?.amount === 834 && d7.advance.balance.parts.length === 2 && r2(300 + 834) === d7.total, `${L} final invoice: deposit 300 + balance 834 (Cash 400 + Card 434) = TOTAL`, JSON.stringify(d7.advance))
+    check(JSON.stringify(d7.rows.map((r) => `${r.label}=${r.amount}`)) === JSON.stringify(rc.rows.map((r) => `${r.label}=${r.amount}`)) && d7.total === 1184 && rowsAddUp(d7),
+      `${L} final invoice has exactly the receipt's rows and adds up`, JSON.stringify(d7.rows))
+    check(d7.advance?.reference === ca.body.order?.deposit_id && d7.advance?.deposits[0]?.amount === 300 && d7.advance?.balance?.amount === 884 && d7.advance.balance.parts.length === 2 && r2(300 + 884) === d7.total,
+      `${L} final invoice: advance order reference, deposit 300 + balance 884 (Cash 400 + Card 484) = TOTAL`, JSON.stringify(d7.advance))
+    // Order History list row: coupon code, total discount and the advance reference with its payments
+    const hist = ((await call('GET', '/api/orders', { cookie: cookies[staff] })).body.orders as any[]).find((o) => o.id === cbill)
+    check(hist?.coupon_code === `INVK${n}` && num(hist.discount_amount) === 120 && num(hist.delivery_charge) === 50 && hist.advance_ref?.deposit_id === ca.body.order?.deposit_id && hist.advance_ref.payments.length === 2,
+      `${L} Order History row: coupon INVK${n}, discount 120, delivery 50, advance reference and its two payments`, JSON.stringify(hist?.advance_ref))
     const lineId = num((await one(`SELECT id FROM order_items WHERE order_id = $1`, [cbill])).id)
     const rr = await call('POST', `/api/orders/${cbill}/return`, { cookie: cookies[staff], body: { items: [{ order_item_id: lineId, quantity: 1, restock: true }], reason: 'Wrong size', idempotency_key: `inv7-${b}-${Date.now()}` } })
-    check(rr.status === 201 && num(rr.body.refund_amount) === 378, `${L} a return on that bill refunds its share of discount and GST (1134 / 3 = 378)`, `${rr.status} ${JSON.stringify(rr.body).slice(0, 160)}`)
-
-    // coupon + delivery in the cart, plus a manual adjustment at completion: both kept, still adds up
-    await q(`INSERT INTO coupons (code, percentage, branch_id) VALUES ($1, 10, $2)`, [`INVA${n}`, b])
-    const cc = await call('POST', '/api/advance-orders', { cookie: cookies[mgr], body: cartBody({ total_amount: 1130 }, { manual_discount: 0, manual_discount_type: 'flat', manual_discount_value: 0, total_gst: 0, coupon_code: `INVA${n}`, coupon_percentage: 10, coupon_discount: 120, delivery_charge: 50 }) })
-    check(cc.status === 201, `${L} a deposit order with a cart coupon and delivery is saved`, `${cc.status} ${cc.body.error ?? ''}`)
-    const cc2 = await call('POST', `/api/advance-orders/${cc.body.order?.id}/complete`, { cookie: cookies[mgr], body: { payment_method: 'upi', final_amount: 800, manual_discount: 30 } })
-    const d8 = await docOf(cc2.body.result?.order_id)
-    check(JSON.stringify(d8.rows.map((r) => `${r.label}=${r.amount}`)) === JSON.stringify(['Subtotal=1200', `Discount (Coupon INVA${n}, 10%)=120`, 'Discount (Manual)=30', 'Delivery=50']) && d8.total === 1100 && rowsAddUp(d8),
-      `${L} cart coupon + delivery + manual 30 at completion: Subtotal 1200, coupon 120, manual 30, delivery 50, TOTAL 1100`, JSON.stringify(d8.rows) + ' ' + d8.total)
+    check(rr.status === 201 && num(rr.body.refund_amount) === 378, `${L} a return on that bill refunds its share of discount and GST, never delivery ((1080 + 54) / 3 = 378)`, `${rr.status} ${JSON.stringify(rr.body).slice(0, 160)}`)
   }
 }

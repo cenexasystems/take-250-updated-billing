@@ -27,7 +27,8 @@ import { uploadInvoicePdf } from '../lib/storage'
 import { createOrderWithStock } from '../services/orderService'
 import { isCouponExpired } from '../services/couponService'
 import { createAdvanceOrder, type AdvanceOrder, type AdvancePaymentMethod } from '../services/advanceOrderService'
-import { advanceReceiptPdf, printAdvanceReceipt } from '../lib/advanceReceipt'
+import { advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/advanceReceipt'
+import BillDoneScreen from '../components/pos/BillDoneScreen'
 import { printThermalReceipt } from '../lib/thermalPrint'
 import Toggle from '../components/common/Toggle'
 import {
@@ -740,6 +741,8 @@ export default function Pos(props: PosProps = {}) {
     if (!customer.name.trim()) { setError('Enter the customer name for the deposit order.'); return }
     if (!customer.phone.trim()) { setError('Enter the customer phone number for the deposit order.'); return }
     if (total <= 0) { setError('The order total must be greater than zero.'); return }
+    // advance orders have no manual adjustment (coupon, GST and delivery stay); it is for normal POS sales only
+    if (manualDiscountAmount > 0) { setError('Manual discount is not allowed on a deposit order. Remove it, or use a coupon.'); return }
     const enteredAmount = Number(cashReceived) || 0
     const suggestedDeposit = enteredAmount > 0 && enteredAmount < total ? String(enteredAmount) : ''
     setDepositForm({ amount: suggestedDeposit, expectedDeliveryDate: '', paymentMethod: 'cash', address: customer.address || '', remarks: '', referenceNumber: '' })
@@ -996,115 +999,17 @@ export default function Pos(props: PosProps = {}) {
 
   // ══ INVOICE SCREEN ════════════════════════════════════════════════════
   if (invoice) {
-
     return (
-      <div className="mobile-page-shell print:bg-white print:min-h-0 min-h-[100dvh] flex flex-col justify-between">
-        {/* Screen UI */}
-        <div className="flex-1 max-w-2xl mx-auto px-4 py-6 print:hidden space-y-4 w-full">
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl font-bold text-textMain">{l('Bill Generated Successfully', 'பில் உருவாக்கப்பட்டது')}</h1>
-              <p className="text-xs text-textMuted mt-0.5">Transaction recorded and inventory updated</p>
-            </div>
-            <button onClick={clearAll}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#111111] hover:bg-[#3d4f3a] text-white font-bold text-sm shadow-sm cursor-pointer">
-              <Plus size={15} /> New Sale
-            </button>
-          </div>
-
-          {/* Bill Details Section */}
-          <div className="rounded-2xl border border-[#E8D399] bg-[#FBFAF6] p-4 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-gray-200">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Bill Number:</span>
-                <span className="px-2.5 py-0.5 rounded-lg bg-brand-black text-[#D4AF37] font-black text-xs font-mono">
-                  #{formatInvoiceNo(invoice.invoiceNo)}
-                </span>
-              </div>
-              <div className="text-xs font-semibold text-gray-600">
-                {new Date(invoice.date).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
-              </div>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2.5 text-xs">
-              <div>
-                <span className="text-[10px] text-gray-400 font-bold uppercase block">Customer</span>
-                <span className="font-bold text-gray-900 truncate block">{invoice.customerName || 'Walk-in Customer'}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-gray-400 font-bold uppercase block">Payment Mode</span>
-                <span className="font-bold text-gray-900 uppercase block">{invoice.paymentMode || 'POS'}</span>
-              </div>
-              {invoice.phone && (
-                <div>
-                  <span className="text-[10px] text-gray-400 font-bold uppercase block">Phone</span>
-                  <span className="font-semibold text-gray-700 block">{formatPhoneForDisplay(invoice.phone)}</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Payment receipt */}
-          <div className="surface-panel p-5 rounded-xl border border-gray-100 bg-white shadow-sm mb-4">
-            <p className="text-xs font-black uppercase tracking-widest text-textMuted mb-3">{l('Financial Summary', 'நிதி சுருக்கம்')}</p>
-            <div className="space-y-2.5">
-              <div className="flex justify-between items-center pb-2.5 border-b border-gray-100">
-                <p className="text-sm font-bold text-textMuted">{l('Grand Total', 'மொத்த தொகை')}</p>
-                <p className="text-2xl font-black text-textMain tabular-nums">{formatCurrency(invoice.total)}</p>
-              </div>
-              <div className="flex justify-between items-center">
-                <p className="text-sm font-bold text-textMuted">{l('Amount Received', 'பெற்ற தொகை')}</p>
-                <p className="text-xl font-black text-textMain tabular-nums">{formatCurrency(invoice.amountReceived)}</p>
-              </div>
-              {invoice.balanceReturned > 0 ? (
-                <div className="flex justify-between items-center rounded-xl bg-blue-50 border border-blue-200 px-4 py-3">
-                  <p className="text-sm font-black text-blue-700">{l('Balance Returned', 'திரும்பிய பணம்')}</p>
-                  <p className="text-2xl font-black text-blue-700 tabular-nums">{formatCurrency(invoice.balanceReturned)}</p>
-                </div>
-              ) : (
-                <div className="rounded-xl bg-green-50 border border-green-200 px-4 py-3 text-center">
-                  <p className="text-sm font-black text-green-700">✅ {l('Exact Amount Received', 'சரியான தொகை')}</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="grid grid-cols-3 gap-3">
-            <button onClick={() => printReceipt(invoice)}
-              className="flex flex-col md:flex-row items-center justify-center gap-2 py-3 px-2 rounded-xl border-2 border-gray-200 hover:border-[#111111] text-textMain font-bold text-[12px] md:text-sm transition-colors text-center leading-tight">
-              <Printer size={16} className="shrink-0" /> {l('Print Receipt', 'ரசீது அச்சிடு')}
-            </button>
-            <button onClick={() => sendPosWhatsApp(invoice)}
-              className="flex flex-col md:flex-row items-center justify-center gap-2 py-3 px-2 rounded-xl bg-green-500 hover:bg-green-600 text-white font-bold text-[12px] md:text-sm transition-colors text-center leading-tight">
-              <MessageCircle size={16} className="shrink-0" /> WhatsApp Invoice
-            </button>
-            <button onClick={clearAll}
-              className="flex flex-col md:flex-row items-center justify-center gap-2 py-3 px-2 rounded-xl bg-[#111111] hover:bg-[#3d4f3a] text-white font-bold text-[12px] md:text-sm transition-colors text-center leading-tight">
-              <RefreshCw size={16} className="shrink-0" /> New Sale
-            </button>
-          </div>
-
-          {/* Items summary */}
-          <div className="surface-panel p-4 rounded-xl border border-gray-100 bg-white shadow-sm mt-4">
-            <p className="text-xs font-bold text-textMuted uppercase tracking-wide mb-3">{l('Items Sold', 'விற்ற பொருட்கள்')}</p>
-            <div className="space-y-1.5">
-              {invoice.items.map(item => (
-                <div key={item.id} className="flex justify-between text-sm">
-                  <span className="text-textMain">{item.name} × {formatQuantityDisplay(item.qty, item.selectedUnit, item.unitType)}</span>
-                  <span className="font-bold">{formatCurrency(item.lineTotal)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Print view — full A4 invoice */}
-        <div className="hidden print:block">
-          <Invoice doc={invoicePdfDataOf(invoice)} />
-        </div>
-        <CenexaFooter />
-      </div>
+      <BillDoneScreen
+        invoiceNo={invoice.invoiceNo} date={invoice.date} customerName={invoice.customerName} paymentMode={invoice.paymentMode} phone={invoice.phone}
+        total={invoice.total} amountReceived={invoice.amountReceived} balanceReturned={invoice.balanceReturned}
+        items={invoice.items.map(item => ({ key: String(item.id), label: `${item.name} × ${formatQuantityDisplay(item.qty, item.selectedUnit, item.unitType)}`, amount: item.lineTotal }))}
+        doc={invoicePdfDataOf(invoice)}
+        onPrint={() => printReceipt(invoice)}
+        onWhatsApp={() => sendPosWhatsApp(invoice)}
+        onDownload={() => downloadFile(invoicePdfFile(invoicePdfDataOf(invoice)))}
+        onNewSale={clearAll}
+      />
     )
   }
 

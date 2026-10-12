@@ -13,8 +13,12 @@ export const advanceRoutes = [
     async handler({ db, branch }) {
       // bill_returned: a return was processed on the completed bill (the advance order record itself is never changed by a return)
       const r = await db.query(
-        `SELECT a.*, EXISTS (SELECT 1 FROM public.order_returns r WHERE r.order_id = a.completed_order_id AND r.branch_id = a.branch_id) AS bill_returned
-           FROM public.advance_orders a WHERE a.branch_id = $1 ORDER BY a.created_at DESC`, [branch])
+        `SELECT a.*, EXISTS (SELECT 1 FROM public.order_returns r WHERE r.order_id = a.completed_order_id AND r.branch_id = a.branch_id) AS bill_returned,
+                -- the deposit's own mode and time, for the advance receipt ("Deposit paid (date, mode)")
+                d.payment_method AS deposit_method, d.received_at AS deposit_at
+           FROM public.advance_orders a
+           LEFT JOIN public.advance_order_payments d ON d.advance_order_id = a.id AND d.branch_id = a.branch_id AND d.payment_type = 'deposit'
+          WHERE a.branch_id = $1 ORDER BY a.created_at DESC`, [branch])
       return { orders: r.rows }
     },
   }),
@@ -50,6 +54,8 @@ export const advanceRoutes = [
     }).strict(),
     async handler({ db, branch, body, session }) {
       const cart = body.cart
+      // no manual adjustment on advance orders (coupon, GST and delivery stay); normal POS sales keep it
+      if (cart && (cart.manual_discount > 0 || cart.manual_discount_value > 0)) throw new ApiError(400, 'Manual discount is not allowed on advance orders. Remove it, or use a coupon.')
       const r2 = (v: number) => Math.round(v * 100) / 100
       const total = cart ? r2(Math.max(0, r2(cart.subtotal) - r2(cart.coupon_discount) - r2(cart.manual_discount)) + r2(cart.total_gst) + r2(cart.delivery_charge)) : body.total_amount
       if (cart && Math.abs(total - body.total_amount) > 0.01) throw new ApiError(400, `The bill breakdown (₹${total.toFixed(2)}) does not match the order total (₹${body.total_amount.toFixed(2)})`)
@@ -61,6 +67,9 @@ export const advanceRoutes = [
       if (again) return { order: again, replayed: true }
       try {
         return await db.tx(async (t) => {
+          // a coupon from the cart: the same rules as a POS sale (this branch's coupon, active, not expired, total and
+          // per-customer limit, customer-specific phone); completing the order checks the customer rules again
+          if (cart?.coupon_code) await t.query(`SELECT public.assert_coupon_redeemable($1, $2, $3, true)`, [branch, cart.coupon_code, body.phone])
           const r = await t.query(
             `SELECT * FROM public.create_advance_order($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)`,
             [body.customer_name, body.phone, body.address, body.product_name, body.category, body.description, total, body.deposit_amount,
@@ -75,9 +84,9 @@ export const advanceRoutes = [
                 WHERE id = $10 AND branch_id = $11 RETURNING *`,
               [r2(cart.subtotal), cart.coupon_code || null, cart.coupon_percentage, r2(cart.coupon_discount), r2(cart.manual_discount), cart.manual_discount_type,
                cart.manual_discount_value, r2(cart.total_gst), r2(cart.delivery_charge), r.rows[0].id, branch])
-            return { order: saved.rows[0] }
+            return { order: { ...saved.rows[0], deposit_method: body.payment_method, deposit_at: saved.rows[0].created_at } }
           }
-          return { order: { ...r.rows[0], ...(key ? { idempotency_key: key } : {}) } }
+          return { order: { ...r.rows[0], ...(key ? { idempotency_key: key } : {}), deposit_method: body.payment_method, deposit_at: r.rows[0].created_at } }
         })
       } catch (e) {
         // the same key at the same instant: the second transaction fails on the unique key and is rolled back
@@ -112,6 +121,14 @@ export const advanceRoutes = [
       split_details: z.object({ payments: z.array(z.object({ method: z.enum(['cash', 'upi', 'card']), amount: z.number().finite().positive() }).strict()).min(2).max(3) }).strict().optional(),
     }).strict(),
     async handler({ db, branch, body, params, session }) {
+      // no manual adjustment on advance orders: the balance is paid in full (a coupon is applied when the order is made)
+      if (body.manual_discount > 0) throw new ApiError(400, 'Manual adjustment is not allowed on advance orders.')
+      if (!body.coupon_code) {
+        const adv = (await db.query(`SELECT remaining_balance, status FROM public.advance_orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])).rows[0]
+        if (adv && adv.status !== 'completed' && Math.abs(Number(adv.remaining_balance) - body.final_amount) > 0.01) {
+          throw new ApiError(400, `The balance of ₹${Number(adv.remaining_balance).toFixed(2)} must be paid in full`)
+        }
+      }
       return db.tx(async (t) => {
         const r = await t.query(
           `SELECT * FROM public.complete_advance_order_v2($1, $2, $3, $4, $5, $6, $7, $8)`,

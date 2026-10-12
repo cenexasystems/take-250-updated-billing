@@ -102,6 +102,8 @@ type DashboardOrder = {
   /** the stored bill amounts the invoice reads (src/lib/invoiceDoc.ts) */
   subtotal?: number; shipping?: number; coupon_percentage?: number; manual_discount_type?: string; manual_discount_value?: number
   taxable_amount?: number; cgst_amount?: number; sgst_amount?: number
+  /** a bill made by completing an advance order: its DEP- reference and payments */
+  advance_ref?: { deposit_id: string; payments: Array<{ payment_type: string; amount: number; method: string; received_at: string }> } | null
 }
 type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null }
 type DashboardCoupon = {
@@ -459,6 +461,7 @@ export default function Dashboard() {
     coupon_percentage: toNumber(row.coupon_percentage, 0),
     manual_discount_type: String(row.manual_discount_type || 'flat'), manual_discount_value: toNumber(row.manual_discount_value, 0),
     taxable_amount: toNumber(row.taxable_amount, 0), cgst_amount: toNumber(row.cgst_amount, 0), sgst_amount: toNumber(row.sgst_amount, 0),
+    advance_ref: (row.advance_ref as DashboardOrder['advance_ref']) ?? null,
   })
 
   // Load dashboard data
@@ -1035,6 +1038,21 @@ export default function Dashboard() {
     const preview = getOrderWhatsAppPreview(order)
     if (!preview) return null
     return invoiceDocFromBill(order as unknown as StoredBill, preview.items as unknown as Array<Record<string, unknown>>)
+  }
+
+  // Order History "details" row: the bill's split-up from its list row (the shared builder; payments of an advance bill included)
+  const historyBillDoc = (order: DashboardOrder): InvoiceDoc | null => {
+    const preview = getOrderWhatsAppPreview(order)
+    if (!preview) return null
+    const ref = order.advance_ref
+    const extras: InvoiceExtras = ref ? {
+      advance: {
+        deposit_id: ref.deposit_id,
+        deposits: ref.payments.filter((x) => x.payment_type === 'deposit').map((x) => ({ amount: Number(x.amount), method: x.method, received_at: x.received_at })),
+        balance: (() => { const b = ref.payments.find((x) => x.payment_type === 'remaining'); return b ? { amount: Number(b.amount), method: b.method, received_at: b.received_at } : null })(),
+      },
+    } : {}
+    return invoiceDocFromBill(order as unknown as StoredBill, preview.items as unknown as Array<Record<string, unknown>>, extras)
   }
 
   const handlePrintReceipt = async (order: DashboardOrder) => {
@@ -3530,7 +3548,7 @@ export default function Dashboard() {
                         </div>
                         <div>
                           <p className="text-[#9BAB9A] uppercase text-[11px] font-black">Discount</p>
-                          <p className="font-semibold text-emerald-700">{o.discount_amount > 0 ? `-${formatCurrency(o.discount_amount)}` : '—'}</p>
+                          <p className="font-semibold text-emerald-700">{o.discount_amount + o.manual_discount_amount > 0 ? `-${formatCurrency(o.discount_amount + o.manual_discount_amount)}` : '—'}</p>
                         </div>
                         <div>
                           <p className="text-[#9BAB9A] uppercase text-[11px] font-black">Delivery</p>
@@ -3611,7 +3629,7 @@ export default function Dashboard() {
                             {o.coupon_code ? <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">{o.coupon_code}</span> : <span className="text-[#9BAB9A]">—</span>}
                           </td>
                           <td className="px-2 py-3 text-[11px]">
-                            {o.discount_amount > 0 ? <span className="font-bold text-emerald-700">-{formatCurrency(o.discount_amount)}</span> : <span className="text-[#9BAB9A]">—</span>}
+                            {o.discount_amount + o.manual_discount_amount > 0 ? <span className="font-bold text-emerald-700">-{formatCurrency(o.discount_amount + o.manual_discount_amount)}</span> : <span className="text-[#9BAB9A]">—</span>}
                           </td>
                           <td className="px-2 py-3 text-[11px]">
                             {o.delivery_charge > 0 ? <span className="font-bold text-[#111111]">{formatCurrency(o.delivery_charge)}</span> : <span className="text-[#9BAB9A]">—</span>}
@@ -3672,6 +3690,32 @@ export default function Dashboard() {
                                   <p className="text-[10px] font-black uppercase text-[#9BAB9A] tracking-wider mb-1">Address</p>
                                   <p className="font-semibold text-[#374151] break-words">{o.address || '—'}</p>
                                 </div>
+                                {(() => {
+                                  const d = historyBillDoc(o)
+                                  if (!d) return null
+                                  return (
+                                    <div className="col-span-2 sm:col-span-4" data-testid="history-bill-breakdown">
+                                      <p className="text-[10px] font-black uppercase text-[#9BAB9A] tracking-wider mb-1">Bill Details</p>
+                                      <div className="max-w-md space-y-0.5">
+                                        {d.items.map((it, k) => (
+                                          <div key={`i${k}`} className="flex justify-between gap-3"><span className="font-semibold text-[#374151]">{it.name} × {it.quantity}</span><span className="font-semibold text-[#111111]">{formatCurrency(it.line_total)}</span></div>
+                                        ))}
+                                        <div className="border-t border-dashed border-[#E5E7EB] my-1" />
+                                        {d.rows.map((r, k) => (
+                                          <div key={`r${k}`} className="flex justify-between gap-3"><span className={r.kind === 'discount' ? 'font-semibold text-emerald-700' : 'font-semibold text-[#374151]'}>{r.label}</span><span className={r.kind === 'discount' ? 'font-bold text-emerald-700' : 'font-semibold text-[#111111]'}>{r.kind === 'discount' ? '-' : ''}{formatCurrency(r.amount)}</span></div>
+                                        ))}
+                                        <div className="flex justify-between gap-3 border-t border-[#E5E7EB] pt-1"><span className="font-black text-[#111111]">Total</span><span className="font-black text-[#111111]">{formatCurrency(d.total)}</span></div>
+                                        {d.advance && (
+                                          <>
+                                            {d.advance.reference && <div className="flex justify-between gap-3"><span className="font-semibold text-[#374151]">Advance order</span><span className="font-bold text-[#111111]">{d.advance.reference}</span></div>}
+                                            {d.advance.deposits.map((x, k) => <div key={`d${k}`} className="flex justify-between gap-3"><span className="font-semibold text-[#374151]">{x.label}</span><span className="font-semibold text-[#111111]">{formatCurrency(x.amount)}</span></div>)}
+                                            {d.advance.balance && <div className="flex justify-between gap-3"><span className="font-semibold text-[#374151]">{d.advance.balance.label}</span><span className="font-semibold text-[#111111]">{formatCurrency(d.advance.balance.amount)}</span></div>}
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
+                                })()}
                                 <div className="col-span-2 sm:col-span-4">
                                   <p className="text-[10px] font-black uppercase text-[#9BAB9A] tracking-wider mb-1">Payment Mode</p>
                                   {o.payment_mode ? (

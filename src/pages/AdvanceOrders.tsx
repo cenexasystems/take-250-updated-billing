@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
+import BillDoneScreen from '../components/pos/BillDoneScreen'
 import { CalendarDays, CheckCircle2, Clock3, Download, Eye, FileText, MessageCircle, PackageCheck, Printer, RefreshCw, Search, X, Trash2 } from 'lucide-react'
 import { api } from '../lib/apiClient'
 import { formatCurrency } from '../lib/retail'
@@ -8,7 +10,7 @@ import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBil
 import { printThermalReceipt } from '../lib/thermalPrint'
 import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
 import { formatPhoneForDisplay } from '../lib/phone'
-import { advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/advanceReceipt'
+import { advanceReceiptLines, advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/advanceReceipt'
 import { useAdminAuthStore, useProductStore, resolveBranch } from '../store/store'
 import { fetchVariantsByProduct, type ProductVariant } from '../services/variantService'
 import { formatDateDMY } from '../lib/formatDate'
@@ -50,6 +52,7 @@ const inputClass = 'w-full rounded-xl border border-[#E5E7EB] bg-white px-3.5 py
 export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: AdvanceOrdersProps = {}) {
   const role = useAdminAuthStore(state => state.role)
   const branch = useAdminAuthStore(state => resolveBranch(state.activeBranch))
+  const navigate = useNavigate()
   const products = useProductStore(state => state.products)
   const [orders, setOrders] = useState<AdvanceOrder[]>([])
   const [loading, setLoading] = useState(true)
@@ -84,8 +87,8 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
   const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; percentage: number } | null>(null)
   const [couponError, setCouponError] = useState('')
   const [availableCoupons, setAvailableCoupons] = useState<{ code: string; percentage: number }[]>([])
-  const [manualDiscount, setManualDiscount] = useState('')
-  const [manualDiscountType, setManualDiscountType] = useState<'rm' | '%'>('rm')
+  // the final tax invoice shown after "Receive Balance" (the same screen as after a POS sale)
+  const [done, setDone] = useState<{ order: AdvanceOrder; doc: InvoiceDoc } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -219,7 +222,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
   // Every time the payment window opens it starts clean: a manual adjustment / split typed for another order (or left in
   // the window after closing it) must never carry over into the next bill.
   const openPayment = (order: AdvanceOrder) => {
-    setManualDiscount(''); setManualDiscountType('rm'); setAppliedCoupon(null); setCouponInput(''); setCouponError('')
+    setAppliedCoupon(null); setCouponInput(''); setCouponError('')
     setPaymentForm({ method: 'cash', remarks: '' }); setSplitP1Amount(''); setError('')
     setPaymentOrder(order)
   }
@@ -240,15 +243,10 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
   const receivePayment = async (event: FormEvent) => {
     event.preventDefault(); if (!paymentOrder) return; setSaving(true); setError('')
     try {
-      // Advance orders use fixed payment amounts - no coupon application allowed
-      const manualDiscountNum = Math.max(0, Number(manualDiscount) || 0)
-      const manualDisc = manualDiscountType === '%'
-        ? Math.round(paymentOrder.remaining_balance * (manualDiscountNum / 100) * 100) / 100
-        : manualDiscountNum
-      const finalAmount = Math.max(0, paymentOrder.remaining_balance - manualDisc)
-      const parts = [paymentForm.remarks]
-      if (manualDisc > 0) parts.push(`Manual Adjustment: ${manualDiscountType === '%' ? manualDiscountNum + '%' : '₹' + manualDiscountNum.toFixed(2)} = -INR ${manualDisc.toFixed(2)}`)
-      const remarksWithCoupon = parts.filter(Boolean).join(' | ')
+      // The balance is paid in full: advance orders have no manual adjustment (a coupon, GST and delivery are set when the
+      // order is made in the POS and are already in its total)
+      const finalAmount = paymentOrder.remaining_balance
+      const remarksWithCoupon = paymentForm.remarks
 
       const labelFor = (t: 'cash' | 'upi' | 'card') => t === 'upi' ? 'QR' : t === 'card' ? 'Card' : 'Cash'
       let finalMethodStr: string = paymentForm.method
@@ -271,13 +269,15 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
         finalAmount,
         null, // No coupon codes for advance orders
         0, // No coupon percentage
-        manualDisc,
+        0, // no manual adjustment on advance orders
         remarksWithCoupon,
         splitPayments,
       )
 
       const completed: AdvanceOrder = { ...paymentOrder, status: 'completed', remaining_balance: finalAmount, completed_at: result.completed_at, completed_order_id: result.order_id, invoice_number: result.invoice_no, final_payment_method: finalMethodStr }
-      setOrders(rows => rows.map(row => row.id === completed.id ? completed : row)); onOrderCompleted?.(completed); setPaymentOrder(null); setPaymentForm({ method: 'cash', remarks: '' }); setSplitP1Amount(''); setAppliedCoupon(null); setCouponInput(''); setCouponError(''); setManualDiscount(''); setManualDiscountType('rm'); setNotice(`${result.invoice_no} generated once. The full ${formatCurrency(completed.total_amount)} is now recognized as revenue. Tap WhatsApp to send the invoice PDF.`)
+      setOrders(rows => rows.map(row => row.id === completed.id ? completed : row)); onOrderCompleted?.(completed); setPaymentOrder(null); setPaymentForm({ method: 'cash', remarks: '' }); setSplitP1Amount(''); setAppliedCoupon(null); setCouponInput(''); setCouponError(''); setNotice(`${result.invoice_no} generated once. The full ${formatCurrency(completed.total_amount)} is now recognized as revenue. Tap WhatsApp to send the invoice PDF.`)
+      // show the final tax invoice on the post-sale screen (Print / WhatsApp / Download / New Sale); closing it returns here
+      try { setDone({ order: completed, doc: await finalInvoiceDoc(completed) }) } catch { /* the notice above still tells the invoice number */ }
 
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to complete payment') } finally { setSaving(false) }
   }
@@ -313,6 +313,28 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
     ['Ready for Delivery', analytics.ready, 'Ready for customer pickup/delivery', PackageCheck, 'text-blue-700 bg-blue-50'],
     ['Pending Orders', analytics.pending, 'Awaiting balance or confirmation', Clock3, 'text-rose-700 bg-rose-50'],
   ] as const
+
+  if (done) {
+    const d = done.doc
+    const paid = d.advance?.balance
+    return (
+      <BillDoneScreen
+        invoiceNo={d.invoiceNo} date={d.date} customerName={d.customerName} phone={d.phone}
+        paymentMode={d.payment.split ? d.payment.parts.map((p) => `${p.label} ${formatCurrency(p.amount)}`).join(' + ') : d.payment.label}
+        total={d.total}
+        summary={(d.advance?.deposits ?? []).map((x) => ({ label: x.label, value: x.amount }))}
+        amountReceived={paid?.amount ?? 0} receivedLabel="Balance Received" balanceReturned={0}
+        items={d.items.map((it, k) => ({ key: String(k), label: `${it.name} × ${it.quantity}`, amount: it.line_total }))}
+        doc={d}
+        onPrint={() => printThermalReceipt(d)}
+        onWhatsApp={() => { void sharePdfOnWhatsApp(pdfNamed(invoicePdfFile(d), invoicePdfShareName(d.invoiceNo)), d.phone) }}
+        onDownload={() => downloadFile(invoicePdfFile(d))}
+        onNewSale={() => navigate('/pos')}
+        onClose={() => setDone(null)}
+        closeLabel="Advance Orders"
+      />
+    )
+  }
 
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[.18em] text-emerald-600">Separate from sales</p><h2 className="text-2xl font-black text-[#273126]">Advance Orders</h2><p className="mt-1 text-sm text-[#6B7280]">Deposits are tracked separately. Full order value is recognized once final payment is completed.</p></div><div className="flex gap-2"><button onClick={() => setCreateOpen(true)} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-black text-white">+ New Advance Order</button><button onClick={() => void load()} className="rounded-xl border bg-white p-3 text-[#647064]" title="Refresh"><RefreshCw size={18}/></button></div></div>
@@ -512,18 +534,15 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
           <div className="mb-6 rounded-2xl bg-emerald-50 py-5 text-center">
             {(() => {
               const couponDisc = appliedCoupon ? Math.round(paymentOrder.remaining_balance * (appliedCoupon.percentage / 100) * 100) / 100 : 0;
-              const manualNum = Math.max(0, Number(manualDiscount) || 0);
-              const manualDisc = manualDiscountType === '%' ? Math.round(paymentOrder.remaining_balance * (manualNum / 100) * 100) / 100 : manualNum;
-              const finalAmt = Math.max(0, paymentOrder.remaining_balance - couponDisc - manualDisc);
+              const finalAmt = Math.max(0, paymentOrder.remaining_balance - couponDisc);
               return (
                 <>
                   <p className="text-[11px] font-black uppercase tracking-widest text-emerald-600">Remaining Amount</p>
-                  <p className={`mt-1 font-black text-emerald-800 ${(couponDisc > 0 || manualDisc > 0) ? 'text-xl line-through opacity-60' : 'text-4xl'}`}>{formatCurrency(paymentOrder.remaining_balance)}</p>
-                  {(couponDisc > 0 || manualDisc > 0) && (
+                  <p className={`mt-1 font-black text-emerald-800 ${couponDisc > 0 ? 'text-xl line-through opacity-60' : 'text-4xl'}`}>{formatCurrency(paymentOrder.remaining_balance)}</p>
+                  {couponDisc > 0 && (
                     <>
                       <div className="mt-2 space-y-0.5 text-xs text-emerald-700">
                         {couponDisc > 0 && <p>Coupon {appliedCoupon!.code} ({appliedCoupon!.percentage}%): -{formatCurrency(couponDisc)}</p>}
-                        {manualDisc > 0 && <p>Manual Discount: -{formatCurrency(manualDisc)}</p>}
                       </div>
                       <p className="mt-3 text-3xl font-black text-emerald-950">You Pay: {formatCurrency(finalAmt)}</p>
                     </>
@@ -533,15 +552,6 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
             })()}
           </div>
           <div className="space-y-4">
-            <Field label="Manual Adjustment (Admin Only)">
-              <div className="flex gap-2 items-center">
-                <select value={manualDiscountType} onChange={e=>setManualDiscountType(e.target.value as 'rm'|'%')} className="rounded-xl border border-[#E5E7EB] bg-white px-3 py-2.5 text-sm font-black text-[#273126] outline-none focus:border-[#7e22ce] focus:ring-2 focus:ring-violet-100 cursor-pointer">
-                  <option value="rm">₹</option>
-                  <option value="%">%</option>
-                </select>
-                <input type="number" min="0" step="0.01" className={`${inputClass} flex-1`} value={manualDiscount} onChange={e=>setManualDiscount(e.target.value)} placeholder="0" />
-              </div>
-            </Field>
             <Field label="Payment Method">
               <select className={inputClass} value={paymentForm.method} onChange={e=>setPaymentForm({...paymentForm,method:e.target.value as AdvancePaymentMethod | 'split'})}>
                 <option value="cash">Cash</option>
@@ -676,6 +686,20 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
                 </div>
               ))}
             </div>
+
+            {/* the order's split-up (an order made from the POS cart after 0013): the same lines as its receipt */}
+            {advanceReceiptLines(selected).length > 3 && (
+              <div className="rounded-xl bg-[#F8F7F4] p-3.5 border border-gray-100" data-testid="advance-breakdown">
+                <p className="text-[10px] font-black uppercase text-[#858C83]">Bill Split-up</p>
+                <div className="mt-1.5 space-y-1">
+                  {advanceReceiptLines(selected).map((line) => (
+                    <div key={line.label} className={`flex justify-between gap-3 text-sm ${line.kind === 'total' || line.kind === 'balance' ? 'font-black text-[#273126]' : 'font-semibold text-[#4B5563]'}`}>
+                      <span>{line.label}</span><span className={line.kind === 'discount' ? 'text-emerald-700' : ''}>{line.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {selected.bill_returned && (
               <div data-testid="advance-return-note" className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">

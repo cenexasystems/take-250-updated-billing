@@ -14,7 +14,7 @@ export async function invoiceExtras(db: Db, branch: string, orderId: string) {
       GROUP BY i.order_item_id`, [orderId, branch])
   const records = await db.query(
     `SELECT return_no, created_at FROM public.order_returns WHERE order_id = $1 AND branch_id = $2 ORDER BY created_at, return_no`, [orderId, branch])
-  const adv = (await db.query(`SELECT id FROM public.advance_orders WHERE completed_order_id = $1 AND branch_id = $2`, [orderId, branch])).rows[0]
+  const adv = (await db.query(`SELECT id, deposit_id FROM public.advance_orders WHERE completed_order_id = $1 AND branch_id = $2`, [orderId, branch])).rows[0]
   let advance = null
   if (adv) {
     const pays = (await db.query(
@@ -22,6 +22,7 @@ export async function invoiceExtras(db: Db, branch: string, orderId: string) {
         WHERE advance_order_id = $1 AND branch_id = $2 ORDER BY received_at`, [adv.id, branch])).rows
     const bal = pays.find((p) => p.payment_type === 'remaining')
     advance = {
+      deposit_id: String(adv.deposit_id),
       deposits: pays.filter((p) => p.payment_type === 'deposit').map((p) => ({ amount: Number(p.amount), method: String(p.payment_method), received_at: p.received_at })),
       balance: bal ? { amount: Number(bal.amount), method: String(bal.payment_method), received_at: bal.received_at } : null,
     }

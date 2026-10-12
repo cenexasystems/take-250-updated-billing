@@ -198,6 +198,7 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
     y += 7
   }
   if (data.advance) {
+    if (data.advance.reference) extra('Advance order', data.advance.reference)
     data.advance.deposits.forEach((d) => extra(d.label, money(d.amount)))
     if (data.advance.balance) {
       extra(data.advance.balance.label, money(data.advance.balance.amount))

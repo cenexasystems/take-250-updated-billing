@@ -241,7 +241,12 @@ export const salesRoutes = [
       const items = query.include_items
         ? `, COALESCE((SELECT json_agg(to_jsonb(i) || jsonb_build_object('returned_quantity', COALESCE((SELECT SUM(r.quantity) FROM public.order_return_items r WHERE r.order_item_id = i.id AND r.branch_id = i.branch_id), 0)) ORDER BY i.id) FROM public.order_items i WHERE i.order_id = o.id AND i.branch_id = o.branch_id), '[]'::json) AS order_items`
         : ''
-      const rows = await db.query(`SELECT o.*${items} FROM public.orders o WHERE ${where} ORDER BY o.created_at DESC LIMIT ${query.limit} OFFSET ${query.offset}`, p)
+      // a bill made by completing an advance order: its DEP- reference and payments (deposit + balance), same branch only
+      const advanceRef = `, (SELECT jsonb_build_object('deposit_id', a.deposit_id, 'payments', COALESCE((SELECT jsonb_agg(jsonb_build_object('payment_type', ap.payment_type,
+            'amount', ap.amount, 'method', ap.payment_method, 'received_at', ap.received_at) ORDER BY ap.received_at)
+          FROM public.advance_order_payments ap WHERE ap.advance_order_id = a.id AND ap.branch_id = a.branch_id), '[]'::jsonb))
+        FROM public.advance_orders a WHERE a.completed_order_id = o.id AND a.branch_id = o.branch_id) AS advance_ref`
+      const rows = await db.query(`SELECT o.*${items}${advanceRef} FROM public.orders o WHERE ${where} ORDER BY o.created_at DESC LIMIT ${query.limit} OFFSET ${query.offset}`, p)
       const total = await db.query(`SELECT count(*)::int AS n FROM public.orders o WHERE ${where}`, p)
       return { orders: rows.rows, total: total.rows[0].n }
     },

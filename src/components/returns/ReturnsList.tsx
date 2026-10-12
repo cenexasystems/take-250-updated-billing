@@ -4,25 +4,28 @@ import { api } from '../../lib/apiClient'
 import { buildCsv, downloadCsvFile } from '../../lib/csv'
 import { formatCurrency, formatInvoiceNo } from '../../lib/retail'
 import type { PosBranch } from '../../store/store'
+import { PAY_MODES, payModeLabel, refundModeText, type PayMode } from '../../lib/refundModes'
 
 type ReturnRow = {
-  id: string; return_no: string; order_id: string; invoice_no: string; refund_amount: number; refund_mode: 'cash' | 'original'
+  id: string; return_no: string; order_id: string; invoice_no: string; refund_amount: number; refund_mode: string
+  /** refund per payment mode (0015; derived for older returns) */
+  refunds: Record<string, number>
   reason: string; note: string; created_by_role: string; created_at: string
   items: Array<{ name: string; quantity: number; restocked: boolean; refund_amount: number }>
 }
-type Totals = { refund: number; cash: number; original: number }
+type Totals = { refund: number } & Record<PayMode, number>
 
 const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const itemsText = (r: ReturnRow) => r.items.map((i) => `${i.name} x${i.quantity}${i.restocked ? '' : ' (damaged)'}`).join('; ')
-const modeLabel = (m: string) => (m === 'cash' ? 'Cash' : 'Original payment')
+const modeText = (r: ReturnRow) => refundModeText(r.refunds, (n) => Number(n).toFixed(2), r.refund_mode, Number(r.refund_amount))
 
 /** Every return of this branch, newest RETURN time first (not the sale date), so the day's refunds can be matched with the cash drawer. */
 export default function ReturnsList({ branch, onBack }: { branch: PosBranch; onBack: () => void }) {
   const [from, setFrom] = useState(localDay())
   const [to, setTo] = useState(localDay())
-  const [mode, setMode] = useState<'' | 'cash' | 'original'>('')
+  const [mode, setMode] = useState<'' | PayMode>('')
   const [rows, setRows] = useState<ReturnRow[]>([])
-  const [totals, setTotals] = useState<Totals>({ refund: 0, cash: 0, original: 0 })
+  const [totals, setTotals] = useState<Totals>({ refund: 0, cash: 0, card: 0, qr: 0, other: 0 })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -42,8 +45,8 @@ export default function ReturnsList({ branch, onBack }: { branch: PosBranch; onB
 
   const exportCsv = () => {
     const header = ['Return No', 'Original Invoice', 'Items', 'Refund (INR)', 'Refund Mode', 'Reason', 'Note', 'By (role)', 'Return Date & Time']
-    const body = rows.map((r) => [r.return_no, formatInvoiceNo(r.invoice_no), itemsText(r), Number(r.refund_amount).toFixed(2), modeLabel(r.refund_mode), r.reason, r.note, r.created_by_role, new Date(r.created_at).toLocaleString('en-IN')])
-    body.push(['TOTAL', '', '', totals.refund.toFixed(2), `Cash ${totals.cash.toFixed(2)} / Original ${totals.original.toFixed(2)}`, '', '', '', ''])
+    const body = rows.map((r) => [r.return_no, formatInvoiceNo(r.invoice_no), itemsText(r), Number(r.refund_amount).toFixed(2), modeText(r), r.reason, r.note, r.created_by_role, new Date(r.created_at).toLocaleString('en-IN')])
+    body.push(['TOTAL', '', '', totals.refund.toFixed(2), PAY_MODES.map((m) => `${payModeLabel(m)} ${totals[m].toFixed(2)}`).join(' / '), '', '', '', ''])
     downloadCsvFile(`returns_${from || 'all'}_to_${to || 'all'}.csv`, buildCsv(header, body))
   }
 
@@ -68,10 +71,9 @@ export default function ReturnsList({ branch, onBack }: { branch: PosBranch; onB
             <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="mt-1 w-full h-11 rounded-xl bg-[#F9FAFB] border border-gray-200 px-2.5 text-xs font-bold text-gray-800 focus:outline-none focus:border-[#D4AF37]" />
           </label>
           <label className="text-[10px] font-black uppercase text-gray-500">Refund mode
-            <select value={mode} onChange={(e) => setMode(e.target.value as '' | 'cash' | 'original')} className="mt-1 w-full h-11 rounded-xl bg-[#F9FAFB] border border-gray-200 px-2.5 text-xs font-bold text-gray-800 focus:outline-none focus:border-[#D4AF37] cursor-pointer">
+            <select value={mode} onChange={(e) => setMode(e.target.value as '' | PayMode)} className="mt-1 w-full h-11 rounded-xl bg-[#F9FAFB] border border-gray-200 px-2.5 text-xs font-bold text-gray-800 focus:outline-none focus:border-[#D4AF37] cursor-pointer">
               <option value="">All modes</option>
-              <option value="cash">Cash</option>
-              <option value="original">Original payment</option>
+              {PAY_MODES.map((m) => <option key={m} value={m}>{payModeLabel(m)}</option>)}
             </select>
           </label>
           <div className="flex items-end">
@@ -79,8 +81,8 @@ export default function ReturnsList({ branch, onBack }: { branch: PosBranch; onB
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-2" data-testid="returns-totals">
-          {[['Total refunded', totals.refund], ['Cash refunds', totals.cash], ['Original-mode refunds', totals.original]].map(([label, v]) => (
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2" data-testid="returns-totals">
+          {[['Total refunded', totals.refund] as const, ...PAY_MODES.map((m) => [`${payModeLabel(m)} refunds`, totals[m]] as const)].map(([label, v]) => (
             <div key={String(label)} className="rounded-xl bg-[#FBFAF6] p-2 text-center">
               <p className="text-[9px] font-black uppercase text-gray-500">{label}</p>
               <p className="text-xs font-black text-[#1A0E0E]">{formatCurrency(Number(v))}</p>
@@ -110,7 +112,7 @@ export default function ReturnsList({ branch, onBack }: { branch: PosBranch; onB
                   <td className="whitespace-nowrap px-2 py-3 text-[11px] font-bold text-[#111111]">{formatInvoiceNo(r.invoice_no)}</td>
                   <td className="min-w-[160px] px-2 py-3 text-left text-[11px] font-semibold text-[#374151]">{itemsText(r)}</td>
                   <td className="whitespace-nowrap px-2 py-3 text-[11px] font-black text-[#111111]">{formatCurrency(Number(r.refund_amount))}</td>
-                  <td className="whitespace-nowrap px-2 py-3 text-[11px] font-semibold text-[#374151]">{modeLabel(r.refund_mode)}</td>
+                  <td className="whitespace-nowrap px-2 py-3 text-[11px] font-semibold text-[#374151]" data-testid="returns-mode">{refundModeText(r.refunds, formatCurrency, r.refund_mode, Number(r.refund_amount))}</td>
                   <td className="px-2 py-3 text-[11px] font-semibold text-[#374151]">{r.reason}{r.note ? ` · ${r.note}` : ''}</td>
                   <td className="whitespace-nowrap px-2 py-3 text-[11px] font-semibold uppercase text-[#374151]">{r.created_by_role}</td>
                   <td className="whitespace-nowrap px-2 py-3 text-[11px] text-[#374151]">{new Date(r.created_at).toLocaleString('en-IN')}</td>

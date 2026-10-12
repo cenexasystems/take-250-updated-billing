@@ -53,8 +53,9 @@ import { formatCurrency, normalizeOrderMode, normalizeUnitType, toNumber, type U
 import { normalizeStructuredOrderItem, formatInvoiceNo, formatPaymentMode } from '../lib/retail'
 import { Invoice } from '../components/Invoice'
 import { printThermalReceipt } from '../lib/thermalPrint'
-import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
+import { invoicePageLink, invoicePdfShareName, pdfNamed, sendPdfOnWhatsApp } from '../lib/whatsappShare'
 import { invoicePdfFile } from '../lib/invoicePdf'
+import { refundModeText } from '../lib/refundModes'
 import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBill } from '../lib/invoiceDoc'
 import { formatPhoneForCSV, formatPhoneForDisplay } from '../lib/phone'
 // toWhatsAppUrl removed - using direct link building in handlers
@@ -104,6 +105,8 @@ type DashboardOrder = {
   taxable_amount?: number; cgst_amount?: number; sgst_amount?: number
   /** a bill made by completing an advance order: its DEP- reference and payments */
   advance_ref?: { deposit_id: string; payments: Array<{ payment_type: string; amount: number; method: string; received_at: string }> } | null
+  /** what the bill took in per payment mode (deposits included) and what was refunded to each mode (0015) */
+  paid_by_mode?: Record<string, number>; refunds_by_mode?: Record<string, number>
 }
 type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null }
 type DashboardCoupon = {
@@ -462,6 +465,7 @@ export default function Dashboard() {
     manual_discount_type: String(row.manual_discount_type || 'flat'), manual_discount_value: toNumber(row.manual_discount_value, 0),
     taxable_amount: toNumber(row.taxable_amount, 0), cgst_amount: toNumber(row.cgst_amount, 0), sgst_amount: toNumber(row.sgst_amount, 0),
     advance_ref: (row.advance_ref as DashboardOrder['advance_ref']) ?? null,
+    paid_by_mode: (row.paid_by_mode as Record<string, number>) ?? {}, refunds_by_mode: (row.refunds_by_mode as Record<string, number>) ?? {},
   })
 
   // Load dashboard data
@@ -567,6 +571,25 @@ export default function Dashboard() {
     const advanceRevenue     = advanceOrders.reduce((s, o) => s + getOrderNet(o), 0)
     const onlinePosRevenue   = onlinePOS.reduce((s, o) => s + getOrderNet(o), 0)
     const manualRevenue      = manualSales.reduce((s, o) => s + getOrderNet(o), 0)
+
+    // Revenue per payment mode (same bills and dates as Net Revenue): what each mode took in (a split by its real parts; an
+    // advance bill: the deposit in its own mode + the balance in its mode(s)) minus what was refunded to that mode, on the
+    // ORIGINAL sale date. Anything the modes do not explain (the bill total is recomputed from its lines; never below zero)
+    // goes to Other, so Cash + Card + QR + Other = Net Revenue exactly.
+    const modeRaw = { cash: 0, card: 0, qr: 0, other: 0 }
+    let modeUnexplained = 0
+    billableCompleted.forEach((o) => {
+      let explained = 0
+      for (const m of ['cash', 'card', 'qr', 'other'] as const) {
+        const v = toNumber(o.paid_by_mode?.[m], 0) - toNumber(o.refunds_by_mode?.[m], 0)
+        modeRaw[m] += v; explained += v
+      }
+      modeUnexplained += getOrderNet(o) - explained
+    })
+    const r2 = (v: number) => Math.round(v * 100) / 100
+    const modeRevenue = { cash: r2(modeRaw.cash), card: r2(modeRaw.card), qr: r2(modeRaw.qr), other: 0 }
+    modeRevenue.other = r2(r2(completedRevenue) - modeRevenue.cash - modeRevenue.card - modeRevenue.qr)
+    const modeUnexplainedAmount = r2(modeUnexplained)
 
     // Expenses & Net Profit calculation:
     // Net Profit = Revenue (total selling based on orders) - Total Expense (from expense tracker)
@@ -840,6 +863,8 @@ export default function Dashboard() {
 
     return {
       totalCompletedRevenue: completedRevenue,
+      modeRevenue,
+      modeUnexplained: modeUnexplainedAmount,
       totalReturned: returnedTotal,
       todayReturned,
       averageRevenuePerBill,
@@ -1062,10 +1087,17 @@ export default function Dashboard() {
   }
 
   // WhatsApp = the invoice PDF only (no text, no link). From the tap on "Send PDF"; the same generator and layout as Download.
-  const sendOrderPdfOnWhatsApp = async (order: DashboardOrder) => {
-    const doc = await orderInvoiceDoc(order).catch(() => null)
-    if (!doc) { alert('This order has no invoice details available.'); return }
-    void sharePdfOnWhatsApp(pdfNamed(invoicePdfFile(doc), invoicePdfShareName(order.invoice_no || order.id)), order.phone)
+  // Called synchronously from the click: the helper opens what needs the click first, then the PDF is made (a returned or
+  // advance bill fetches its details first).
+  const sendOrderPdfOnWhatsApp = (order: DashboardOrder) => {
+    void sendPdfOnWhatsApp({
+      file: async () => {
+        const doc = await orderInvoiceDoc(order)
+        if (!doc) throw new Error('This order has no invoice details available.')
+        return pdfNamed(invoicePdfFile(doc), invoicePdfShareName(order.invoice_no || order.id))
+      },
+      phone: order.phone, label: 'Invoice', link: invoicePageLink(order.invoice_no || order.id),
+    })
   }
 
   const openOrderInvoice = async (order: DashboardOrder, mode: 'view' | 'download' | 'print') => {
@@ -1685,7 +1717,9 @@ export default function Dashboard() {
           onClose={() => setReturnOrderId(null)}
           onReturned={(rec) => {
             const patch = (o: DashboardOrder) => o.id === rec.order_id || o.id === returnOrderId
-              ? { ...o, status: rec.order_status, returned_amount: (o.returned_amount ?? 0) + Number(rec.refund_amount) } : o
+              ? { ...o, status: rec.order_status, returned_amount: (o.returned_amount ?? 0) + Number(rec.refund_amount),
+                  // the refund per mode (0015) moves the mode cards at once, on the bill's own (original) date
+                  refunds_by_mode: Object.entries(rec.refunds ?? {}).reduce((acc, [m, v]) => ({ ...acc, [m]: toNumber(acc[m], 0) + Number(v) }), { ...(o.refunds_by_mode ?? {}) } as Record<string, number>) } : o
             setOrders(prev => prev.map(patch))
             setSearchResults(prev => prev.map(patch))
             void fetchProducts(branch, true) // the stock just changed
@@ -2563,6 +2597,15 @@ export default function Dashboard() {
                       color: 'text-amber-500',
                       bg: 'bg-amber-50',
                     },
+                    ...([
+                      ['cash', 'Cash Revenue', 'Net of cash refunds · split bills by their real parts'],
+                      ['card', 'Card Revenue', 'Net of card refunds · split bills by their real parts'],
+                      ['qr', 'QR / UPI Revenue', 'Net of QR refunds · split bills by their real parts'],
+                      ['other', 'Other Revenue', 'Online and unspecified modes · Cash + Card + QR + Other = Net Revenue'],
+                    ] as const).map(([m, label, helper]) => ({
+                      label, helper, value: formatCurrency(analytics.modeRevenue[m]), testId: `mode-card-${m}`,
+                      icon: <RMIcon size={16} />, color: 'text-emerald-500', bg: 'bg-emerald-50', valueColor: undefined as string | undefined, arrow: undefined as string | undefined,
+                    })),
                     {
                       label: 'Completed Bills',
                       helper: 'POS + manual bills',
@@ -2620,7 +2663,7 @@ export default function Dashboard() {
                       bg: 'bg-pink-50',
                     },
                   ].map((card, index) => (
-                    <div key={index} className="bg-white rounded-card border border-borderLight p-5 sm:p-5 shadow-soft flex flex-col justify-between hover:shadow-md transition-shadow">
+                    <div key={index} data-testid={'testId' in card ? (card as { testId: string }).testId : undefined} className="bg-white rounded-card border border-borderLight p-5 sm:p-5 shadow-soft flex flex-col justify-between hover:shadow-md transition-shadow">
                       <div>
                         <div className="flex items-start justify-between gap-2 mb-3">
                           <p className="text-[11px] font-bold text-[#111111]">{card.label}</p>
@@ -3572,7 +3615,7 @@ export default function Dashboard() {
                           <button onClick={() => void openOrderInvoice(o, 'view')} className="inline-flex h-10 sm:min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-xl border border-[#E5E7EB]/60 px-2 sm:px-3 text-[12px] font-black text-[#111111] transition-colors hover:bg-white" title="View Invoice">
                             <Eye size={14} /> View
                           </button>
-                          <button onClick={() => window.open(`/invoice/${o.id}`, '_blank')} className="inline-flex h-10 sm:min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-xl bg-green-500 px-2 sm:px-3 text-[12px] font-black text-white transition-colors hover:bg-green-600" title="Invoice & Share">
+                          <button onClick={() => sendOrderPdfOnWhatsApp(o)} className="inline-flex h-10 sm:min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-xl bg-green-500 px-2 sm:px-3 text-[12px] font-black text-white transition-colors hover:bg-green-600" title="WhatsApp invoice (PDF)">
                             <MessageCircle size={14} /> Share
                           </button>
                         </div>
@@ -3651,7 +3694,7 @@ export default function Dashboard() {
                               <button onClick={() => void openOrderInvoice(o, 'view')} className="rounded-lg p-1 text-[#111111] transition-colors hover:bg-[#F9FAFB]" title="View Invoice">
                                 <Eye size={13} />
                               </button>
-                              <button onClick={() => window.open(`/invoice/${o.id}`, '_blank')} className="rounded-lg p-1.5 text-green-600 transition-colors hover:bg-green-50" title="Invoice & Share">
+                              <button onClick={() => sendOrderPdfOnWhatsApp(o)} className="rounded-lg p-1.5 text-green-600 transition-colors hover:bg-green-50" title="WhatsApp invoice (PDF)">
                                 <MessageCircle size={14} />
                               </button>
                             </div>
@@ -3710,6 +3753,12 @@ export default function Dashboard() {
                                             {d.advance.reference && <div className="flex justify-between gap-3"><span className="font-semibold text-[#374151]">Advance order</span><span className="font-bold text-[#111111]">{d.advance.reference}</span></div>}
                                             {d.advance.deposits.map((x, k) => <div key={`d${k}`} className="flex justify-between gap-3"><span className="font-semibold text-[#374151]">{x.label}</span><span className="font-semibold text-[#111111]">{formatCurrency(x.amount)}</span></div>)}
                                             {d.advance.balance && <div className="flex justify-between gap-3"><span className="font-semibold text-[#374151]">{d.advance.balance.label}</span><span className="font-semibold text-[#111111]">{formatCurrency(d.advance.balance.amount)}</span></div>}
+                                          </>
+                                        )}
+                                        {toNumber(o.returned_amount, 0) > 0 && (
+                                          <>
+                                            <div className="flex justify-between gap-3"><span className="font-semibold text-amber-700">Returned{Object.keys(o.refunds_by_mode ?? {}).length ? ` (${refundModeText(o.refunds_by_mode, formatCurrency)})` : ''}</span><span className="font-bold text-amber-700">-{formatCurrency(toNumber(o.returned_amount, 0))}</span></div>
+                                            <div className="flex justify-between gap-3"><span className="font-black text-[#111111]">Net amount</span><span className="font-black text-[#111111]">{formatCurrency(Math.max(0, d.total - toNumber(o.returned_amount, 0)))}</span></div>
                                           </>
                                         )}
                                       </div>
@@ -4628,6 +4677,13 @@ export default function Dashboard() {
                     className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-[#E5E7EB]/70 px-3 text-xs font-black text-[#111111] hover:bg-[#F9FAFB]"
                   >
                     <Printer size={15} /> Print
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendOrderPdfOnWhatsApp(invoicePreviewOrder)}
+                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-xl bg-[#25D366] px-3 text-xs font-black text-white hover:brightness-95"
+                  >
+                    <MessageCircle size={15} /> WhatsApp
                   </button>
                   <button
                     type="button"

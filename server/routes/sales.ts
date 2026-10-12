@@ -246,7 +246,9 @@ export const salesRoutes = [
             'amount', ap.amount, 'method', ap.payment_method, 'received_at', ap.received_at) ORDER BY ap.received_at)
           FROM public.advance_order_payments ap WHERE ap.advance_order_id = a.id AND ap.branch_id = a.branch_id), '[]'::jsonb))
         FROM public.advance_orders a WHERE a.completed_order_id = o.id AND a.branch_id = o.branch_id) AS advance_ref`
-      const rows = await db.query(`SELECT o.*${items}${advanceRef} FROM public.orders o WHERE ${where} ORDER BY o.created_at DESC LIMIT ${query.limit} OFFSET ${query.offset}`, p)
+      // per payment mode: what the bill took in (deposits included) and what was refunded to each mode (0015)
+      const modes = `, public.order_paid_by_mode(o.id, o.branch_id) AS paid_by_mode, public.order_refunds_by_mode(o.id, o.branch_id) AS refunds_by_mode`
+      const rows = await db.query(`SELECT o.*${items}${advanceRef}${modes} FROM public.orders o WHERE ${where} ORDER BY o.created_at DESC LIMIT ${query.limit} OFFSET ${query.offset}`, p)
       const total = await db.query(`SELECT count(*)::int AS n FROM public.orders o WHERE ${where}`, p)
       return { orders: rows.rows, total: total.rows[0].n }
     },
@@ -302,23 +304,27 @@ export const salesRoutes = [
   route({
     method: 'get', path: '/api/returns', perm: 'returns.list',
     query: z.object({
-      from: date.optional(), to: date.optional(), mode: z.enum(['cash', 'original']).optional(),
+      from: date.optional(), to: date.optional(), mode: z.enum(['cash', 'card', 'qr', 'other']).optional(),
       limit: z.coerce.number().int().min(1).max(1000).default(200), offset: z.coerce.number().int().min(0).default(0),
     }).strict(),
     async handler({ db, branch, query }) {
-      const where = `r.branch_id = $1 AND ($2::timestamptz IS NULL OR r.created_at >= $2) AND ($3::timestamptz IS NULL OR r.created_at <= $3) AND ($4::text IS NULL OR r.refund_mode = $4)`
+      // mode filter: returns that refunded anything to that mode (0015: refund per mode)
+      const where = `r.branch_id = $1 AND ($2::timestamptz IS NULL OR r.created_at >= $2) AND ($3::timestamptz IS NULL OR r.created_at <= $3)
+                     AND ($4::text IS NULL OR COALESCE((public.return_refund_split(r.id, r.branch_id) ->> $4)::numeric, 0) > 0)`
       const p = [branch, query.from ?? null, query.to ?? null, query.mode ?? null]
       const rows = await db.query(
         `SELECT r.id, r.return_no, r.order_id, r.invoice_no, r.refund_amount, r.refund_mode, r.reason, r.note, r.created_by_role, r.created_at,
+                public.return_refund_split(r.id, r.branch_id) AS refunds,
                 COALESCE((SELECT json_agg(json_build_object('name', i.item_name, 'quantity', i.quantity, 'restocked', i.restocked, 'refund_amount', i.refund_amount) ORDER BY i.id)
                             FROM public.order_return_items i WHERE i.return_id = r.id AND i.branch_id = r.branch_id), '[]'::json) AS items
            FROM public.order_returns r WHERE ${where} ORDER BY r.created_at DESC, r.return_no DESC LIMIT ${query.limit} OFFSET ${query.offset}`, p)
+      // totals by RETURN date (what was paid out in the period), per mode: daily cash can be matched with the drawer
       const t = (await db.query(
         `SELECT count(*)::int AS n, COALESCE(sum(r.refund_amount), 0) AS refund_total,
-                COALESCE(sum(r.refund_amount) FILTER (WHERE r.refund_mode = 'cash'), 0) AS cash_total,
-                COALESCE(sum(r.refund_amount) FILTER (WHERE r.refund_mode = 'original'), 0) AS original_total
-           FROM public.order_returns r WHERE ${where}`, p)).rows[0]
-      return { returns: rows.rows, total: t.n, totals: { refund: Number(t.refund_total), cash: Number(t.cash_total), original: Number(t.original_total) } }
+                COALESCE(sum((s.split ->> 'cash')::numeric), 0) AS cash, COALESCE(sum((s.split ->> 'card')::numeric), 0) AS card,
+                COALESCE(sum((s.split ->> 'qr')::numeric), 0) AS qr, COALESCE(sum((s.split ->> 'other')::numeric), 0) AS other
+           FROM public.order_returns r CROSS JOIN LATERAL (SELECT public.return_refund_split(r.id, r.branch_id) AS split) s WHERE ${where}`, p)).rows[0]
+      return { returns: rows.rows, total: t.n, totals: { refund: Number(t.refund_total), cash: Number(t.cash), card: Number(t.card), qr: Number(t.qr), other: Number(t.other) } }
     },
   }),
   // ---- returns (replace the old cancel action) ----
@@ -327,23 +333,26 @@ export const salesRoutes = [
   route({
     method: 'get', path: '/api/orders/:id/returns', perm: 'orders.return',
     async handler({ db, branch, params }) {
-      const o = (await db.query(`SELECT id, invoice_no, status, payment_method, payment_mode FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])).rows[0]
+      const o = (await db.query(`SELECT id, invoice_no, status, payment_method, payment_mode, phone FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])).rows[0]
       if (!o) throw notFound()
       const items = await db.query(
         `SELECT i.id AS order_item_id, i.name, i.variant_name, i.quantity, i.is_manual,
                 COALESCE((SELECT SUM(r.quantity) FROM public.order_return_items r WHERE r.order_item_id = i.id AND r.branch_id = i.branch_id), 0) AS returned_quantity
            FROM public.order_items i WHERE i.order_id = $1 AND i.branch_id = $2 AND i.quantity > 0 ORDER BY i.id`, [params.id, branch])
       const returns = await db.query(`SELECT public.order_return_json(r.id, r.branch_id) AS r FROM public.order_returns r WHERE r.order_id = $1 AND r.branch_id = $2 ORDER BY r.created_at, r.return_no`, [params.id, branch])
-      return { order: o, items: items.rows.map((x) => ({ ...x, quantity: Number(x.quantity), returned_quantity: Number(x.returned_quantity) })), returns: returns.rows.map((x) => x.r) }
+      const paid = (await db.query(`SELECT public.order_paid_by_mode($1, $2) AS m, public.order_refunds_by_mode($1, $2) AS f`, [params.id, branch])).rows[0]
+      return { order: { ...o, paid_by_mode: paid.m, refunds_by_mode: paid.f }, items: items.rows.map((x) => ({ ...x, quantity: Number(x.quantity), returned_quantity: Number(x.returned_quantity) })), returns: returns.rows.map((x) => x.r) }
     },
   }),
   // the refund amount shown BEFORE confirming: the same SQL, dry run (nothing written)
   route({
-    method: 'post', path: '/api/orders/:id/return/preview', perm: 'orders.return', body: returnLines,
+    method: 'post', path: '/api/orders/:id/return/preview', perm: 'orders.return',
+    body: returnLines.extend({ refund_mode: z.enum(['cash', 'card', 'qr', 'other', 'original']).default('cash') }),
     async handler({ db, branch, body, params, session }) {
       // another branch's (or a made-up) bill is a plain 404, never an SQL error text
       if (!(await db.query(`SELECT 1 FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])).rows[0]) throw notFound()
-      const r = await db.query(`SELECT public.process_order_return($1, $2, $3::jsonb, '', '', 'cash', $4, NULL, true) AS r`, [params.id, branch, JSON.stringify(body.items), session!.role])
+      // dry run with the chosen mode: the refund amount AND its split per mode, as the real return would store it
+      const r = await db.query(`SELECT public.process_order_return($1, $2, $3::jsonb, '', '', $4, $5, NULL, true) AS r`, [params.id, branch, JSON.stringify(body.items), body.refund_mode, session!.role])
       return r.rows[0].r
     },
   }),
@@ -351,7 +360,7 @@ export const salesRoutes = [
     method: 'post', path: '/api/orders/:id/return', perm: 'orders.return', status: 201,
     body: returnLines.extend({
       reason: z.enum(RETURN_REASONS), note: z.string().trim().max(300).default(''),
-      refund_mode: z.enum(['cash', 'original']).default('cash'), idempotency_key: z.string().min(8).max(80).optional(),
+      refund_mode: z.enum(['cash', 'card', 'qr', 'other', 'original']).default('cash'), idempotency_key: z.string().min(8).max(80).optional(),
     }).strict(),
     async handler({ db, branch, body, params, session }) {
       return db.tx(async (t) => {

@@ -8,7 +8,7 @@ import { formatCurrency } from '../lib/retail'
 import { invoicePdfFile } from '../lib/invoicePdf'
 import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBill } from '../lib/invoiceDoc'
 import { printThermalReceipt } from '../lib/thermalPrint'
-import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
+import { invoicePageLink, invoicePdfShareName, pdfNamed, sendPdfOnWhatsApp } from '../lib/whatsappShare'
 import { formatPhoneForDisplay } from '../lib/phone'
 import { advanceReceiptLines, advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/advanceReceipt'
 import { useAdminAuthStore, useProductStore, resolveBranch } from '../store/store'
@@ -296,10 +296,13 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
   const downloadFinal = async (order: AdvanceOrder) => { try { downloadFile(await invoiceFile(order)) } catch (err) { setError(err instanceof Error ? err.message : 'Could not load the invoice') } }
   
   // WhatsApp = the PDF only (no text, no link), from the tap on the WhatsApp button; nothing is sent automatically
-  const whatsappDepositReceipt = (order: AdvanceOrder) => { void sharePdfOnWhatsApp(advanceReceiptPdf(order), order.phone) }
+  const whatsappDepositReceipt = (order: AdvanceOrder) => { void sendPdfOnWhatsApp({ file: () => advanceReceiptPdf(order), phone: order.phone, label: 'Advance receipt', link: invoicePageLink(order.deposit_id) }) }
   const whatsappInvoice = async (order: AdvanceOrder) => {
-    try { void sharePdfOnWhatsApp(pdfNamed(await invoiceFile(order), invoicePdfShareName(order.invoice_number || order.deposit_id)), order.phone) }
-    catch (err) { setError(err instanceof Error ? err.message : 'Could not load the invoice') }
+    // synchronously from the click: the helper opens what needs the click first, then the final bill is fetched
+    void sendPdfOnWhatsApp({
+      file: async () => pdfNamed(await invoiceFile(order), invoicePdfShareName(order.invoice_number || order.deposit_id)),
+      phone: order.phone, label: 'Invoice', link: invoicePageLink(order.invoice_number || order.deposit_id),
+    })
   }
 
   const addEvent = async (order: AdvanceOrder, eventType: string, label: string) => {
@@ -327,7 +330,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
         items={d.items.map((it, k) => ({ key: String(k), label: `${it.name} × ${it.quantity}`, amount: it.line_total }))}
         doc={d}
         onPrint={() => printThermalReceipt(d)}
-        onWhatsApp={() => { void sharePdfOnWhatsApp(pdfNamed(invoicePdfFile(d), invoicePdfShareName(d.invoiceNo)), d.phone) }}
+        onWhatsApp={() => { void sendPdfOnWhatsApp({ file: () => pdfNamed(invoicePdfFile(d), invoicePdfShareName(d.invoiceNo)), phone: d.phone, label: 'Invoice', link: invoicePageLink(d.invoiceNo) }) }}
         onDownload={() => downloadFile(invoicePdfFile(d))}
         onNewSale={() => navigate('/pos')}
         onClose={() => setDone(null)}

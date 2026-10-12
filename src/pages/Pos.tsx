@@ -39,7 +39,7 @@ import {
   formatQuantityDisplay,
   formatInvoiceNo,
 } from '../lib/retail'
-import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
+import { invoicePageLink, invoicePdfShareName, pdfNamed, sendPdfOnWhatsApp } from '../lib/whatsappShare'
 import { formatPhoneForDisplay, normalizePhone } from '../lib/phone'
 import CustomerLookupStatus, { clearCustomerLookupCache, useCustomerLookup } from '../components/pos/CustomerLookupStatus'
 import { useLangStore } from '../store/langStore'
@@ -977,8 +977,10 @@ export default function Pos(props: PosProps = {}) {
 
   // WhatsApp = the invoice PDF only (no text, no link). Called from the tap on "WhatsApp Invoice", never automatically.
   const sendPosWhatsApp = (inv: InvoiceSnap) => {
-    const file = pdfNamed(invoicePdfFile(invoicePdfDataOf(inv)), invoicePdfShareName(inv.invoiceNo))
-    void sharePdfOnWhatsApp(file, inv.phone || customer.phone || '')
+    void sendPdfOnWhatsApp({
+      file: () => pdfNamed(invoicePdfFile(invoicePdfDataOf(inv)), invoicePdfShareName(inv.invoiceNo)),
+      phone: inv.phone || customer.phone || '', label: 'Invoice', link: invoicePageLink(inv.invoiceNo),
+    })
   }
 
   const persistInvoicePdf = async (inv: InvoiceSnap) => {
@@ -1807,7 +1809,7 @@ export default function Pos(props: PosProps = {}) {
             <p className="mt-4 text-[11px] font-black uppercase tracking-[.16em] text-violet-600">Deposit order saved</p>
             <h3 className="mt-1 text-2xl font-black text-[#111111]">{depositCreated.deposit_id}</h3>
             <p className="mt-2 text-sm text-[#6B7280]">Deposit {formatCurrency(depositCreated.deposit_amount)} · Balance {formatCurrency(depositCreated.remaining_balance)}</p>
-            <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={() => printAdvanceReceipt(depositCreated)} className="rounded-xl border border-violet-200 py-3 text-sm font-black text-violet-700"><Printer size={16} className="mr-1 inline"/>Print Receipt</button><button onClick={() => void sharePdfOnWhatsApp(advanceReceiptPdf(depositCreated), depositCreated.phone)} className="rounded-xl bg-[#25D366] py-3 text-sm font-black text-white"><MessageCircle size={16} className="mr-1 inline -mt-0.5"/>WhatsApp</button></div>
+            <div className="mt-5 grid grid-cols-2 gap-2"><button onClick={() => printAdvanceReceipt(depositCreated)} className="rounded-xl border border-violet-200 py-3 text-sm font-black text-violet-700"><Printer size={16} className="mr-1 inline"/>Print Receipt</button><button onClick={() => void sendPdfOnWhatsApp({ file: () => advanceReceiptPdf(depositCreated), phone: depositCreated.phone, label: 'Advance receipt', link: invoicePageLink(depositCreated.deposit_id) })} className="rounded-xl bg-[#25D366] py-3 text-sm font-black text-white"><MessageCircle size={16} className="mr-1 inline -mt-0.5"/>WhatsApp</button></div>
             <button onClick={() => { setDepositCreated(null); searchRef.current?.focus() }} className="mt-3 w-full rounded-xl bg-[#111111] py-3 text-sm font-black text-white">Start New Order</button>
           </div>
         </div>,

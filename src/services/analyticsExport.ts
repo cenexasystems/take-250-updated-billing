@@ -6,6 +6,8 @@ import { formatCurrency } from '../lib/retail'
 
 export interface AnalyticsExportData {
   totalCompletedRevenue: number
+  /** net revenue per payment mode (they add up to totalCompletedRevenue) */
+  modeRevenue?: { cash: number; card: number; qr: number; other: number }
   /** refunds paid on the bills in this period (already deducted from totalCompletedRevenue) */
   totalReturned?: number
   netProfit: number
@@ -80,6 +82,12 @@ export function exportAnalyticsToCSV({ data, activeTab, datePreset, dateFrom, da
     rows.push(['Metric', 'Value'])
     rows.push(['Net Revenue (INR, after returns)', data.totalCompletedRevenue.toFixed(2)])
     rows.push(['Returned (INR, deducted on the original sale dates)', (data.totalReturned ?? 0).toFixed(2)])
+    if (data.modeRevenue) {
+      rows.push(['Cash Revenue (INR, net of cash refunds)', data.modeRevenue.cash.toFixed(2)])
+      rows.push(['Card Revenue (INR, net of card refunds)', data.modeRevenue.card.toFixed(2)])
+      rows.push(['QR / UPI Revenue (INR, net of QR refunds)', data.modeRevenue.qr.toFixed(2)])
+      rows.push(['Other Revenue (INR, online / unspecified)', data.modeRevenue.other.toFixed(2)])
+    }
     rows.push(['Total Expenses (INR)', data.totalExpenses.toFixed(2)])
     rows.push(['Net Profit / Loss (INR)', data.netProfit.toFixed(2)])
     rows.push(['Completed Bills Count', String(data.completedOrders)])
@@ -268,6 +276,16 @@ export async function exportAnalyticsToPDF({
           <div style="font-size: 8px; color: #4F46E5; font-weight: 700; margin-top: 4px;">Top: ${data.bestProduct.slice(0, 14)}</div>
         </div>
       </div>
+
+      ${data.modeRevenue ? `
+      <!-- Revenue per payment mode (adds up to Net Revenue) -->
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px;">
+        ${([['Cash', data.modeRevenue.cash], ['Card', data.modeRevenue.card], ['QR / UPI', data.modeRevenue.qr], ['Other', data.modeRevenue.other]] as Array<[string, number]>).map(([label, v]) => `
+        <div style="background: #FBF9F4; border: 1px solid #E8D399; border-radius: 12px; padding: 12px 14px; min-height: 64px; box-sizing: border-box;">
+          <div style="font-size: 8.5px; font-weight: 800; text-transform: uppercase; color: #666; margin-bottom: 4px; letter-spacing: 0.3px;">${label} Revenue</div>
+          <div style="font-size: 16px; font-weight: 900; color: ${THEME_PALETTE.primary}; line-height: 1.2;">${formatCurrency(v)}</div>
+        </div>`).join('')}
+      </div>` : ''}
 
       <!-- CHART DIAGRAM SECTION WITH DEDICATED AXIS AND NO OVERLAP -->
       <div style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 14px; padding: 14px 16px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">

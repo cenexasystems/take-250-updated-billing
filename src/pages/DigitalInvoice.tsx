@@ -10,7 +10,7 @@ import { THEME_PALETTE } from '../lib/brand'
 import { uploadInvoicePdf } from '../lib/storage'
 import { isUuid, formatInvoiceNo } from '../lib/retail'
 import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBill } from '../lib/invoiceDoc'
-import { invoicePdfShareName, pdfNamed, sharePdfOnWhatsApp } from '../lib/whatsappShare'
+import { invoicePdfShareName, pdfNamed, sendPdfOnWhatsApp } from '../lib/whatsappShare'
 
 function buildLookupCandidates(id: string): string[] {
   const raw = decodeURIComponent(id || '').trim()
@@ -262,8 +262,7 @@ export default function DigitalInvoice() {
   // WhatsApp = the invoice PDF only (no text, no link to this page), from the tap on the WhatsApp button.
   const shareViaWhatsApp = () => {
     const pdfUrl = invoice.pdf_url || invoice.invoice_pdf_url
-    const pdf = pdfNamed(invoicePdfFile(doc), invoicePdfShareName(invoice.invoice_no))
-    void sharePdfOnWhatsApp(pdf, invoice.phone)
+    void sendPdfOnWhatsApp({ file: () => pdfNamed(invoicePdfFile(doc), invoicePdfShareName(invoice.invoice_no)), phone: invoice.phone, label: 'Invoice', link: window.location.href })
 
     // Proactively upload invoice PDF in background if needed
     if (!pdfUrl) {

@@ -3,7 +3,7 @@ import { MessageCircle, X } from 'lucide-react'
 import { api } from '../../lib/apiClient'
 import { couponPdfFile } from '../../lib/couponPdf'
 import { canonicalPhone } from '../../lib/phone'
-import { sharePdfOnWhatsApp } from '../../lib/whatsappShare'
+import { sendPdfOnWhatsApp } from '../../lib/whatsappShare'
 import Toggle from '../common/Toggle'
 import CustomerLookupStatus, { clearCustomerLookupCache, useCustomerLookup } from '../pos/CustomerLookupStatus'
 import type { PosBranch } from '../../store/store'
@@ -34,8 +34,10 @@ export default function SendCouponModal({ coupon, branch, onClose, onSent }: { c
         branch, code: coupon.code, percentage: Number(coupon.percentage), expiryDate: coupon.expiry_date,
         usageLimit: coupon.usage_limit, perCustomerLimit: coupon.per_customer_limit ?? null, minOrderValue: Number(coupon.min_order_value || 0), customerName, phone: canonical,
       })
-      const shared = await sharePdfOnWhatsApp(file, canonical, 'Coupon downloaded. Attach it in WhatsApp.')
+      // coupons have no public page: no "Copy invoice link"
+      const shared = await sendPdfOnWhatsApp({ file, phone: canonical, label: 'Coupon' })
       if (shared === 'cancelled') { setError('Sharing was cancelled. Nothing was recorded.'); return }
+      if (shared === 'failed') { setError('The coupon PDF could not be prepared. Nothing was recorded.'); return }
       await api('POST', `/api/coupons/${coupon.id}/sends`, { body: { phone: canonical, customer_name: customerName, customer_specific: specific }, branchId: branch })
       clearCustomerLookupCache()
       setDone(`${coupon.code} sent to ${customerName ? `${customerName} · ` : ''}+91 ${canonical}.`)

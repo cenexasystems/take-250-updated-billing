@@ -212,12 +212,13 @@ export async function returnsSuite(c: ReturnsCtx) {
     check(list.every((x, i) => i === 0 || new Date(list[i - 1].created_at).getTime() >= new Date(x.created_at).getTime()), `${L} the list is ordered by RETURN time, newest first`)
     const mine = list.find((x) => x.return_no === r1.body.return_no)
     check(!!mine && mine.invoice_no === o1.invoice_no && num(mine.refund_amount) === 300 && mine.refund_mode === 'cash' && mine.created_by_role === 'staff' && mine.reason === 'Wrong size' && /Ret B/.test(mine.items?.[0]?.name ?? ''), `${L} a row carries return no, original invoice, items, refund, mode, reason and role`, JSON.stringify(mine))
-    check(Math.abs(rl.body.totals.refund - list.reduce((t, x) => t + num(x.refund_amount), 0)) < 0.005 && Math.abs(rl.body.totals.cash + rl.body.totals.original - rl.body.totals.refund) < 0.005, `${L} the totals add up to the rows (cash + original = refunded)`)
+    check(Math.abs(rl.body.totals.refund - list.reduce((t, x) => t + num(x.refund_amount), 0)) < 0.005 && Math.abs(rl.body.totals.cash + rl.body.totals.card + rl.body.totals.qr + rl.body.totals.other - rl.body.totals.refund) < 0.005, `${L} the totals add up to the rows (cash + card + qr + other = refunded)`)
     check((await call('GET', '/api/returns', { cookie: cookies.admin, query: { branch_id: b } })).body.returns.length === list.length, `${L} Admin sees the same list for the selected branch`)
     check((await call('GET', '/api/returns', { cookie: cookies[staff] })).status === 403, `${L} Staff has no Returns list (403)`)
     check(!(await call('GET', '/api/returns', { cookie: cookies[`manager${other.slice(-1)}` as Actor] })).body.returns.some((x: any) => x.return_no === r1.body.return_no), `${L} another branch's manager never sees it`)
     check((await call('GET', '/api/returns', { cookie: cookies[mgr], query: { to: new Date(Date.now() - 30 * 86400000).toISOString() } })).body.returns.length === 0, `${L} the date filter works on the return date (nothing 30 days ago)`)
-    check((await call('GET', '/api/returns', { cookie: cookies[mgr], query: { mode: 'original' } })).body.returns.every((x: any) => x.refund_mode === 'original'), `${L} the refund-mode filter works`)
+    // 0015: the filter is per payment mode (returns that refunded anything to it)
+    check((await call('GET', '/api/returns', { cookie: cookies[mgr], query: { mode: 'cash' } })).body.returns.every((x: any) => Number(x.refunds?.cash || 0) > 0), `${L} the refund-mode filter works`)
     check((await call('GET', '/api/returns', { cookie: cookies[mgr], query: { branch_id: other } })).status === 400, `${L} a forged ?branch_id is refused`)
 
     // ================= 13. a return on an ADVANCE-ORDER bill is allowed; the advance order record itself does not change

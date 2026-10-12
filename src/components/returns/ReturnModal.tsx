@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Printer, RotateCcw, X } from 'lucide-react'
+import { MessageCircle, Printer, RotateCcw, X } from 'lucide-react'
 import { api } from '../../lib/apiClient'
 import { formatCurrency, formatInvoiceNo } from '../../lib/retail'
 import { printReturnReceipt } from '../../lib/thermalPrint'
+import { returnReceiptPdf } from '../../lib/returnReceiptPdf'
+import { sendPdfOnWhatsApp } from '../../lib/whatsappShare'
+import { PAY_MODES, payModeLabel, refundModeText, type RefundMode } from '../../lib/refundModes'
 import type { PosBranch } from '../../store/store'
 
 // Same list as the server (server/routes/sales.ts RETURN_REASONS).
@@ -10,11 +13,18 @@ export const RETURN_REASONS = ['Wrong size', 'Defective / damaged', 'Customer ch
 
 type Line = { order_item_id: number; name: string; variant_name: string | null; quantity: number; returned_quantity: number; is_manual: boolean }
 type ReturnRecord = {
-  return_id: string; order_id: string; return_no: string; invoice_no: string; refund_amount: number; refund_mode: 'cash' | 'original'; reason: string; note: string
+  return_id: string; order_id: string; return_no: string; invoice_no: string; refund_amount: number; refund_mode: RefundMode; reason: string; note: string
+  /** the refund per payment mode (0015) */
+  refunds?: Record<string, number>
   created_by_role: string; created_at: string; order_status: string
   items: Array<{ order_item_id: number; name: string; quantity: number; restocked: boolean; refund_amount: number }>
 }
-type Info = { order: { id: string; invoice_no: string; status: string; payment_method: string; payment_mode: string }; items: Line[]; returns: ReturnRecord[] }
+type Info = {
+  order: { id: string; invoice_no: string; status: string; payment_method: string; payment_mode: string; phone?: string
+    /** what the bill took in per mode (deposits included) and what was already refunded per mode */
+    paid_by_mode?: Record<string, number>; refunds_by_mode?: Record<string, number> }
+  items: Line[]; returns: ReturnRecord[]
+}
 
 interface Props {
   orderId: string
@@ -33,8 +43,9 @@ export default function ReturnModal({ orderId, branch, onClose, onReturned }: Pr
   const [restock, setRestock] = useState<Record<number, boolean>>({})
   const [reason, setReason] = useState<string>(RETURN_REASONS[0])
   const [note, setNote] = useState('')
-  const [mode, setMode] = useState<'cash' | 'original'>('cash')
+  const [mode, setMode] = useState<RefundMode>('cash')
   const [refund, setRefund] = useState<number | null>(null)
+  const [split, setSplit] = useState<Record<string, number> | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -46,6 +57,9 @@ export default function ReturnModal({ orderId, branch, onClose, onReturned }: Pr
     try {
       const res = await api<Info>('GET', `/api/orders/${orderId}/returns`, { branchId: branch })
       setInfo(res)
+      // default refund mode: a bill paid in several modes -> back to those modes; else its own single mode
+      const paidModes = Object.entries(res.order.paid_by_mode ?? {}).filter(([, v]) => Number(v) > 0).map(([k]) => k)
+      setMode((m) => (m !== 'cash' ? m : paidModes.length > 1 ? 'original' : ((paidModes[0] as RefundMode) || 'cash')))
     } catch (e) { setLoadError(e instanceof Error ? e.message : 'Could not load the bill') }
   }, [orderId, branch])
   useEffect(() => { void load() }, [load])
@@ -60,12 +74,19 @@ export default function ReturnModal({ orderId, branch, onClose, onReturned }: Pr
     let alive = true
     const t = setTimeout(async () => {
       try {
-        const r = await api<{ refund_amount: number }>('POST', `/api/orders/${orderId}/return/preview`, { body: { items: selected }, branchId: branch })
-        if (alive) { setRefund(Number(r.refund_amount)); setError('') }
-      } catch (e) { if (alive) { setRefund(null); setError(e instanceof Error ? e.message : 'Could not work out the refund') } }
+        const r = await api<{ refund_amount: number; refunds?: Record<string, number> }>('POST', `/api/orders/${orderId}/return/preview`, { body: { items: selected, refund_mode: mode }, branchId: branch })
+        if (alive) { setRefund(Number(r.refund_amount)); setSplit(r.refunds ?? null); setError('') }
+      } catch (e) { if (alive) { setRefund(null); setSplit(null); setError(e instanceof Error ? e.message : 'Could not work out the refund') } }
     }, 250)
     return () => { alive = false; clearTimeout(t) }
-  }, [selected, orderId, branch])
+  }, [selected, orderId, branch, mode])
+
+  // the bill was paid in several modes (a split, or an advance order's deposit + balance): offer "Original payment mode (SPLIT)"
+  const paidModes = Object.entries(info?.order.paid_by_mode ?? {}).filter(([, v]) => Number(v) > 0)
+  const isSplit = paidModes.length > 1
+  // a cash refund larger than the cash this bill received (allowed, with a small warning)
+  const cashLeft = Number(info?.order.paid_by_mode?.cash || 0) - Number(info?.order.refunds_by_mode?.cash || 0)
+  const cashWarning = Number(split?.cash || 0) > cashLeft + 0.005
 
   const setLineQty = (l: Line, v: number) => {
     const left = l.quantity - l.returned_quantity
@@ -89,11 +110,16 @@ export default function ReturnModal({ orderId, branch, onClose, onReturned }: Pr
   }
 
   const print = (r: ReturnRecord) => printReturnReceipt({
-    returnNo: r.return_no, originalInvoiceNo: r.invoice_no, date: r.created_at, branch, reason: r.reason, note: r.note, refundMode: r.refund_mode,
+    returnNo: r.return_no, originalInvoiceNo: r.invoice_no, date: r.created_at, branch, reason: r.reason, note: r.note, refundMode: r.refund_mode, refunds: r.refunds,
     items: r.items.map((i) => ({ name: i.name, qty: i.quantity, refund: Number(i.refund_amount), restocked: i.restocked })), refundTotal: Number(r.refund_amount),
   })
 
-  const modeLabel = (m: string) => (m === 'cash' ? 'Cash' : 'Original payment')
+  const receiptData = (r: ReturnRecord) => ({
+    returnNo: r.return_no, originalInvoiceNo: r.invoice_no, date: r.created_at, branch, reason: r.reason, note: r.note, refundMode: r.refund_mode, refunds: r.refunds,
+    items: r.items.map((i) => ({ name: i.name, qty: i.quantity, refund: Number(i.refund_amount), restocked: i.restocked })), refundTotal: Number(r.refund_amount),
+  })
+  // the return receipt as a PDF on WhatsApp (the shared helper; returns have no public page, so no link)
+  const whatsapp = (r: ReturnRecord) => { void sendPdfOnWhatsApp({ file: () => returnReceiptPdf(receiptData(r)), phone: info?.order.phone, label: 'Return receipt' }) }
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Return items">
@@ -109,10 +135,11 @@ export default function ReturnModal({ orderId, branch, onClose, onReturned }: Pr
         {info && done && (
           <div className="mt-3 space-y-3" data-testid="return-done">
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">
-              Return {done.return_no} saved. Refund {formatCurrency(Number(done.refund_amount))} ({modeLabel(done.refund_mode)}). Bill is now {done.order_status === 'returned' ? 'Returned' : 'Partially Returned'}.
+              Return {done.return_no} saved. Refund {formatCurrency(Number(done.refund_amount))} ({refundModeText(done.refunds, formatCurrency, done.refund_mode, Number(done.refund_amount))}). Bill is now {done.order_status === 'returned' ? 'Returned' : 'Partially Returned'}.
             </div>
             <div className="flex gap-2">
               <button type="button" onClick={() => print(done)} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-[#E5E7EB] text-sm font-black text-[#111111] cursor-pointer"><Printer size={14} /> Print return receipt</button>
+              <button type="button" onClick={() => whatsapp(done)} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#25D366] text-sm font-black text-white cursor-pointer"><MessageCircle size={14} /> WhatsApp</button>
               <button type="button" onClick={onClose} className="h-11 flex-1 rounded-xl bg-[#111111] text-sm font-black text-white cursor-pointer">Done</button>
             </div>
           </div>
@@ -164,15 +191,21 @@ export default function ReturnModal({ orderId, branch, onClose, onReturned }: Pr
                 <label className="mt-3 block text-[10px] font-black uppercase tracking-wide text-[#6B7280]">Note (optional)</label>
                 <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} rows={2} className="mt-1 w-full rounded-xl border border-[#E5E7EB] px-3 py-2 text-sm outline-none focus:border-[#D4AF37]" />
                 <label className="mt-3 block text-[10px] font-black uppercase tracking-wide text-[#6B7280]">Refund mode</label>
-                <select value={mode} onChange={(e) => setMode(e.target.value as 'cash' | 'original')} className="mt-1 h-11 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-sm font-bold outline-none focus:border-[#D4AF37]">
-                  <option value="cash">Cash</option>
-                  <option value="original">Original payment mode ({String(info.order.payment_method || info.order.payment_mode || 'cash').toUpperCase()})</option>
+                <select value={mode} onChange={(e) => setMode(e.target.value as RefundMode)} data-testid="refund-mode" className="mt-1 h-11 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-sm font-bold outline-none focus:border-[#D4AF37]">
+                  {PAY_MODES.map((m) => <option key={m} value={m}>{payModeLabel(m)}</option>)}
+                  {isSplit && <option value="original">Original payment mode (SPLIT)</option>}
                 </select>
 
                 <div className="mt-3 flex items-center justify-between rounded-xl border border-[#E8D399] bg-[#FBFAF6] px-3 py-3">
                   <span className="text-[11px] font-black uppercase text-[#6B7280]">Refund amount</span>
                   <span className="text-lg font-black text-[#111111]" data-testid="return-refund">{refund === null ? '—' : formatCurrency(refund)}</span>
                 </div>
+                {refund !== null && split && Object.keys(split).length > 1 && (
+                  <p className="mt-1 text-[11px] font-semibold text-[#6B7280]" data-testid="return-refund-split">Refund split: {refundModeText(split, formatCurrency)}</p>
+                )}
+                {cashWarning && (
+                  <p className="mt-1 text-[11px] font-bold text-amber-700" data-testid="return-cash-warning">Cash refund is more than the cash this bill received ({formatCurrency(Math.max(0, cashLeft))}).</p>
+                )}
                 {error && <p className="mt-2 text-xs font-bold text-red-600" role="alert">{error}</p>}
 
                 {confirming ? (
@@ -199,7 +232,7 @@ export default function ReturnModal({ orderId, branch, onClose, onReturned }: Pr
                   {info.returns.map((r) => (
                     <div key={r.return_id} className="flex items-center justify-between gap-2 p-2.5 text-[12px]" data-testid="return-history">
                       <div className="min-w-0">
-                        <p className="font-black text-[#111111]">{r.return_no} · {formatCurrency(Number(r.refund_amount))}</p>
+                        <p className="font-black text-[#111111]">{r.return_no} · {formatCurrency(Number(r.refund_amount))} <span className="font-semibold text-[#6B7280]">({refundModeText(r.refunds, formatCurrency, r.refund_mode, Number(r.refund_amount))})</span></p>
                         <p className="font-semibold text-[#6B7280]">{new Date(r.created_at).toLocaleString('en-IN')} · {r.reason} · {r.created_by_role}</p>
                       </div>
                       <button type="button" onClick={() => print(r)} aria-label={`Print ${r.return_no}`} className="h-9 w-9 shrink-0 rounded-lg border border-[#E5E7EB] cursor-pointer"><Printer size={14} className="mx-auto" /></button>

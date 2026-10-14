@@ -18,6 +18,7 @@ import { returnsSuite } from './lib/returnsSuite'
 import { couponSuite } from './lib/couponSuite'
 import { invoiceSuite } from './lib/invoiceSuite'
 import { refundSuite } from './lib/refundSuite'
+import { shopSuite } from './lib/shopSuite'
 import { repairSequences, restoreSequences, snapshotSequences } from './lib/devState'
 import { PERMISSIONS, type PermKey } from '../server/lib/permissions'
 import { slowdownMs } from '../server/lib/rateLimit'
@@ -48,6 +49,7 @@ const BRANCH_OF = (a: Actor): B | null => (a === 'admin' ? null : (`pos${a.slice
 //   --part=5  section Q, customer lookup + coupon sending (migration 0012), all 3 branches (--branch=posN: one branch)
 //   --part=6  section R, invoice breakdown / split payment / return details, all 3 branches (--branch=posN: one branch)
 //   --part=7  section S, refund by payment mode + payment-mode revenue (0015), all 3 branches (--branch=posN: one branch)
+//   --part=8  section T, online shop + enquiry dashboard (0016), all 3 branches (--branch=posN: one branch)
 // With no argument everything runs in one go. npm run test:api runs both parts.
 const PART = (process.argv.find((a) => a.startsWith('--part=')) || '').slice('--part='.length)
 
@@ -187,7 +189,7 @@ async function run() {
           check(server !== 'public' && same(server, FEATURE_ACCESS[feature as keyof typeof FEATURE_ACCESS]), `UI feature "${feature}" has the same roles as server permission "${p}"`)
         }
       }
-      const tabPerm: Partial<Record<TabKey, PermKey>> = { pos_analytics: 'analytics.read', staff_memberships: 'passcodes.list', business_overview: 'global.read', expenses: 'expenses.read', coupons: 'coupons.read', store_settings: 'settings.write', returns: 'returns.list', billing: 'pos.sale', inventory: 'inventory.read', advance_orders: 'advance.read', history: 'orders.read' }
+      const tabPerm: Partial<Record<TabKey, PermKey>> = { pos_analytics: 'analytics.read', staff_memberships: 'passcodes.list', business_overview: 'global.read', expenses: 'expenses.read', coupons: 'coupons.read', online_shop: 'shop.catalogue', online_enquiries: 'shop.enquiries', store_settings: 'settings.write', returns: 'returns.list', billing: 'pos.sale', inventory: 'inventory.read', advance_orders: 'advance.read', history: 'orders.read' }
       for (const [tab, perm] of Object.entries(tabPerm) as [TabKey, PermKey][]) {
         const server = PERMISSIONS[perm].roles
         const extra = TAB_ACCESS[tab].filter((r) => server === 'public' || !server.includes(r))
@@ -197,7 +199,7 @@ async function run() {
       check(!canOpenTab('manager', 'staff_memberships') && !canOpenTab('manager', 'business_overview'), 'manager has no passcode tab and no cross-branch tab')
       check(UI_ROLES.every((r) => REMOVED_TABS.every((t) => !canOpenTab(r, t) || t === 'branch_hub')), 'tabs the original removed are open to nobody (branch_hub only for staff)')
       check(canOpenTab('staff', 'branch_hub') && !canOpenTab('manager', 'branch_hub') && !canOpenTab('admin', 'branch_hub'), 'branch hub follows the original: staff only')
-      check(same(NAV_ORDER.manager, NAV_ORDER.admin.filter((t) => !['pos_analytics', 'coupons', 'store_settings'].includes(t))), 'manager sidebar = admin sidebar minus Analytics Dashboard, Coupons and Store Settings')
+      check(same(NAV_ORDER.manager, NAV_ORDER.admin.filter((t) => !['pos_analytics', 'coupons', 'store_settings', 'online_shop', 'online_enquiries'].includes(t))), 'manager sidebar = admin sidebar minus Analytics Dashboard, Coupons, Store Settings and the online shop')
       check(!canOpenTab('manager', 'coupons') && !canOpenTab('staff', 'coupons') && canOpenTab('admin', 'coupons') && !canOpenTab('manager', 'store_settings') && !canOpenTab('staff', 'store_settings') && canOpenTab('admin', 'store_settings'), 'Coupons and Store Settings tabs: admin only')
       check(same(NAV_ORDER.staff, ['branch_hub', 'billing', 'advance_orders', 'history']), 'staff sidebar: Store Hub, POS, Advance Orders, Order History (no Stock & Inventory)')
       check(!canOpenTab('staff', 'inventory') && canOpenTab('manager', 'inventory') && canOpenTab('admin', 'inventory'), 'Stock & Inventory tab: admin and manager only')
@@ -917,6 +919,10 @@ async function run() {
     // ================================================================== S. REFUND BY PAYMENT MODE + MODE REVENUE (0015): shared suite, all 3 branches
     if (PART === '' || PART === '7') {
       await refundSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o), q: (sql, params) => rows(sql, params), check })
+    }
+    // ================================================================== T. ONLINE SHOP + ENQUIRY DASHBOARD (0016): shared suite, all 3 branches
+    if (PART === '' || PART === '8') {
+      await shopSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o as any), q: (sql, params) => rows(sql, params), check })
     }
 
     // ================================================================== O. MANAGER: no Coupons management, Store Settings writes, branding upload or delete (Admin only)

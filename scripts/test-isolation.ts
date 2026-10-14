@@ -161,6 +161,22 @@ async function run() {
       const r = await one(`INSERT INTO orders (invoice_no, customer_name, subtotal, total, branch_id, coupon_code) VALUES ($1, 'x', 1, 1, 'pos3', 'SAVE10') RETURNING coupon_id`, [String(range.pos3[0] + 500)])
       if (r.coupon_id !== couponId.pos3) throw new Error(`coupon_id ${r.coupon_id} is not pos3's coupon ${couponId.pos3}`)
     })
+    // online shop (0016): request lines and history stay in their branch; deleting a product keeps the request's snapshot
+    await ok('a shop request with a snapshot line of the same branch is accepted (control)', async () => {
+      const e = await one(`INSERT INTO shop_enquiries (branch_id, enquiry_no, customer_name, phone, address) VALUES ('pos1', 'ENQ-ISO-1', 'Iso', '9876500001', 'Addr') RETURNING id`)
+      await c.query(`INSERT INTO shop_enquiry_items (branch_id, enquiry_id, product_id, name, unit_price, quantity, line_total) VALUES ('pos1', $1, $2, 'Snap', 10, 1, 10)`, [e.id, productId.pos1])
+      await c.query(`SAVEPOINT iso_shop`)
+      let refused = false
+      try { await c.query(`INSERT INTO shop_enquiry_items (branch_id, enquiry_id, product_id, name, unit_price, quantity, line_total) VALUES ('pos1', $1, $2, 'X', 10, 1, 10)`, [e.id, productId.pos2]) } catch { refused = true }
+      await c.query(`ROLLBACK TO SAVEPOINT iso_shop`)
+      if (!refused) throw new Error("a line pointing at another branch's product was accepted")
+      try { await c.query(`INSERT INTO shop_enquiry_status_history (branch_id, enquiry_id, new_status, changed_by_role) VALUES ('pos2', $1, 'new', 'x')`, [e.id]); refused = false } catch { refused = true }
+      await c.query(`ROLLBACK TO SAVEPOINT iso_shop`)
+      if (!refused) throw new Error('a history row of another branch was accepted')
+      await c.query(`DELETE FROM shop_enquiry_items WHERE enquiry_id = $1 AND product_id IS NULL`, [e.id])
+      const snap = await one(`SELECT count(*)::int n FROM shop_enquiry_items WHERE enquiry_id = $1 AND name = 'Snap'`, [e.id])
+      if (snap.n !== 1) throw new Error('snapshot line missing')
+    })
     // coupon sends (0012): composite key to the SAME branch's coupon, canonical phone only, no cross-branch rows
     await rejected('coupon send -> coupon of another branch', () =>
       c.query(`INSERT INTO coupon_sends (branch_id, coupon_id, phone, sent_by_role) VALUES ('pos1', $1, '9876500001', 'admin')`, [couponId.pos2]))

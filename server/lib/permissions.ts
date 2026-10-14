@@ -86,6 +86,12 @@ export const PERMISSIONS = {
   'poll.stamps':           { roles: AMS, scope: 'branch' as Scope },
   // deploy smoke test / uptime monitor: DB ping + missing setting NAMES only, never a secret
   'health.check':          { roles: 'public' as Allowed, scope: 'none' as Scope },
+  // online shop (0016). PUBLIC, allow-listed: the shop's branches, a branch's "show online" catalogue, sending a request
+  // (rate limited per IP, honeypot, idempotency key). The customer names the branch; the server checks it is active.
+  'shop.public':           { roles: 'public' as Allowed, scope: 'none' as Scope },
+  // Admin only: the online catalogue of the branch in the switcher, and the enquiry dashboard (all branches or one)
+  'shop.catalogue':        { roles: A, scope: 'branch' as Scope },
+  'shop.enquiries':        { roles: A, scope: 'global' as Scope },
   // public invoice lookup (row 35): rate limited, no auth
   'public.invoice':        { roles: 'public' as Allowed, scope: 'none' as Scope },
 } as const

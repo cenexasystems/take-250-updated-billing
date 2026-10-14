@@ -7,7 +7,7 @@ import {
   Package, Search, RefreshCw, ShieldCheck, ShieldOff, Trophy,
   MessageCircle, ChevronDown, Eye, FileText, Printer, MoreVertical, X, Layers, Receipt,
   SlidersHorizontal, Tag, Ticket, Percent, CheckCircle2, Info, Sparkles,
-  Globe, Users, Store, ArrowLeft, RotateCcw,
+  Globe, Users, Store, ArrowLeft, RotateCcw, ShoppingBag, Inbox,
 } from 'lucide-react'
 
 // Custom Malaysian Ringgit icon — replaces the generic dollar-sign icon
@@ -45,6 +45,9 @@ import { useBranchPolling } from '../hooks/useBranchPolling'
 import ReturnModal from '../components/returns/ReturnModal'
 import ReturnsList from '../components/returns/ReturnsList'
 import SendCouponModal from '../components/coupons/SendCouponModal'
+import OnlineCatalogue from '../components/shop/OnlineCatalogue'
+import OnlineEnquiries from '../components/shop/OnlineEnquiries'
+import { useShopAlertStore } from '../store/shopAlertStore'
 import { can, canOpenTab, hasAdminPowers, roleLabel, type TabKey as PermTabKey } from '../lib/permissions'
 import { useAlarmStore } from '../store/alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
@@ -123,7 +126,7 @@ type DashboardCoupon = {
 }
 export type TabKey = 'overview' | 'whatsapp' | 'pos_analytics' | 'billing' | 'advance_orders' | 'inventory' | 'expenses' | 'products' | 'categories' | 'coupons' | 'users' | 'history'
   | 'branch_hub' | 'business_overview' | 'cross_branch_sales' | 'consolidated_stock' | 'staff_memberships' | 'business_reports' | 'barcode_hub'
-  | 'attendance' | 'store_settings' | 'returns'
+  | 'attendance' | 'store_settings' | 'returns' | 'online_shop' | 'online_enquiries'
 const GLOBAL_TABS: TabKey[] = ['business_overview', 'staff_memberships']
 // Pages removed from the admin panel — old links / bookmarks fall back to a live page
 const ADMIN_REMOVED_TABS: TabKey[] = ['branch_hub', 'categories', 'attendance', 'barcode_hub', 'cross_branch_sales', 'consolidated_stock', 'business_reports']
@@ -260,6 +263,17 @@ export default function Dashboard() {
     return 'billing'
   })
   const { setCurrentTab } = useNavigationStore()
+  // online-shop requests: the sidebar badge (New count) and "Open" from the notification popup
+  const enquiryNewCount = useShopAlertStore((s) => s.newCount)
+  const enquiryFocusId = useShopAlertStore((s) => s.focusId)
+  useEffect(() => {
+    if (enquiryFocusId && role === 'admin') setTab('online_enquiries')
+  }, [enquiryFocusId, role])
+  useEffect(() => {
+    // deep link from the popup on another page: /dashboard?tab=online_enquiries&enquiry=<id>
+    const id = new URLSearchParams(location.search).get('enquiry')
+    if (id && role === 'admin') useShopAlertStore.getState().focus(id)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [cartItemToInject, setCartItemToInject] = useState<string | null>(null)
 
   // Sync tab with navigation store
@@ -384,7 +398,7 @@ export default function Dashboard() {
     if (role === 'staff' || role === 'manager') {
       if (!canOpenTab(role, tabKey as PermTabKey)) return
     }
-    if (role === 'admin') {
+    if (role === 'admin' && tabKey !== 'online_enquiries') {
       if (GLOBAL_TABS.includes(tabKey)) {
         setActiveBranch('all')
       } else if (targetBranch) {
@@ -1667,6 +1681,7 @@ export default function Dashboard() {
 
   const globalNavItems: Array<{ id: TabKey; icon: React.ReactNode; label: string }> = [
     { id: 'business_overview',  icon: <Globe size={18} />, label: 'Business Overview' },
+    { id: 'online_enquiries',   icon: <Inbox size={18} />, label: 'Online Enquiries' },
     { id: 'staff_memberships',  icon: <Users size={18} />, label: 'Staff & Memberships' },
   ]
 
@@ -1685,6 +1700,8 @@ export default function Dashboard() {
         { id: 'history',        icon: <List size={18} />,         label: 'Order History' },
         { id: 'pos_analytics',  icon: <BarChart2 size={18} />,    label: 'Analytics Dashboard' },
         { id: 'coupons',        icon: <Box size={18} />,          label: 'Coupons' },
+        { id: 'online_shop',    icon: <ShoppingBag size={18} />,  label: 'Online Shop' },
+        { id: 'online_enquiries', icon: <Inbox size={18} />,      label: 'Online Enquiries' },
         { id: 'store_settings', icon: <SlidersHorizontal size={18} />, label: 'Store Settings' },
       ] as Array<{ id: TabKey; icon: React.ReactNode; label: string }>).filter((item) => canOpenTab(role, item.id as PermTabKey))
 
@@ -1858,6 +1875,9 @@ export default function Dashboard() {
               </span>
               <span className={`hidden lg:flex items-center gap-1.5 truncate text-left transition-all duration-200 ${sidebarCollapsed ? 'w-0 opacity-0 overflow-hidden' : 'opacity-100 flex-1'}`}>
                 <span className="truncate">{item.label}</span>
+                {item.id === 'online_enquiries' && enquiryNewCount > 0 && (
+                  <span className="shrink-0 min-w-[20px] rounded-full bg-[#D4AF37] px-1.5 py-0.5 text-center text-[10px] font-black text-[#111111]" data-testid="enquiry-badge">{enquiryNewCount}</span>
+                )}
                 {item.id === 'billing' && !isGlobalView && (
                   <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wide ${tab === item.id ? 'bg-white/25 text-white' : `${posAccent(branch).bgLight} ${posAccent(branch).text}`}`}>
                     Sidebar &amp; POS
@@ -4641,6 +4661,8 @@ export default function Dashboard() {
         )}
 
         {tab === 'returns' && canOpenTab(role, 'returns') && <ReturnsList branch={branch} onBack={() => setTab('history')} />}
+        {tab === 'online_shop' && canOpenTab(role, 'online_shop') && <OnlineCatalogue branch={branch} onOpenInventory={() => handleTabClick('inventory')} />}
+        {tab === 'online_enquiries' && canOpenTab(role, 'online_enquiries') && <OnlineEnquiries />}
 
         {/* ── EXPENSES TAB ── */}
         {tab === 'expenses' && (

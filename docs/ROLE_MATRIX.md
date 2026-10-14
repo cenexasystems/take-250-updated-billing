@@ -103,3 +103,20 @@ Manager row, final (everything else is unchanged):
 - **Customer-specific coupons:** only when Admin turns the toggle on in the send modal. Such a coupon is redeemable only on bills whose phone matches one of its customer-specific sends, once per phone; enforced in SQL (`assert_coupon_redeemable`, called by `complete_pos_sale_with_inventory` and the `orders` insert trigger). Coupons never sent, or sent with the toggle off, behave exactly as before.
 - **Coupons stay branch-owned:** another branch's coupon is never visible or valid here (the sale function rejects an unknown code).
 - Manager and Staff keep `GET /api/coupons/lookup` and `/api/coupons/available` for billing; coupon management stays Admin only.
+
+## Online shop and enquiry dashboard (2026, migration 0016)
+
+| Area | Admin | Manager | Staff | Public (no sign-in) |
+|---|---|---|---|---|
+| `/shop` page: choose a branch, browse its "show online" products, cart, send a request | - | - | - | **Y** (any active branch) |
+| `GET /api/shop/branches`, `GET /api/shop/catalogue/:shop`, `POST /api/shop/enquiries` (`shop.public`, allow-listed) | Y | Y | Y | **Y**: rate limited per IP (reads 300 / 10 min, requests 5 / 15 min), honeypot, idempotency key |
+| Online catalogue of a branch: show online, online price, description, sort, image (`shop.catalogue`, `/api/shop-admin/catalogue*`) | **Y** (branch in the switcher) | **N** (403) | **N** (403) | N |
+| Enquiry dashboard: list (all branches or one), status, delivery charge, admin note, CSV (`shop.enquiries`, `/api/shop-admin/enquiries*`) | **Y** | **N** (403) | **N** (403) | N |
+| New-request popup + sound + sidebar badge | **Y** (only while an Admin tab is open) | N | N | N |
+
+- A request is an **enquiry**, not a bill: no stock movement, no order, no revenue. No payment; the delivery charge is agreed by phone and entered by the Admin.
+- The public catalogue never contains cost price, exact stock (only "In stock / Out of stock"), SKU or barcode. The request is re-priced in SQL (`create_shop_enquiry`); any price / name / total sent by the browser is ignored.
+- The branch a customer picks is checked against the **active** branches; a product must belong to that branch and be "show online".
+- The root address stays the passcode login; old-route redirects and the staff portals are unchanged. Only `/shop` is public.
+- The legacy WhatsApp Center (`online_request` bills, Admin + Manager) and the Analytics "Online Bills" (POS sales marked Online) are unchanged and separate from shop requests.
+

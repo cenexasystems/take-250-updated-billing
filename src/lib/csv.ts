@@ -19,14 +19,8 @@
  * a value the user did not type. Prefixing those with an apostrophe forces
  * text interpretation and neutralises the injection.
  */
-export const csvCell = (value: unknown): string => {
-  const s = value === null || value === undefined ? '' : String(value)
-  const guarded = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
-  return `"${guarded.replace(/"/g, '""')}"`
-}
-
-/** Join one row's cells. Pass raw values -- do NOT pre-quote them. */
-export const csvRow = (cells: readonly unknown[]): string => cells.map(csvCell).join(',')
+export { csvCell, csvRow } from './csvCell'
+import { csvRow } from './csvCell'
 
 /**
  * Build a complete CSV document, prefixed with a UTF-8 BOM.

@@ -24,6 +24,8 @@ export type DashboardTab =
   | 'attendance'
   | 'store_settings'
   | 'returns'
+  | 'online_shop'
+  | 'online_enquiries'
 
 interface NavigationState {
   currentTab: DashboardTab

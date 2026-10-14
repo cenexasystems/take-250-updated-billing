@@ -9,6 +9,8 @@ import { LowStockAlarmModal } from './components/dashboard/LowStockAlarmModal'
 import { useLowStockMonitor } from './hooks/useLowStockMonitor'
 import { applyActiveTheme } from './lib/branchTheme'
 import ShareToast from './components/common/ShareToast'
+import EnquiryAlert from './components/shop/EnquiryAlert'
+import { useEnquiryPolling } from './components/shop/useEnquiryPolling'
 
 function lazyWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>
@@ -40,6 +42,8 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
 const Dashboard = lazyWithRetry(() => import('./pages/Dashboard'))
 const Pos = lazyWithRetry(() => import('./pages/Pos'))
 const DigitalInvoice = lazyWithRetry(() => import('./pages/DigitalInvoice'))
+// the public online shop (no sign-in): its own small chunk, so customers never load the staff app
+const Shop = lazyWithRetry(() => import('./pages/Shop'))
 const AdminLogin = lazyWithRetry(() => import('./pages/AdminLogin'))
 
 function LoadingSpinner() {
@@ -105,7 +109,11 @@ function AppShell() {
   const branchRows = useBranchStore((state) => state.branches)
 
   const isLoginRoute = location.pathname === '/admin-login'
-  const hasStaffOrAdminAccess = Boolean(isLoggedIn && (role === 'admin' || role === 'manager' || role === 'staff') && !isLoginRoute)
+  // the public shop never shows staff overlays (alarm, polling), even in a browser that is signed in
+  const isShopRoute = location.pathname === '/shop' || location.pathname.startsWith('/shop/')
+  const hasStaffOrAdminAccess = Boolean(isLoggedIn && (role === 'admin' || role === 'manager' || role === 'staff') && !isLoginRoute && !isShopRoute)
+  // Admin only: new online-shop requests of any branch (popup + sound + sidebar badge), only while an Admin tab is open
+  useEnquiryPolling(hasStaffOrAdminAccess && role === 'admin')
   // Alarm only for the branch being worked in (all branches in the admin's global view)
   useLowStockMonitor(hasStaffOrAdminAccess, role, activeBranch && activeBranch !== 'all' ? activeBranch : null)
 
@@ -223,12 +231,22 @@ function AppShell() {
               </Suspense>
             }
           />
+          {/* the public online shop: no sign-in, no guard */}
+          <Route
+            path="/shop"
+            element={
+              <Suspense fallback={<LoadingSpinner />}>
+                <Shop />
+              </Suspense>
+            }
+          />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>
 
       {/* Global Low Stock Sound & Visual Alarm for Admin and Staff Panels */}
       {hasStaffOrAdminAccess && <LowStockAlarmModal />}
+      {hasStaffOrAdminAccess && role === 'admin' && <EnquiryAlert />}
       <ShareToast />
     </div>
   )

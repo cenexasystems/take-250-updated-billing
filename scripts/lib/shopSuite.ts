@@ -2,6 +2,7 @@
 // (TEST database, inside its rolled-back transaction) and by the in-memory-Postgres harness. Every check runs per branch.
 import type { Actor, ReturnsCtx } from './returnsSuite'
 import { csvCell } from '../../src/lib/csvCell'
+import { shopLink, whatsappShareUrl } from '../../src/lib/shopLink'
 
 export type ShopCtx = Omit<ReturnsCtx, 'concurrent'>
 type CallOpts = { cookie?: string; body?: unknown; query?: Record<string, string>; ip?: string }
@@ -160,6 +161,14 @@ export async function shopSuite(c: ShopCtx) {
       first = false
       check(csvCell('=HYPERLINK("http://x")').startsWith(`"'=`) && csvCell('+1').startsWith(`"'+`) && csvCell('-2').startsWith(`"'-`) && csvCell('@SUM(A1)').startsWith(`"'@`) && csvCell('Ravi') === '"Ravi"',
         'shop: CSV cells starting with = + - @ are neutralised')
+      // the customer link (copy / WhatsApp / QR) is built from the open address and always ends with /shop
+      const origins = ['https://take250.vercel.app', 'https://take250-git-feature-x-team.vercel.app/', 'http://localhost:5173', 'https://take250.in/dashboard?tab=online_shop#x']
+      const links = origins.map(shopLink)
+      check(links.every((l) => l.endsWith('/shop') && !l.includes('//shop') && !/[?#]/.test(l)) && links[0] === 'https://take250.vercel.app/shop' && links[1] === 'https://take250-git-feature-x-team.vercel.app/shop' && links[3] === 'https://take250.in/shop',
+        'shop: the copied link is <origin>/shop on production, preview and local addresses', links.join(' '))
+      const wa = whatsappShareUrl(links[0])
+      check(wa === 'https://wa.me/?text=https%3A%2F%2Ftake250.vercel.app%2Fshop' && decodeURIComponent(new URL(wa).searchParams.get('text') || '').endsWith('/shop'),
+        'shop: the WhatsApp share link carries the encoded /shop link', wa)
       await q(`SAVEPOINT shop_new_branch`)
       let counter: any = null
       try {

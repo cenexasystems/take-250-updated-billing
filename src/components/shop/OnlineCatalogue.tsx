@@ -4,6 +4,7 @@ import { api } from '../../lib/apiClient'
 import { formatCurrency } from '../../lib/retail'
 import { uploadProductImage } from '../../lib/storage'
 import Toggle from '../common/Toggle'
+import ShopLinkCard from './ShopLinkCard'
 import type { PosBranch } from '../../store/store'
 
 type Row = {
@@ -63,11 +64,11 @@ export default function OnlineCatalogue({ branch, onOpenInventory }: { branch: P
   return (
     <div className="space-y-4 sm:space-y-6 rounded-[20px] sm:rounded-[28px] border border-[#E5E7EB]/60 bg-[#FBFAF6] p-3 sm:p-6 lg:p-7 shadow-sm" data-testid="online-catalogue">
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
+      <ShopLinkCard />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-[11px] font-black uppercase tracking-[0.24em] text-[#10B981]">Online shop</p>
           <h2 className="mt-1 text-xl font-black text-[#111111]">Online Shop Catalogue <span className="text-[11px] font-semibold text-[#374151]">({shownCount} of {rows.length} shown online)</span></h2>
-          <p className="text-[11px] font-semibold text-[#6B7280]">Customer link: <span className="font-black text-[#111111]">{window.location.origin}/shop</span></p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onOpenInventory} className="inline-flex items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-4 py-2 text-[13px] font-bold text-[#111111] cursor-pointer" data-testid="open-inventory"><ExternalLink size={14} /> Edit products in Stock &amp; Inventory</button>

@@ -71,6 +71,7 @@ export default function Shop() {
   const [detail, setDetail] = useState<Product | null>(null)
   const [size, setSize] = useState<Record<number, string>>({})
   const [added, setAdded] = useState<CartLine | null>(null)
+  const [sizeAsk, setSizeAsk] = useState<Product | null>(null) // "choose a size" pop-up (middle of the screen)
   const [choosing, setChoosing] = useState(false) // the shop list is open while a shop is still selected
   const [form, setForm] = useState({ name: '', phone: '', address: '', note: '', website: '' })
   const [sending, setSending] = useState(false)
@@ -106,7 +107,7 @@ export default function Shop() {
   const cartCountOf = (id: string) => read<CartLine[]>(cartKey(id), []).reduce((n, l) => n + l.quantity, 0)
   const addToCart = (p: Product) => {
     const v = p.variants.length ? p.variants.find((x) => x.id === size[p.id]) : null
-    if (p.variants.length && !v) { setError(`Please choose a size for ${p.name}`); return }
+    if (p.variants.length && !v) { setSizeAsk(p); return }
     const key = `${p.id}:${v?.id ?? ''}`
     const line: CartLine = { key, product_id: p.id, variant_id: v?.id ?? null, name: p.name, variant_name: v?.name ?? null, unit_price: v?.price ?? p.price, quantity: 1, image: v?.image || p.image }
     const existing = cart.find((l) => l.key === key)
@@ -334,13 +335,27 @@ export default function Shop() {
 
       {/* added: Checkout or Continue shopping */}
       {added && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center" role="dialog" aria-modal="true" aria-label="Added to cart" data-testid="shop-added">
-          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 sm:rounded-3xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Added to cart" data-testid="shop-added" onClick={() => setAdded(null)}>
+          <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <p className="flex items-center gap-2 text-base font-black text-[#111111]"><Check size={18} className="text-emerald-600" /> Added to your cart</p>
             <p className="mt-1 text-sm text-[#374151]">{added.name}{added.variant_name ? ` (${added.variant_name})` : ''}</p>
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setAdded(null)} className="h-12 rounded-xl border border-[#E5E7EB] bg-white text-sm font-black text-[#111111] cursor-pointer">Continue shopping</button>
               <button type="button" onClick={() => { setAdded(null); setView('cart') }} className="h-12 rounded-xl bg-[#111111] text-sm font-black text-[#D4AF37] cursor-pointer">Checkout</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* a product with sizes added without choosing one: a pop-up in the middle (above the product details too) */}
+      {sizeAsk && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" role="alertdialog" aria-modal="true" aria-label="Choose a size" data-testid="shop-size-ask" onClick={() => setSizeAsk(null)}>
+          <div className="w-full max-w-sm rounded-3xl bg-white p-5 text-center shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <p className="text-base font-black text-[#111111]">Choose a size</p>
+            <p className="mt-1 text-sm text-[#374151]">Please choose a size for {sizeAsk.name} before adding it to the cart.</p>
+            <div className={`mt-4 grid gap-2 ${detail ? 'grid-cols-1' : 'grid-cols-2'}`}>
+              <button type="button" onClick={() => setSizeAsk(null)} className="h-12 rounded-xl border border-[#E5E7EB] bg-white text-sm font-black text-[#111111] cursor-pointer">OK</button>
+              {!detail && <button type="button" onClick={() => { setDetail(sizeAsk); setSizeAsk(null) }} className="h-12 rounded-xl bg-[#111111] text-sm font-black text-[#D4AF37] cursor-pointer">See sizes</button>}
             </div>
           </div>
         </div>

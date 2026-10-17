@@ -130,6 +130,8 @@ export function registerRoutes(app: Express, routes: Route<any, any>[], deps: De
       } catch (err) {
         if (res.headersSent) return
         const api = err instanceof ApiError ? err : mapDbError(err)
+        // a mapped database error that is the server's fault (e.g. a missing migration) still goes to the log
+        if (api && !(err instanceof ApiError) && api.status >= 500) logServerError(`${r.method.toUpperCase()} ${r.path}`, err)
         if (api) {
           if (api.extra?.retryAfter) res.setHeader('Retry-After', String(api.extra.retryAfter))
           // retry_after (seconds) lets the login screen show a live M:SS countdown

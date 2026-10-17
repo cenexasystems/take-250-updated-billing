@@ -15,9 +15,14 @@ const upload = async (kind: 'product-images' | 'invoices' | 'branding', file: Bl
   return res.url
 }
 
-export const uploadProductImage = async (file: File) => {
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+
+/** `branchId`: the branch an admin screen is working on (ignored for manager / staff). */
+export const uploadProductImage = async (file: File, branchId?: string) => {
+  const type = file.type || 'image/jpeg'
+  if (!IMAGE_TYPES.includes(type)) throw new Error('Only PNG, JPG, WEBP or GIF images can be uploaded')
   const safeName = file.name.toLowerCase().replace(/[^a-z0-9.\-_]/g, '-').replace(/-+/g, '-')
-  return upload('product-images', file, safeName, file.type || 'image/jpeg')
+  return upload('product-images', file, safeName, type, branchId)
 }
 
 export const uploadInvoicePdf = async (file: File, invoiceNo: string): Promise<string> => {

@@ -28,6 +28,8 @@ export function mapDbError(err: unknown): ApiError | null {
     case '23502': return new ApiError(400, 'A required field is missing.')
     case '22P02': case '22003': case '22007': case '22008': return new ApiError(400, 'A value has the wrong format.')
     case '22023': case 'P0001': return new ApiError(400, e.message ? String(e.message).split('\n')[0] : 'Request rejected.')
+    // undefined table / function / column: the code is newer than the database
+    case '42P01': case '42883': case '42703': return new ApiError(503, 'The database is missing something this screen needs. Run the latest database migration.', { code: 'migration_missing' })
     default: return null
   }
 }

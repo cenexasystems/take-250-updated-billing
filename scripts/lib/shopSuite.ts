@@ -123,11 +123,20 @@ export async function shopSuite(c: ShopCtx) {
     check(all.status === 200 && (all.body.enquiries as any[]).some((e) => e.enquiry_no === no1) && num(all.body.new_count) >= 1, `${L} Admin lists requests of all branches`)
     const onlyOther = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { in_branch: other } })
     check(onlyOther.status === 200 && !(onlyOther.body.enquiries as any[]).some((e) => e.branch_id === b), `${L} filtered to ${other}: none of ${b}'s requests`)
+    const mine = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { in_branch: b } })
+    check(mine.status === 200 && (mine.body.enquiries as any[]).some((e) => e.enquiry_no === no1) && (mine.body.enquiries as any[]).every((e) => e.branch_id === b), `${L} Admin filtered to ${b} sees only ${b}'s requests`)
+    const empty = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { in_branch: b, q: 'no-such-customer-zz' } })
+    check(empty.status === 200 && Array.isArray(empty.body.enquiries) && empty.body.enquiries.length === 0, `${L} an empty result is an empty list (200), not an error`)
+    // the dashboard is all-branches: a branch SELECTOR on it is refused, which is why the screen never sends one
+    const sel = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { branch_id: b } })
+    check(sel.status === 400 && sel.body.code === 'branch_unreadable', `${L} the server still refuses a branch selector on the all-branches list (the client no longer sends it)`)
     const search = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { q: '98765 00088' } })
     check((search.body.enquiries as any[]).some((e) => e.enquiry_no === no1), `${L} search by phone finds the request`)
     for (const who of [mgr, staff]) {
       const codes = [
         (await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[who] })).status,
+        (await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[who], query: { branch_id: other } })).status,
+        (await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[who], query: { in_branch: other } })).status,
         (await call('GET', '/api/shop-admin/enquiries/pulse', { cookie: cookies[who] })).status,
         (await call('PATCH', `/api/shop-admin/enquiries/${e1.body.enquiry ? (await one(`SELECT id FROM shop_enquiries WHERE enquiry_no = $1`, [no1])).id : 'x'}`, { cookie: cookies[who], body: { status: 'contacted' } })).status,
         (await call('GET', '/api/shop-admin/catalogue', { cookie: cookies[who] })).status,

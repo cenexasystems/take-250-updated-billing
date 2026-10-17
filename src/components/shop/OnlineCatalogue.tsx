@@ -53,7 +53,7 @@ export default function OnlineCatalogue({ branch, onOpenInventory }: { branch: P
   const onFile = async (f: File | undefined) => {
     const id = uploadFor.current
     if (!f || id === null) return
-    try { const url = await uploadProductImage(f); await patch(id, { image_url: url }); setNotice('Image updated.') }
+    try { const url = await uploadProductImage(f, branch); await patch(id, { image_url: url }); setNotice('Image updated.') }
     catch (e) { setError(e instanceof Error ? e.message : 'Image upload failed') }
     finally { if (fileRef.current) fileRef.current.value = '' }
   }

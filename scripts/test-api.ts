@@ -19,6 +19,8 @@ import { couponSuite } from './lib/couponSuite'
 import { invoiceSuite } from './lib/invoiceSuite'
 import { refundSuite } from './lib/refundSuite'
 import { shopSuite } from './lib/shopSuite'
+import { BlobAccessError } from '@vercel/blob'
+import { STORAGE_NOT_CONFIGURED, vercelBlobPut } from '../server/lib/blob'
 import { repairSequences, restoreSequences, snapshotSequences } from './lib/devState'
 import { PERMISSIONS, type PermKey } from '../server/lib/permissions'
 import { slowdownMs } from '../server/lib/rateLimit'
@@ -664,7 +666,7 @@ async function run() {
       const hText = JSON.stringify(h.body) + [...h.headers.entries()].map(([k, v]) => `${k}:${v}`).join(' ')
       const secrets = [process.env.DATABASE_URL, process.env.JWT_SECRET, process.env.BLOB_READ_WRITE_TOKEN, PASS.admin, PASS.staff1].filter((s): s is string => !!s && s.length >= 8)
       check(!secrets.some((s) => hText.includes(s)) && !/postgres(ql)?:\/\//i.test(hText) && !/neon\.tech/i.test(hText), '/api/health response contains no connection string, secret or passcode')
-      check(Object.keys(h.body).sort().join(',') === 'database,environment,status', '/api/health returns only status, database and environment', Object.keys(h.body).join(','))
+      check(Object.keys(h.body).sort().join(',') === 'blob,database,environment,status' && ['configured', 'missing'].includes(h.body.blob), '/api/health returns only status, database, blob (configured / missing) and environment', Object.keys(h.body).join(','))
       // a broken database: 503 with a generic message, the driver error text (host, user, password) never leaks
       const brokenDb = { ...db, query: async () => { throw new Error('connect ECONNREFUSED postgresql://neondb_owner:hunter2secret@ep-test-pooler.neon.tech/neondb') } } as typeof db
       const brokenApp = createApp({ db: brokenDb, blobPut: async () => ({ url: 'x' }) })
@@ -923,6 +925,57 @@ async function run() {
     // ================================================================== T. ONLINE SHOP + ENQUIRY DASHBOARD (0016): shared suite, all 3 branches
     if (PART === '' || PART === '8') {
       await shopSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o as any), q: (sql, params) => rows(sql, params), check })
+
+      // ---- image upload on a serverless host (no disk fallback): each Blob outcome gives a clear answer, never "Server error"
+      const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
+      const logged: string[] = []
+      const realError = console.error
+      const withApp = async (deps: Partial<Parameters<typeof createApp>[0]>, fn: (o: string) => Promise<void>) => {
+        const a = createApp({ db, blobPut: async (p: string) => ({ url: `https://blob.test/${p}` }), ...deps })
+        const s = await new Promise<import('node:http').Server>((res) => { const x = a.listen(0, '127.0.0.1', () => res(x)) })
+        console.error = (...m: unknown[]) => { logged.push(m.map(String).join(' ')) }
+        try { await fn(`http://127.0.0.1:${(s.address() as AddressInfo).port}`) } finally { console.error = realError; s.close() }
+      }
+      const upload = async (o: string, b: string, buf: Buffer, type: string) => {
+        const r = await fetch(`${o}/api/uploads/product-images?branch_id=${b}&filename=shirt.png`, { method: 'POST', headers: { cookie: cookies.admin, 'content-type': type, 'x-forwarded-for': freshIp() }, body: buf })
+        return { status: r.status, body: (await r.json().catch(() => null)) as any }
+      }
+      const savedToken = process.env.BLOB_READ_WRITE_TOKEN
+      for (const b of BRANCHES) {
+        await withApp({}, async (o) => {
+          const ok = await upload(o, b, png, 'image/png')
+          check(ok.status === 201 && ok.body.url.startsWith(`https://blob.test/${b}/product-images/`), `[${b}] upload: stubbed Blob success returns the image URL under ${b}/`, JSON.stringify(ok))
+          const big = await upload(o, b, Buffer.alloc(4 * 1024 * 1024 + 1, 1), 'image/png')
+          check(big.status === 413 && big.body.error === 'Image too large, max 4 MB', `[${b}] upload: an oversize file says "Image too large, max 4 MB"`, JSON.stringify(big))
+          const heic = await upload(o, b, png, 'image/heic')
+          check(heic.status === 415 && heic.body.error === 'Only PNG, JPG, WEBP or GIF images can be uploaded', `[${b}] upload: a wrong file type says which types are allowed`, JSON.stringify(heic))
+        })
+        // the REAL production writer with no token (what the deployed app has now)
+        delete process.env.BLOB_READ_WRITE_TOKEN
+        await withApp({ blobPut: vercelBlobPut }, async (o) => {
+          const r = await upload(o, b, png, 'image/png')
+          check(r.status === 503 && r.body.error === STORAGE_NOT_CONFIGURED && r.body.code === 'storage_not_configured', `[${b}] upload: Blob token missing -> "Image storage is not configured" (not "Server error")`, JSON.stringify(r))
+        })
+        if (savedToken !== undefined) process.env.BLOB_READ_WRITE_TOKEN = savedToken
+        await withApp({ blobPut: async () => { throw new BlobAccessError() } }, async (o) => {
+          const r = await upload(o, b, png, 'image/png')
+          check(r.status === 503 && r.body.error === STORAGE_NOT_CONFIGURED, `[${b}] upload: an invalid / revoked Blob token -> "Image storage is not configured"`, JSON.stringify(r))
+        })
+        await withApp({ blobPut: async () => { throw new Error('socket hang up') } }, async (o) => {
+          const r = await upload(o, b, png, 'image/png')
+          check(r.status === 502 && /could not be stored/.test(r.body.error), `[${b}] upload: any other storage failure -> "The file could not be stored. Please try again."`, JSON.stringify(r))
+        })
+      }
+      check(logged.some((l) => /BLOB_READ_WRITE_TOKEN is not set/.test(l)) && logged.some((l) => /Access denied/.test(l)) && logged.some((l) => /socket hang up/.test(l)) && !logged.some((l) => !!savedToken && l.includes(savedToken)), 'upload: the real Blob error is written to the server log (no token in it)', logged.slice(0, 2).join(' | '))
+      // a database without migration 0016: a clear message, and the real error in the log (no phone numbers)
+      logged.length = 0
+      const noShopDb = { ...db, query: async (sql: string, p?: unknown[]) => { if (/shop_enquir/.test(sql)) { const e: any = new Error('relation "public.shop_enquiries" does not exist'); e.code = '42P01'; throw e } return db.query(sql, p as any) } } as typeof db
+      await withApp({ db: noShopDb }, async (o) => {
+        const r = await fetch(`${o}/api/shop-admin/enquiries?q=9876500088`, { headers: { cookie: cookies.admin, 'x-forwarded-for': freshIp() } })
+        const body: any = await r.json()
+        check(r.status === 503 && /Run the latest database migration/.test(body.error), 'enquiries without migration 0016: "Run the latest database migration" (not "Server error")', `${r.status} ${JSON.stringify(body)}`)
+      })
+      check(logged.some((l) => /42P01/.test(l) && /shop_enquiries/.test(l)) && !logged.some((l) => /9876500088/.test(l)), 'the missing-table error is logged with its cause, without the searched phone number', logged.join(' | ').slice(0, 300))
     }
 
     // ================================================================== O. MANAGER: no Coupons management, Store Settings writes, branding upload or delete (Admin only)

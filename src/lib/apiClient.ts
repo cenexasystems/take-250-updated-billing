@@ -20,7 +20,7 @@ export class ApiClientError extends Error {
 type Query = Record<string, string | number | boolean | null | undefined>
 
 // routes that are not branch-scoped: never send a branch selector to them
-const NO_BRANCH_PREFIXES = ['/api/auth', '/api/branches', '/api/admin', '/api/global', '/api/public']
+const NO_BRANCH_PREFIXES = ['/api/auth', '/api/branches', '/api/admin', '/api/global', '/api/public', '/api/shop/', '/api/shop-admin/enquiries']
 
 function withQuery(path: string, query?: Query): string {
   if (!query) return path

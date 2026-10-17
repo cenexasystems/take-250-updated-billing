@@ -4,6 +4,7 @@ import { ApiError, notFound } from '../lib/errors.js'
 import { enforce, LIMITS, record } from '../lib/rateLimit.js'
 import { route } from '../lib/route.js'
 import { invoiceExtras } from '../lib/invoiceExtras.js'
+import { blobConfigured, blobFailure } from '../lib/blob.js'
 import type { PermKey } from '../lib/permissions.js'
 
 // ---------------------------------------------------------------- uploads (Vercel Blob)
@@ -26,14 +27,15 @@ const uploadRoutes = UPLOAD_KINDS.map((k) =>
     query: z.object({ filename: z.string().max(120).optional() }).strict(),
     async handler({ req, deps, branch, query }) {
       const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase()
-      if (!k.types.includes(contentType)) throw new ApiError(415, 'Unsupported file type')
+      if (!k.types.includes(contentType)) throw new ApiError(415, k.types.includes('application/pdf') ? 'Only PDF, PNG, JPG, WEBP or GIF files can be uploaded' : 'Only PNG, JPG, WEBP or GIF images can be uploaded')
       const body = req.body as Buffer
       if (!Buffer.isBuffer(body) || body.length === 0) throw new ApiError(400, 'Empty upload')
       if (body.length > MAX_UPLOAD_BYTES) throw new ApiError(413, contentType === 'application/pdf' ? 'PDF too large, max 4 MB' : 'Image too large, max 4 MB')
       const base = (query.filename || 'file').replace(/\.[^.]*$/, '').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'file'
       // every path starts with the branch id taken from the token / validated admin selector
       const pathname = `${branch}/${k.kind}/${randomUUID()}-${base}.${EXT[contentType]}`
-      const out = await deps.blobPut(pathname, body, { contentType })
+      let out: { url: string }
+      try { out = await deps.blobPut(pathname, body, { contentType }) } catch (err) { throw blobFailure(`POST /api/uploads/${k.kind}`, err) }
       return { url: out.url, path: pathname }
     },
   })
@@ -82,9 +84,9 @@ const healthRoutes = [
       } finally {
         clearTimeout(timer)
       }
-      const missing = ['JWT_SECRET', ...(process.env.VERCEL ? ['BLOB_READ_WRITE_TOKEN'] : [])].filter((k) => !process.env[k])
-      if (missing.length) throw new ApiError(503, `Server settings missing: ${missing.join(', ')}`)
-      return { status: 'ok', database: 'up', environment: process.env.VERCEL_ENV || (process.env.VERCEL ? 'vercel' : 'local') }
+      if (!process.env.JWT_SECRET) throw new ApiError(503, 'Server settings missing: JWT_SECRET')
+      // image storage: only whether it is configured (uploads answer "Image storage is not configured" without it)
+      return { status: 'ok', database: 'up', blob: blobConfigured() ? 'configured' : 'missing', environment: process.env.VERCEL_ENV || (process.env.VERCEL ? 'vercel' : 'local') }
     },
   }),
 ]

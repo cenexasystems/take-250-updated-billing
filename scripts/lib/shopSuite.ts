@@ -2,7 +2,7 @@
 // (TEST database, inside its rolled-back transaction) and by the in-memory-Postgres harness. Every check runs per branch.
 import type { Actor, ReturnsCtx } from './returnsSuite'
 import { csvCell } from '../../src/lib/csvCell'
-import { shopLink, whatsappShareUrl } from '../../src/lib/shopLink'
+import { shopInviteText, shopLink, whatsappShareUrl, whatsappToUrl } from '../../src/lib/shopLink'
 
 export type ShopCtx = Omit<ReturnsCtx, 'concurrent'>
 type CallOpts = { cookie?: string; body?: unknown; query?: Record<string, string>; ip?: string }
@@ -127,9 +127,12 @@ export async function shopSuite(c: ShopCtx) {
     check(mine.status === 200 && (mine.body.enquiries as any[]).some((e) => e.enquiry_no === no1) && (mine.body.enquiries as any[]).every((e) => e.branch_id === b), `${L} Admin filtered to ${b} sees only ${b}'s requests`)
     const empty = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { in_branch: b, q: 'no-such-customer-zz' } })
     check(empty.status === 200 && Array.isArray(empty.body.enquiries) && empty.body.enquiries.length === 0, `${L} an empty result is an empty list (200), not an error`)
-    // the dashboard is all-branches: a branch SELECTOR on it is refused, which is why the screen never sends one
-    const sel = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { branch_id: b } })
-    check(sel.status === 400 && sel.body.code === 'branch_unreadable', `${L} the server still refuses a branch selector on the all-branches list (the client no longer sends it)`)
+    // the dashboard is all-branches: like every global route, a branch SELECTOR on it is refused, which is why the screen
+    // never sends one (the client keeps the enquiry routes on its no-branch list; the browser test covers Admin inside a branch)
+    for (const path of ['/api/shop-admin/enquiries', '/api/shop-admin/enquiries/pulse']) {
+      const sel = await call('GET', path, { cookie: cookies.admin, query: { branch_id: b } })
+      check(sel.status === 400 && sel.body.code === 'branch_unreadable', `${L} ${path} still refuses a branch selector, like every all-branches route`)
+    }
     const search = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { q: '98765 00088' } })
     check((search.body.enquiries as any[]).some((e) => e.enquiry_no === no1), `${L} search by phone finds the request`)
     for (const who of [mgr, staff]) {
@@ -165,6 +168,33 @@ export async function shopSuite(c: ShopCtx) {
     check(bulk.status === 200 && bulk.body.updated === 2 && shownNow[P1] === false && shownNow[P2] === false && shownNow[O1] === true, `${L} bulk hide changes only this branch's products`, JSON.stringify(shownNow))
     check((await call('PATCH', `/api/shop-admin/catalogue/${O1}`, { cookie: cookies.admin, query: { branch_id: b }, body: { show_online: false } })).status === 404, `${L} another branch's product cannot be edited from ${b}`)
 
+    // ================= customers of this branch, for "Send to a customer" on WhatsApp (Admin only)
+    const ord = (br: string, name: string, phone: string, daysAgo: number) => q(
+      `INSERT INTO orders (invoice_no, customer_name, phone, subtotal, total, branch_id, created_at) VALUES (public.get_next_invoice_no($1), $2, $3, 1, 1, $1, now() - make_interval(days => $4::int))`,
+      [br, name, phone, daysAgo])
+    const recentP = `97${n}00111${n}1`, walkinP = `95${n}00333${n}3`, oldP = `96${n}00222${n}2`, otherP = `94${n}00444${n}4`
+    await ord(b, 'Lakshmi', `+91 ${recentP.slice(0, 5)} ${recentP.slice(5)}`, 2)
+    await ord(b, 'Walk-in Customer', walkinP, 1)
+    await ord(b, 'Old Friend', oldP, 60)
+    await ord(other, 'Other Branch Person', otherP, 1)
+    const recent = await call('GET', '/api/shop-admin/customers', { cookie: cookies.admin, query: { branch_id: b } })
+    const rc = (recent.body?.customers ?? []) as Array<{ phone: string; name: string | null }>
+    const find = (list: typeof rc, ph: string) => list.find((x) => x.phone === ph)
+    check(recent.status === 200 && find(rc, recentP)?.name === 'Lakshmi' && !!find(rc, walkinP) && find(rc, walkinP)?.name === null && !!find(rc, '9876500088') && !find(rc, oldP) && !find(rc, otherP),
+      `${L} recent customers: this branch's buyers and online customers of the last 30 days (canonical phone, placeholder names blank), not older ones, not other branches`, JSON.stringify(rc).slice(0, 300))
+    check(rc.indexOf(find(rc, walkinP)!) < rc.indexOf(find(rc, recentP)!), `${L} recent customers are listed newest first`)
+    check(String((recent as any).headers?.get?.('cache-control') ?? '') === 'no-store', `${L} the customer list is never cached`)
+    const everyone = await call('GET', '/api/shop-admin/customers', { cookie: cookies.admin, query: { branch_id: b, range: 'all' } })
+    const ec = (everyone.body?.customers ?? []) as typeof rc
+    check(everyone.status === 200 && find(ec, oldP)?.name === 'Old Friend' && !!find(ec, recentP) && !find(ec, otherP), `${L} all customers include older ones, still only this branch`)
+    const custCodes = [
+      (await call('GET', '/api/shop-admin/customers', { cookie: cookies[mgr] })).status,
+      (await call('GET', '/api/shop-admin/customers', { cookie: cookies[mgr], query: { branch_id: other } })).status,
+      (await call('GET', '/api/shop-admin/customers', { cookie: cookies[staff], query: { range: 'all' } })).status,
+    ]
+    check(custCodes.every((x) => x === 403), `${L} manager / staff cannot list customers (403, forged branch too)`, JSON.stringify(custCodes))
+    check((await call('GET', '/api/shop-admin/customers', { cookie: cookies.admin })).status === 400, `${L} Admin must have a branch selected to list its customers`)
+
     // ================= 4. once: CSV formula cells, a future branch gets its counter
     if (first) {
       first = false
@@ -175,6 +205,9 @@ export async function shopSuite(c: ShopCtx) {
       const links = origins.map(shopLink)
       check(links.every((l) => l.endsWith('/shop') && !l.includes('//shop') && !/[?#]/.test(l)) && links[0] === 'https://take250.vercel.app/shop' && links[1] === 'https://take250-git-feature-x-team.vercel.app/shop' && links[3] === 'https://take250.in/shop',
         'shop: the copied link is <origin>/shop on production, preview and local addresses', links.join(' '))
+      const inv = whatsappToUrl('9811100077', shopInviteText(links[0], 'Meena'))
+      check(inv === `https://wa.me/919811100077?text=${encodeURIComponent('Hi Meena, you can now order from TAKE250 online: https://take250.vercel.app/shop')}` && shopInviteText(links[0]).startsWith('Hi, you can'),
+        'shop: "Send to a customer" opens that customer\'s WhatsApp chat with the /shop link typed in', inv)
       const wa = whatsappShareUrl(links[0])
       check(wa === 'https://wa.me/?text=https%3A%2F%2Ftake250.vercel.app%2Fshop' && decodeURIComponent(new URL(wa).searchParams.get('text') || '').endsWith('/shop'),
         'shop: the WhatsApp share link carries the encoded /shop link', wa)

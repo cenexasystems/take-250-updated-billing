@@ -1,15 +1,46 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Download, MessageCircle } from 'lucide-react'
+import { Check, Copy, Download, MessageCircle, Send } from 'lucide-react'
 import qrcode from 'qrcode-generator'
-import { shopLink, whatsappShareUrl } from '../../lib/shopLink'
+import { api } from '../../lib/apiClient'
+import { canonicalPhone } from '../../lib/phone'
+import { shopInviteText, shopLink, whatsappShareUrl, whatsappToUrl } from '../../lib/shopLink'
+import type { PosBranch } from '../../store/store'
+
+type Customer = { phone: string; name: string | null; last_at: string; visits: number }
+const spaced = (p: string) => `${p.slice(0, 5)} ${p.slice(5)}`
 
 const QR_PX = 640 // drawn large, shown small: the downloaded PNG stays sharp when printed
 
 /** Top of the Admin "Online Shop" screen: the customer link, copy / WhatsApp share, and a QR code to download. */
-export default function ShopLinkCard() {
+export default function ShopLinkCard({ branch }: { branch?: PosBranch }) {
   const link = useMemo(() => shopLink(window.location.origin), [])
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [copied, setCopied] = useState(false)
+  // send the link to one customer of this branch: recent (last 30 days) or everyone who has bought / asked here
+  const [range, setRange] = useState<'recent' | 'all'>('recent')
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [loadError, setLoadError] = useState('')
+  const [search, setSearch] = useState('')
+  const [picked, setPicked] = useState('')
+  const [typed, setTyped] = useState('')
+
+  useEffect(() => {
+    if (!branch) return
+    let cancelled = false
+    api<{ customers: Customer[] }>('GET', '/api/shop-admin/customers', { query: { range }, branchId: branch })
+      .then((r) => { if (!cancelled) { setCustomers(r.customers); setPicked(''); setLoadError('') } })
+      .catch((e) => { if (!cancelled) { setCustomers([]); setLoadError(e instanceof Error ? e.message : 'Customers could not be loaded') } })
+    return () => { cancelled = true }
+  }, [branch, range])
+
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const digits = q.replace(/\D/g, '')
+    return q ? customers.filter((c) => (c.name ?? '').toLowerCase().includes(q) || (digits.length > 0 && c.phone.includes(digits))) : customers
+  }, [customers, search])
+  const typedPhone = canonicalPhone(typed)
+  const target = typedPhone ?? (picked || null)
+  const targetName = typedPhone ? null : customers.find((c) => c.phone === picked)?.name ?? null
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -73,6 +104,37 @@ export default function ShopLinkCard() {
             <MessageCircle size={14} /> Share on WhatsApp
           </a>
         </div>
+        {branch && (
+          <div className="space-y-2 rounded-xl border border-[#E5E7EB] bg-[#FBFAF6] p-3" data-testid="shop-link-send">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#6B7280]">Send to a customer</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <select value={range} onChange={(e) => setRange(e.target.value as 'recent' | 'all')} aria-label="Which customers" className="h-10 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-bold text-[#111111]" data-testid="shop-link-range">
+                <option value="recent">Recent customers (last 30 days)</option>
+                <option value="all">All customers of this branch</option>
+              </select>
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or number" aria-label="Search customers" className="h-10 rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-semibold" data-testid="shop-link-search" />
+            </div>
+            <select value={picked} onChange={(e) => { setPicked(e.target.value); setTyped('') }} aria-label="Customer" className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-semibold text-[#111111]" data-testid="shop-link-customer">
+              <option value="">{shown.length ? `Choose a customer (${shown.length})` : 'No customers found'}</option>
+              {shown.map((c) => (
+                <option key={c.phone} value={c.phone}>{`${c.name ?? 'No name'} · ${spaced(c.phone)} · last ${new Date(c.last_at).toLocaleDateString('en-IN')}`}</option>
+              ))}
+            </select>
+            <input value={typed} onChange={(e) => setTyped(e.target.value)} inputMode="tel" placeholder="or type a mobile number" aria-label="Mobile number" className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] font-semibold" data-testid="shop-link-number" />
+            {loadError && <p className="text-xs font-bold text-red-600" role="alert">{loadError}</p>}
+            {typed.trim() !== '' && !typedPhone && <p className="text-xs font-bold text-red-600">Enter a valid 10-digit mobile number</p>}
+            {target ? (
+              <a href={whatsappToUrl(target, shopInviteText(link, targetName))} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl bg-[#25D366] px-4 py-2 text-[13px] font-bold text-white" data-testid="shop-link-send-wa">
+                <Send size={14} /> Send on WhatsApp to {spaced(target)}
+              </a>
+            ) : (
+              <button type="button" disabled className="inline-flex items-center gap-1.5 rounded-xl bg-[#25D366]/50 px-4 py-2 text-[13px] font-bold text-white" data-testid="shop-link-send-wa">
+                <Send size={14} /> Send on WhatsApp
+              </button>
+            )}
+            <p className="text-[11px] font-semibold text-[#6B7280]">WhatsApp opens with the message typed in; tap Send there.</p>
+          </div>
+        )}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-2">
         <canvas ref={canvasRef} width={QR_PX} height={QR_PX} className="h-36 w-36 rounded-lg border border-[#E5E7EB]" aria-label={`QR code for ${link}`} role="img" data-testid="shop-link-qr" />

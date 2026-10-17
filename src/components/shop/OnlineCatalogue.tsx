@@ -64,7 +64,7 @@ export default function OnlineCatalogue({ branch, onOpenInventory }: { branch: P
   return (
     <div className="space-y-4 sm:space-y-6 rounded-[20px] sm:rounded-[28px] border border-[#E5E7EB]/60 bg-[#FBFAF6] p-3 sm:p-6 lg:p-7 shadow-sm" data-testid="online-catalogue">
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
-      <ShopLinkCard />
+      <ShopLinkCard branch={branch} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-[11px] font-black uppercase tracking-[0.24em] text-[#10B981]">Online shop</p>

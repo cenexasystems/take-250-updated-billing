@@ -121,6 +121,34 @@ const publicRoutes = [
 ]
 
 const adminRoutes = [
+  // ---- customers of the branch in the switcher, to send the shop link on WhatsApp (Admin only, phones never logged).
+  // There is no customer table: a customer is a phone on this branch's bills, advance orders or online requests.
+  route({
+    method: 'get', path: '/api/shop-admin/customers', perm: 'shop.catalogue',
+    query: z.object({ range: z.enum(['recent', 'all']).default('recent') }).strict(),
+    async handler({ db, branch, query, res }) {
+      res.setHeader('Cache-Control', 'no-store')
+      const r = await db.query<{ phone: string; name: string | null; last_at: string; visits: number }>(
+        `SELECT phone, name, last_at, visits FROM (
+           SELECT p AS phone, (array_agg(nm ORDER BY at DESC) FILTER (WHERE nm IS NOT NULL))[1] AS name, max(at) AS last_at, count(*)::int AS visits
+             FROM (
+               SELECT public.canonical_phone(phone) p, customer_name n, created_at at FROM public.orders WHERE branch_id = $1 AND phone IS NOT NULL
+               UNION ALL
+               SELECT public.canonical_phone(phone), customer_name, created_at FROM public.advance_orders WHERE branch_id = $1 AND phone IS NOT NULL
+               UNION ALL
+               SELECT phone, customer_name, created_at FROM public.shop_enquiries WHERE branch_id = $1
+             ) x
+             -- placeholder names typed at the counter are not names
+             CROSS JOIN LATERAL (SELECT CASE WHEN btrim(COALESCE(x.n, '')) = '' OR lower(btrim(x.n)) IN ('customer', 'walk-in customer', 'walk in customer') THEN NULL ELSE btrim(x.n) END AS nm) c
+            WHERE p IS NOT NULL
+            GROUP BY p) y
+          WHERE $2 = 'all' OR last_at >= now() - interval '30 days'
+          ORDER BY last_at DESC
+          LIMIT $3`, [branch, query.range, query.range === 'all' ? 2000 : 200])
+      return { customers: r.rows.map((x) => ({ phone: String(x.phone), name: x.name ? String(x.name) : null, last_at: x.last_at, visits: Number(x.visits) })) }
+    },
+  }),
+
   // ---- online catalogue of the branch in the switcher
   route({
     method: 'get', path: '/api/shop-admin/catalogue', perm: 'shop.catalogue',

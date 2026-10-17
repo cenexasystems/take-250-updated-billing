@@ -21,9 +21,9 @@ export function useEnquiryPolling(enabled: boolean) {
       if (cancelled || inFlight || document.hidden) return
       inFlight = true
       try {
-        const res = await api<{ new_count: number; latest: string | null; fresh: FreshEnquiry[] }>('GET', '/api/shop-admin/enquiries/pulse', { query: since ? { since } : {} })
+        const res = await api<{ new_count: number; new_by_branch?: Record<string, number>; latest: string | null; fresh: FreshEnquiry[] }>('GET', '/api/shop-admin/enquiries/pulse', { query: since ? { since } : {} })
         if (cancelled) return
-        useShopAlertStore.getState().setNewCount(res.new_count)
+        useShopAlertStore.getState().setNewCount(res.new_count, res.new_by_branch)
         if (!first && res.fresh.length) {
           useShopAlertStore.getState().addPopup(res.fresh)
           alarmSound.startAlert()

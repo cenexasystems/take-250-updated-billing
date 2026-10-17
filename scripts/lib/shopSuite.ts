@@ -124,6 +124,10 @@ export async function shopSuite(c: ShopCtx) {
     const onlyOther = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { in_branch: other } })
     check(onlyOther.status === 200 && !(onlyOther.body.enquiries as any[]).some((e) => e.branch_id === b), `${L} filtered to ${other}: none of ${b}'s requests`)
     const mine = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { in_branch: b } })
+    const newHere = num((await one(`SELECT count(*)::int n FROM shop_enquiries WHERE branch_id = $1 AND status = 'new'`, [b])).n)
+    const pulseNow = await call('GET', '/api/shop-admin/enquiries/pulse', { cookie: cookies.admin })
+    check(num(mine.body.new_by_branch?.[b]) === newHere && num(pulseNow.body.new_by_branch?.[b]) === newHere && num(pulseNow.body.new_count) >= newHere,
+      `${L} New counts per branch (${b}: ${newHere}) for the badge inside a branch`, JSON.stringify(pulseNow.body.new_by_branch))
     check(mine.status === 200 && (mine.body.enquiries as any[]).some((e) => e.enquiry_no === no1) && (mine.body.enquiries as any[]).every((e) => e.branch_id === b), `${L} Admin filtered to ${b} sees only ${b}'s requests`)
     const empty = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { in_branch: b, q: 'no-such-customer-zz' } })
     check(empty.status === 200 && Array.isArray(empty.body.enquiries) && empty.body.enquiries.length === 0, `${L} an empty result is an empty list (200), not an error`)

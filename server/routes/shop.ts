@@ -219,8 +219,9 @@ const adminRoutes = [
                             FROM public.shop_enquiry_items i WHERE i.enquiry_id = e.id AND i.branch_id = e.branch_id), '[]'::jsonb) AS items
            FROM public.shop_enquiries e JOIN public.branches b ON b.id = e.branch_id
           WHERE ${conds.join(' AND ')} ORDER BY e.created_at DESC LIMIT ${query.limit}`, p)
-      const counts = await db.query(`SELECT count(*) FILTER (WHERE status = 'new')::int AS new_count FROM public.shop_enquiries`)
-      return { enquiries: r.rows, new_count: counts.rows[0].new_count }
+      // New counts: all branches (Global Admin badge) and per branch (the badge inside a branch)
+      const counts = await db.query(`SELECT count(*) FILTER (WHERE status = 'new')::int AS new_count, (SELECT COALESCE(jsonb_object_agg(branch_id, n), '{}'::jsonb) FROM (SELECT branch_id, count(*)::int n FROM public.shop_enquiries WHERE status = 'new' GROUP BY branch_id) x) AS new_by_branch FROM public.shop_enquiries`)
+      return { enquiries: r.rows, new_count: counts.rows[0].new_count, new_by_branch: counts.rows[0].new_by_branch ?? {} }
     },
   }),
   // the Admin's notification poll (~12 s): New count + the requests that arrived after `since`, any branch
@@ -229,14 +230,14 @@ const adminRoutes = [
     query: z.object({ since: z.string().max(40).optional() }).strict(),
     async handler({ db, query }) {
       // latest as TEXT: full microsecond precision, so "after since" never re-reports the newest request
-      const n = (await db.query(`SELECT count(*) FILTER (WHERE status = 'new')::int AS n, max(created_at)::text AS latest FROM public.shop_enquiries`)).rows[0]
+      const n = (await db.query(`SELECT count(*) FILTER (WHERE status = 'new')::int AS n, max(created_at)::text AS latest, (SELECT COALESCE(jsonb_object_agg(branch_id, n), '{}'::jsonb) FROM (SELECT branch_id, count(*)::int n FROM public.shop_enquiries WHERE status = 'new' GROUP BY branch_id) x) AS new_by_branch FROM public.shop_enquiries`)).rows[0]
       const fresh = query.since
         ? (await db.query(
             `SELECT e.id, e.enquiry_no, e.branch_id, b.short_label AS branch_name, e.customer_name, e.created_at
                FROM public.shop_enquiries e JOIN public.branches b ON b.id = e.branch_id
               WHERE e.created_at > $1::timestamptz ORDER BY e.created_at DESC LIMIT 10`, [query.since])).rows.map((r) => ({ ...r, created_at: r.created_at }))
         : []
-      return { new_count: n.n, latest: n.latest, fresh }
+      return { new_count: n.n, new_by_branch: n.new_by_branch ?? {}, latest: n.latest, fresh }
     },
   }),
   route({

@@ -71,7 +71,6 @@ export default function Shop() {
   const [detail, setDetail] = useState<Product | null>(null)
   const [size, setSize] = useState<Record<number, string>>({})
   const [added, setAdded] = useState<CartLine | null>(null)
-  const [switchTo, setSwitchTo] = useState<string | null>(null)
   const [choosing, setChoosing] = useState(false) // the shop list is open while a shop is still selected
   const [form, setForm] = useState({ name: '', phone: '', address: '', note: '', website: '' })
   const [sending, setSending] = useState(false)
@@ -100,15 +99,11 @@ export default function Shop() {
   const count = cart.reduce((s, l) => s + l.quantity, 0)
   const total = Math.round(cart.reduce((s, l) => s + l.unit_price * l.quantity, 0) * 100) / 100
 
+  // every shop keeps its own cart in this browser: changing shop never clears one, and coming back finds it again
   const pickBranch = (id: string) => {
-    if (branchId && id !== branchId && read<CartLine[]>(cartKey(branchId), []).length) { setSwitchTo(id); return }
     setBranchId(id); write(BRANCH_KEY, id); setView('shop'); setCategory('All'); setSearch(''); setChoosing(false)
   }
-  const confirmSwitch = (clear: boolean) => {
-    if (clear && branchId) write(cartKey(branchId), null)
-    if (clear && switchTo) { setBranchId(switchTo); write(BRANCH_KEY, switchTo); setView('shop'); setCategory('All') }
-    setSwitchTo(null); setChoosing(false)
-  }
+  const cartCountOf = (id: string) => read<CartLine[]>(cartKey(id), []).reduce((n, l) => n + l.quantity, 0)
   const addToCart = (p: Product) => {
     const v = p.variants.length ? p.variants.find((x) => x.id === size[p.id]) : null
     if (p.variants.length && !v) { setError(`Please choose a size for ${p.name}`); return }
@@ -167,19 +162,6 @@ export default function Shop() {
       </div>
     </header>
   )
-  // switching shop with items in the cart (shown over the shop list)
-  const switchDialog = switchTo && (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center" role="dialog" aria-modal="true" aria-label="Change shop">
-      <div className="w-full max-w-md rounded-t-3xl bg-white p-5 sm:rounded-3xl">
-        <p className="text-base font-black text-[#111111]">Change shop?</p>
-        <p className="mt-1 text-sm text-[#374151]">Your cart has items from this shop. Changing the shop clears the cart.</p>
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <button type="button" onClick={() => confirmSwitch(false)} className="h-12 rounded-xl border border-[#E5E7EB] bg-white text-sm font-black text-[#111111] cursor-pointer">Keep my cart</button>
-          <button type="button" onClick={() => confirmSwitch(true)} className="h-12 rounded-xl bg-[#111111] text-sm font-black text-[#D4AF37] cursor-pointer" data-testid="shop-switch-clear">Clear cart and change</button>
-        </div>
-      </div>
-    </div>
-  )
   const errorBox = error && <p className="mx-4 mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700" role="alert" data-testid="shop-error">{error}</p>
 
   // ---- branch selector
@@ -196,12 +178,13 @@ export default function Shop() {
             {branches.map((b) => (
               <button key={b.id} type="button" onClick={() => pickBranch(b.id)} className="flex items-center gap-3 rounded-2xl border border-[#E8D399] bg-white p-4 text-left shadow-sm hover:border-[#D4AF37] cursor-pointer" data-testid="shop-branch">
                 <img src={b.logo} alt="" className="h-14 w-14 shrink-0 rounded-full border border-[#E8D399] bg-black object-contain" />
-                <div className="min-w-0"><p className="font-black text-[#111111]">{b.name}</p><p className="text-[12px] font-semibold text-[#6B7280]">{b.subtitle}</p></div>
+                <div className="min-w-0"><p className="font-black text-[#111111]">{b.name}</p><p className="text-[12px] font-semibold text-[#6B7280]">{b.subtitle}</p>
+                  {cartCountOf(b.id) > 0 && <p className="mt-1 inline-block rounded-full bg-[#FBF3D9] px-2 py-0.5 text-[11px] font-black text-[#7A5B00]" data-testid="shop-branch-cart">{cartCountOf(b.id)} item(s) in your cart</p>}
+                </div>
               </button>
             ))}
           </div>
         </main>
-        {switchDialog}
       </div>
     )
   }
@@ -363,7 +346,6 @@ export default function Shop() {
         </div>
       )}
 
-      {switchDialog}
     </div>
   )
 }

@@ -16,8 +16,11 @@ type Enquiry = {
 }
 const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
-/** Admin: every online-shop request (all branches, or one), in the app's table style. Customer text is shown as text (React escapes it). */
-export default function OnlineEnquiries() {
+/**
+ * Admin: online-shop requests in the app's table style. Inside a branch (`branch` set) only that branch's requests; the
+ * Global Admin view (`branch` null) shows all branches with a branch filter. Customer text is shown as text (React escapes it).
+ */
+export default function OnlineEnquiries({ branch = null }: { branch?: string | null }) {
   const branches = useBranchStore((s) => s.branches)
   const focusId = useShopAlertStore((s) => s.focusId)
   const focus = useShopAlertStore((s) => s.focus)
@@ -38,15 +41,16 @@ export default function OnlineEnquiries() {
     try {
       const query: Record<string, string | number> = { limit: 500 }
       if (status) query.status = status
-      if (shop) query.in_branch = shop
+      const only = branch ?? shop
+      if (only) query.in_branch = only
       if (from) query.from = new Date(`${from}T00:00:00`).toISOString()
       if (to) query.to = new Date(`${to}T23:59:59.999`).toISOString()
       if (q.trim()) query.q = q.trim()
-      const res = await api<{ enquiries: Enquiry[]; new_count: number }>('GET', '/api/shop-admin/enquiries', { query })
-      setRows(res.enquiries); setNewCount(res.new_count)
+      const res = await api<{ enquiries: Enquiry[]; new_count: number; new_by_branch?: Record<string, number> }>('GET', '/api/shop-admin/enquiries', { query })
+      setRows(res.enquiries); setNewCount(res.new_count, res.new_by_branch)
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not load the requests') }
     finally { setLoading(false) }
-  }, [status, shop, from, to, q, setNewCount])
+  }, [branch, status, shop, from, to, q, setNewCount])
   useEffect(() => { void load() }, [load])
   // reload when a new request arrives (the notification poll bumps the New count)
   const newCount = useShopAlertStore((s) => s.newCount)
@@ -99,15 +103,20 @@ export default function OnlineEnquiries() {
             </select>
           </label>
           <label className="text-[10px] font-black uppercase text-gray-500">Branch
-            <select value={shop} onChange={(e) => setShop(e.target.value)} className={input} data-testid="enq-filter-branch">
-              <option value="">All branches</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.short_label || b.name}</option>)}
-            </select>
+            {branch ? (
+              // inside a branch: only this branch's requests (Global Admin shows every branch)
+              <div className={`${input} flex items-center normal-case text-[#111111]`} data-testid="enq-branch-locked">{branches.find((b) => b.id === branch)?.short_label || branch}</div>
+            ) : (
+              <select value={shop} onChange={(e) => setShop(e.target.value)} className={input} data-testid="enq-filter-branch">
+                <option value="">All branches</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.short_label || b.name}</option>)}
+              </select>
+            )}
           </label>
           <label className="text-[10px] font-black uppercase text-gray-500">From<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={input} /></label>
           <label className="text-[10px] font-black uppercase text-gray-500">To<input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={input} /></label>
           <label className="col-span-2 sm:col-span-1 text-[10px] font-black uppercase text-gray-500">Search<input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ID, name or phone" className={input} data-testid="enq-search" /></label>
         </div>
-        <p className="text-[11px] font-bold text-[#374151]">{rows.length} request(s)</p>
+        <p className="text-[11px] font-bold text-[#374151]">{rows.length} request(s){branch ? ' for this branch · open Global Admin to see every branch' : ''}</p>
         {error && <p className="text-xs font-bold text-red-600" role="alert">{error}</p>}
 
         <div className="overflow-x-auto rounded-xl border border-[#E5E7EB]/60 bg-[#FBFAF6]">

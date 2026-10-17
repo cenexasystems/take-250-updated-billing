@@ -22,8 +22,8 @@ export default function EnquiryAlert() {
     if (useAlarmStore.getState().isAlarmActive) alarmSound.startAlert()
   }
   const acknowledge = () => { stop(); clearPopup() }
-  const open = (id: string) => {
-    stop(); clearPopup(); focus(id)
+  const open = (id: string, branch: string) => {
+    stop(); clearPopup(); focus(id, branch)
     if (location.pathname !== '/dashboard') navigate(`/dashboard?tab=online_enquiries&enquiry=${encodeURIComponent(id)}`)
   }
   const wake = () => { void alarmSound.unlock() }
@@ -55,7 +55,7 @@ export default function EnquiryAlert() {
                 <p className="text-[12px] font-semibold text-[#374151] truncate">{e.customer_name} · {e.branch_name}</p>
                 <p className="text-[11px] text-[#6B7280]">{new Date(e.created_at).toLocaleString('en-IN')}</p>
               </div>
-              <button type="button" onClick={() => open(e.id)} className="shrink-0 inline-flex items-center gap-1 rounded-xl bg-[#111111] text-[#D4AF37] px-3 py-2 text-xs font-black cursor-pointer">Open <ChevronRight size={13} /></button>
+              <button type="button" onClick={() => open(e.id, e.branch_id)} className="shrink-0 inline-flex items-center gap-1 rounded-xl bg-[#111111] text-[#D4AF37] px-3 py-2 text-xs font-black cursor-pointer">Open <ChevronRight size={13} /></button>
             </div>
           ))}
         </div>

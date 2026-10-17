@@ -264,11 +264,18 @@ export default function Dashboard() {
   })
   const { setCurrentTab } = useNavigationStore()
   // online-shop requests: the sidebar badge (New count) and "Open" from the notification popup
-  const enquiryNewCount = useShopAlertStore((s) => s.newCount)
+  const enquiryNewTotal = useShopAlertStore((s) => s.newCount)
+  const enquiryNewByBranch = useShopAlertStore((s) => s.newByBranch)
+  // Global Admin: every branch's New requests; inside a branch: only that branch's
+  const enquiryNewCount = activeBranch && activeBranch !== 'all' ? (enquiryNewByBranch[activeBranch] ?? 0) : enquiryNewTotal
   const enquiryFocusId = useShopAlertStore((s) => s.focusId)
+  const enquiryFocusBranch = useShopAlertStore((s) => s.focusBranch)
   useEffect(() => {
-    if (enquiryFocusId && role === 'admin') setTab('online_enquiries')
-  }, [enquiryFocusId, role])
+    if (!enquiryFocusId || role !== 'admin') return
+    // inside another branch: switch to the request's branch, so the request is in the list
+    if (enquiryFocusBranch && activeBranch && activeBranch !== 'all' && activeBranch !== enquiryFocusBranch) setActiveBranch(enquiryFocusBranch as PosBranch)
+    setTab('online_enquiries')
+  }, [enquiryFocusId, role]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     // deep link from the popup on another page: /dashboard?tab=online_enquiries&enquiry=<id>
     const id = new URLSearchParams(location.search).get('enquiry')
@@ -4662,7 +4669,7 @@ export default function Dashboard() {
 
         {tab === 'returns' && canOpenTab(role, 'returns') && <ReturnsList branch={branch} onBack={() => setTab('history')} />}
         {tab === 'online_shop' && canOpenTab(role, 'online_shop') && <OnlineCatalogue branch={branch} onOpenInventory={() => handleTabClick('inventory')} />}
-        {tab === 'online_enquiries' && canOpenTab(role, 'online_enquiries') && <OnlineEnquiries />}
+        {tab === 'online_enquiries' && canOpenTab(role, 'online_enquiries') && <OnlineEnquiries branch={isGlobalView ? null : branch} />}
 
         {/* ── EXPENSES TAB ── */}
         {tab === 'expenses' && (

@@ -183,9 +183,10 @@ export default function Shop() {
   const errorBox = error && <p className="mx-4 mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-700" role="alert" data-testid="shop-error">{error}</p>
 
   // ---- branch selector
+  // (html, body and #root are locked to the screen for the POS: each shop view scrolls in its own full-height .app-scroll)
   if (!branchId || !branch || choosing) {
     return (
-      <div className="min-h-[100dvh] bg-[#FBFAF6]" data-testid="shop-home">
+      <div className="app-scroll h-[100dvh] overflow-x-hidden overflow-y-auto overscroll-contain bg-[#FBFAF6]" data-testid="shop-home">
         {header}
         {errorBox}
         <main className="mx-auto max-w-3xl px-4 py-6">
@@ -206,7 +207,7 @@ export default function Shop() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-[#FBFAF6] pb-24">
+    <div className="app-scroll h-[100dvh] overflow-x-hidden overflow-y-auto overscroll-contain bg-[#FBFAF6] pb-24" data-testid="shop-page">
       {header}
       {errorBox}
 

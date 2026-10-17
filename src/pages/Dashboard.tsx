@@ -53,7 +53,7 @@ import { useAlarmStore } from '../store/alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
 import { uploadProductImage } from '../lib/storage'
 import { formatCurrency, normalizeOrderMode, normalizeUnitType, toNumber, type UnitType } from '../lib/retail'
-import { normalizeStructuredOrderItem, formatInvoiceNo, formatPaymentMode } from '../lib/retail'
+import { normalizeStructuredOrderItem, formatInvoiceNo, formatPaymentMode, paymentParts } from '../lib/retail'
 import { Invoice } from '../components/Invoice'
 import { printThermalReceipt } from '../lib/thermalPrint'
 import { invoicePageLink, invoicePdfShareName, pdfNamed, sendPdfOnWhatsApp } from '../lib/whatsappShare'
@@ -121,6 +121,31 @@ function ProductProfit({ p }: { p: { qty: number; revenue: number; cost: number;
   return (
     <span className={`font-bold ${profit >= 0 ? 'text-emerald-700' : 'text-red-600'}`} title={partial ? `Only ${Math.round(p.costedQty)} of ${Math.round(p.qty)} sold have a purchase price` : undefined}>
       {formatCurrency(profit)}{partial ? ' *' : ''}
+    </span>
+  )
+}
+
+/** Order History discount cell: one amount for a coupon-only bill (as before); coupon and manual on their own lines
+ *  as soon as a manual discount is on the bill, so neither is hidden in a combined figure. */
+function HistoryDiscount({ coupon, manual }: { coupon: number; manual: number }) {
+  if (coupon + manual <= 0) return <span className="text-[#9BAB9A]">—</span>
+  if (manual <= 0) return <span className="font-bold text-emerald-700">-{formatCurrency(coupon)}</span>
+  return (
+    <span className="flex flex-col gap-0.5 font-bold leading-tight text-emerald-700" data-testid="history-discount">
+      {coupon > 0 && <span className="whitespace-nowrap">Coupon -{formatCurrency(coupon)}</span>}
+      <span className="whitespace-nowrap">Manual -{formatCurrency(manual)}</span>
+    </span>
+  )
+}
+
+/** Under an Order History total: the GST it includes and a split payment, when the bill has them. */
+function HistoryTotalNotes({ gst, splitDetails, advance }: { gst: number; splitDetails: unknown; advance: boolean }) {
+  const parts = paymentParts(splitDetails)
+  if (gst <= 0 && parts.length < 2) return null
+  return (
+    <span className="mt-0.5 flex flex-col text-[10px] font-semibold leading-tight text-[#6B7280]" data-testid="history-total-notes">
+      {gst > 0 && <span className="whitespace-nowrap">incl. GST {formatCurrency(gst)}</span>}
+      {parts.length > 1 && <span>{advance ? 'Balance split' : 'Split'}: {parts.map((x) => `${formatPaymentMode(x.method)} ${formatCurrency(x.amount)}`).join(' + ')}</span>}
     </span>
   )
 }
@@ -3642,6 +3667,7 @@ export default function Dashboard() {
                         <div className="min-w-0">
                           <p className="text-[#9BAB9A] uppercase text-[10px] sm:text-[11px] font-black">Total</p>
                           <p className="font-black text-[#111111]">{formatCurrency(getOrderTotal(o))}</p>
+                          <HistoryTotalNotes gst={o.total_gst} splitDetails={o.split_details} advance={!!o.advance_ref} />
                         </div>
                         <div>
                           <p className="text-[#9BAB9A] uppercase text-[11px] font-black">Coupon</p>
@@ -3649,7 +3675,7 @@ export default function Dashboard() {
                         </div>
                         <div>
                           <p className="text-[#9BAB9A] uppercase text-[11px] font-black">Discount</p>
-                          <p className="font-semibold text-emerald-700">{o.discount_amount + o.manual_discount_amount > 0 ? `-${formatCurrency(o.discount_amount + o.manual_discount_amount)}` : '—'}</p>
+                          <div className="font-semibold"><HistoryDiscount coupon={o.discount_amount} manual={o.manual_discount_amount} /></div>
                         </div>
                         <div>
                           <p className="text-[#9BAB9A] uppercase text-[11px] font-black">Delivery</p>
@@ -3730,12 +3756,12 @@ export default function Dashboard() {
                             {o.coupon_code ? <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">{o.coupon_code}</span> : <span className="text-[#9BAB9A]">—</span>}
                           </td>
                           <td className="px-2 py-3 text-[11px]">
-                            {o.discount_amount + o.manual_discount_amount > 0 ? <span className="font-bold text-emerald-700">-{formatCurrency(o.discount_amount + o.manual_discount_amount)}</span> : <span className="text-[#9BAB9A]">—</span>}
+                            <HistoryDiscount coupon={o.discount_amount} manual={o.manual_discount_amount} />
                           </td>
                           <td className="px-2 py-3 text-[11px]">
                             {o.delivery_charge > 0 ? <span className="font-bold text-[#111111]">{formatCurrency(o.delivery_charge)}</span> : <span className="text-[#9BAB9A]">—</span>}
                           </td>
-                          <td className="whitespace-nowrap px-2 py-3 text-[11px] font-bold text-[#111111]">{formatCurrency(getOrderTotal(o))}</td>
+                          <td className="px-2 py-3 text-[11px] font-bold text-[#111111]"><span className="whitespace-nowrap">{formatCurrency(getOrderTotal(o))}</span><HistoryTotalNotes gst={o.total_gst} splitDetails={o.split_details} advance={!!o.advance_ref} /></td>
                           <td className="whitespace-nowrap px-2 py-3 text-[11px] text-[#374151]">{new Date(o.created_at).toLocaleDateString('en-IN')}</td>
                           <td className="px-2 py-3">
                             <div className="flex items-center justify-center gap-1.5">

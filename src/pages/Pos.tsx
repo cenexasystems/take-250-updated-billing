@@ -758,8 +758,8 @@ export default function Pos(props: PosProps = {}) {
     if (!customer.name.trim()) { setError('Enter the customer name for the deposit order.'); return }
     if (!customer.phone.trim()) { setError('Enter the customer phone number for the deposit order.'); return }
     if (total <= 0) { setError('The order total must be greater than zero.'); return }
-    // advance orders have no manual adjustment (coupon, GST and delivery stay); it is for normal POS sales only
-    if (manualDiscountAmount > 0) { setError('Manual discount is not allowed on a deposit order. Remove it, or use a coupon.'); return }
+    // the cart's manual discount, coupon, GST and delivery all go with the deposit order (stored as its breakdown,
+    // printed on the advance receipt and carried onto the final tax invoice)
     const enteredAmount = Number(cashReceived) || 0
     const suggestedDeposit = enteredAmount > 0 && enteredAmount < total ? String(enteredAmount) : ''
     setDepositForm({ amount: suggestedDeposit, expectedDeliveryDate: '', paymentMethod: 'cash', address: customer.address || '', remarks: '', referenceNumber: '' })

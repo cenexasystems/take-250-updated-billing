@@ -54,8 +54,8 @@ export const advanceRoutes = [
     }).strict(),
     async handler({ db, branch, body, session }) {
       const cart = body.cart
-      // no manual adjustment on advance orders (coupon, GST and delivery stay); normal POS sales keep it
-      if (cart && (cart.manual_discount > 0 || cart.manual_discount_value > 0)) throw new ApiError(400, 'Manual discount is not allowed on advance orders. Remove it, or use a coupon.')
+      // the cart's manual discount is allowed like coupon, GST and delivery: it is stored (cart_manual_discount*) and
+      // complete_advance_order_v2 carries it onto the final bill. A manual adjustment at COMPLETION stays refused (below).
       const r2 = (v: number) => Math.round(v * 100) / 100
       const total = cart ? r2(Math.max(0, r2(cart.subtotal) - r2(cart.coupon_discount) - r2(cart.manual_discount)) + r2(cart.total_gst) + r2(cart.delivery_charge)) : body.total_amount
       if (cart && Math.abs(total - body.total_amount) > 0.01) throw new ApiError(400, `The bill breakdown (₹${total.toFixed(2)}) does not match the order total (₹${body.total_amount.toFixed(2)})`)

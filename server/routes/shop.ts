@@ -3,6 +3,7 @@ import { ApiError, notFound } from '../lib/errors.js'
 import { enforce, LIMITS, record } from '../lib/rateLimit.js'
 import { route } from '../lib/route.js'
 import type { Db } from '../lib/db.js'
+import { branchCustomers } from '../lib/branchCustomers.js'
 
 /**
  * The public online shop (/shop) and the Admin's online catalogue + enquiry dashboard (migration 0016).
@@ -128,24 +129,7 @@ const adminRoutes = [
     query: z.object({ range: z.enum(['recent', 'all']).default('recent') }).strict(),
     async handler({ db, branch, query, res }) {
       res.setHeader('Cache-Control', 'no-store')
-      const r = await db.query<{ phone: string; name: string | null; last_at: string; visits: number }>(
-        `SELECT phone, name, last_at, visits FROM (
-           SELECT p AS phone, (array_agg(nm ORDER BY at DESC) FILTER (WHERE nm IS NOT NULL))[1] AS name, max(at) AS last_at, count(*)::int AS visits
-             FROM (
-               SELECT public.canonical_phone(phone) p, customer_name n, created_at at FROM public.orders WHERE branch_id = $1 AND phone IS NOT NULL
-               UNION ALL
-               SELECT public.canonical_phone(phone), customer_name, created_at FROM public.advance_orders WHERE branch_id = $1 AND phone IS NOT NULL
-               UNION ALL
-               SELECT phone, customer_name, created_at FROM public.shop_enquiries WHERE branch_id = $1
-             ) x
-             -- placeholder names typed at the counter are not names
-             CROSS JOIN LATERAL (SELECT CASE WHEN btrim(COALESCE(x.n, '')) = '' OR lower(btrim(x.n)) IN ('customer', 'walk-in customer', 'walk in customer') THEN NULL ELSE btrim(x.n) END AS nm) c
-            WHERE p IS NOT NULL
-            GROUP BY p) y
-          WHERE $2 = 'all' OR last_at >= now() - interval '30 days'
-          ORDER BY last_at DESC
-          LIMIT $3`, [branch, query.range, query.range === 'all' ? 2000 : 200])
-      return { customers: r.rows.map((x) => ({ phone: String(x.phone), name: x.name ? String(x.name) : null, last_at: x.last_at, visits: Number(x.visits) })) }
+      return { customers: await branchCustomers(db, branch!, { sinceDays: query.range === 'all' ? undefined : 30, limit: query.range === 'all' ? 2000 : 200 }) }
     },
   }),
 

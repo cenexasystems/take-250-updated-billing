@@ -206,7 +206,7 @@ export const salesRoutes = [
       from: date.optional(), to: date.optional(), include_items: z.enum(['1', 'true']).optional(),
       limit: z.coerce.number().int().min(1).max(1000).default(200), offset: z.coerce.number().int().min(0).default(0),
     }).strict(),
-    async handler({ db, branch, query }) {
+    async handler({ db, branch, query, session }) {
       const p: unknown[] = [branch]
       const bind = (v: unknown) => { p.push(v); return `$${p.length}` }
       const like = (col: string, v: string) => `${col} ILIKE '%' || ${bind(v)} || '%'`
@@ -238,8 +238,14 @@ export const salesRoutes = [
       }
       if (query.customer) conds.push(like('o.customer_name', query.customer.trim()))
       const where = conds.join(' AND ')
+      // product-wise profit (Analytics): each line's CURRENT purchase price (the size's, else the product's). Bills keep no
+      // cost snapshot, so a purchase price changed later changes past profit too. 0 = never entered (products default to 0)
+      // -> null, so the screen asks for a purchase price instead of showing the whole revenue as profit. Never sent to Staff.
+      const unitCost = session?.role === 'staff' ? '' : ` || jsonb_build_object('unit_cost', COALESCE(
+          (SELECT NULLIF(v.purchase_price, 0) FROM public.product_variants v WHERE v.id = i.variant_id AND v.branch_id = i.branch_id),
+          (SELECT NULLIF(pr.purchase_price, 0) FROM public.products pr WHERE pr.id = i.product_id AND pr.branch_id = i.branch_id)))`
       const items = query.include_items
-        ? `, COALESCE((SELECT json_agg(to_jsonb(i) || jsonb_build_object('returned_quantity', COALESCE((SELECT SUM(r.quantity) FROM public.order_return_items r WHERE r.order_item_id = i.id AND r.branch_id = i.branch_id), 0)) ORDER BY i.id) FROM public.order_items i WHERE i.order_id = o.id AND i.branch_id = o.branch_id), '[]'::json) AS order_items`
+        ? `, COALESCE((SELECT json_agg(to_jsonb(i) || jsonb_build_object('returned_quantity', COALESCE((SELECT SUM(r.quantity) FROM public.order_return_items r WHERE r.order_item_id = i.id AND r.branch_id = i.branch_id), 0))${unitCost} ORDER BY i.id) FROM public.order_items i WHERE i.order_id = o.id AND i.branch_id = o.branch_id), '[]'::json) AS order_items`
         : ''
       // a bill made by completing an advance order: its DEP- reference and payments (deposit + balance), same branch only
       const advanceRef = `, (SELECT jsonb_build_object('deposit_id', a.deposit_id, 'payments', COALESCE((SELECT jsonb_agg(jsonb_build_object('payment_type', ap.payment_type,

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { ApiError, notFound } from '../lib/errors.js'
 import { enforce, LIMITS, record } from '../lib/rateLimit.js'
 import { route } from '../lib/route.js'
+import { branchCustomers } from '../lib/branchCustomers.js'
 
 /**
  * POS customer lookup and coupon sending (0012).
@@ -34,7 +35,29 @@ async function sentCoupons(db: { query: (s: string, p: unknown[]) => Promise<{ r
     Array<{ code: string; status: 'active' | 'used' | 'expired' | 'limit_reached'; uses: number; per_customer_limit: number | null }>
 }
 
+/** The digits a cashier has typed so far, as the start of a 10-digit mobile (+91 / 91 / 0 in front dropped). */
+export function phonePrefix(raw: string): string {
+  let d = raw.replace(/\D/g, '')
+  if ((/^\s*\+/.test(raw) || d.length > 10) && d.startsWith('91')) d = d.slice(2)
+  return d.replace(/^0+/, '')
+}
+
 export const customerRoutes = [
+  // POS: from the 4th digit, this branch's customers whose number starts with what was typed (max 8, newest first).
+  // Same roles and branch rule as the lookup; the phone travels in the body and is never logged.
+  route({
+    method: 'post', path: '/api/customers/suggest', perm: 'customers.lookup',
+    body: z.object({ phone: phoneBody }).strict(),
+    async handler({ db, branch, body, session, ip }) {
+      const user = `${session!.role}:${session!.branch ?? 'admin'}`
+      await enforce(db, 'customer_suggest', ip, { ip: LIMITS.customerSuggestsPerIp, target: { ...LIMITS.customerSuggestsPerUser, key: user } }, false)
+      await record(db, 'customer_suggest', ip, true, user)
+      const prefix = phonePrefix(body.phone)
+      if (prefix.length < 4 || prefix.length > 10 || !/^[6-9]/.test(prefix)) return { customers: [] }
+      const rows = await branchCustomers(db, branch!, { prefix, limit: 8 })
+      return { customers: rows.map((c) => ({ phone: c.phone, name: c.name })) }
+    },
+  }),
   route({
     method: 'post', path: '/api/customers/lookup', perm: 'customers.lookup',
     body: z.object({ phone: phoneBody }).strict(),

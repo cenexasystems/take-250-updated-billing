@@ -199,6 +199,37 @@ export async function shopSuite(c: ShopCtx) {
     check(custCodes.every((x) => x === 403), `${L} manager / staff cannot list customers (403, forged branch too)`, JSON.stringify(custCodes))
     check((await call('GET', '/api/shop-admin/customers', { cookie: cookies.admin })).status === 400, `${L} Admin must have a branch selected to list its customers`)
 
+    // ================= POS phone suggestions (from the 4th digit) and name for a full number, this branch only
+    const sug = async (who: Actor, phone: string) => call('POST', '/api/customers/suggest', { cookie: cookies[who], body: { phone }, ...(who === 'admin' ? { query: { branch_id: b } } : {}) })
+    const s5 = await sug(staff, recentP.slice(0, 5))
+    const s5list = (s5.body?.customers ?? []) as Array<{ phone: string; name: string | null }>
+    check(s5.status === 200 && s5list.some((x) => x.phone === recentP && x.name === 'Lakshmi') && !s5list.some((x) => x.phone === otherP) && s5list.length <= 8 && s5list.every((x) => x.phone.startsWith(recentP.slice(0, 5))),
+      `${L} staff: 5 typed digits suggest this branch's matching numbers with names (max 8)`, JSON.stringify(s5list).slice(0, 200))
+    const s4 = await sug(mgr, `+91 ${walkinP.slice(0, 4)}`)
+    check(s4.status === 200 && (s4.body.customers as any[]).some((x) => x.phone === walkinP && x.name === null), `${L} manager: "+91" + 4 digits works; a walk-in placeholder name comes back blank`, JSON.stringify(s4.body).slice(0, 160))
+    check(((await sug(staff, recentP.slice(0, 3))).body.customers as any[]).length === 0, `${L} fewer than 4 digits: no suggestions`)
+    check((await sug('admin', oldP.slice(0, 6))).body.customers.some((x: any) => x.phone === oldP && x.name === 'Old Friend'), `${L} admin (branch selected) gets suggestions too, including older customers`)
+    const otherStaff = `staff${other.slice(-1)}` as Actor
+    check(!((await sug(otherStaff, recentP.slice(0, 6))).body.customers as any[]).some((x) => x.phone === recentP), `${L} another branch's staff never sees ${b}'s numbers`)
+
+    // ================= bill lines carry the current purchase price for Admin / Manager (product-wise profit), never for Staff
+    const ordId = (await one(`INSERT INTO orders (invoice_no, customer_name, phone, subtotal, total, branch_id, status) VALUES (public.get_next_invoice_no($1), 'Profit Test', $2, 1000, 1000, $1, 'completed') RETURNING id`, [b, recentP])).id
+    await q(`INSERT INTO order_items (branch_id, order_id, product_id, product_name, name, quantity, unit_price, line_total) VALUES ($1, $2, $3, 'Shop Kurti', 'Shop Kurti', 2, 500, 1000)`, [b, ordId, P1])
+    const itemsFor = async (who: Actor) => {
+      const r = await call('GET', '/api/orders', { cookie: cookies[who], query: { include_items: '1', limit: '50', ...(who === 'admin' ? { branch_id: b } : {}) } })
+      return ((r.body?.orders ?? []) as any[]).find((o) => o.id === ordId)?.order_items?.[0]
+    }
+    const ai = await itemsFor('admin'), mi = await itemsFor(mgr), si = await itemsFor(staff)
+    check(num(ai?.unit_cost) === 200 && num(mi?.unit_cost) === 200, `${L} Admin and Manager get the line's purchase price (unit_cost 200) for profit`, JSON.stringify({ a: ai?.unit_cost, m: mi?.unit_cost }))
+    check(!!si && !('unit_cost' in si), `${L} Staff never receive a purchase price on bill lines`)
+    // a product whose purchase price was never entered (stored as 0): no cost, so no made-up profit
+    const P0 = await mk(`Shop NoCost ${n}`, {})
+    await q(`UPDATE products SET purchase_price = 0 WHERE id = $1`, [P0])
+    await q(`INSERT INTO order_items (branch_id, order_id, product_id, product_name, name, quantity, unit_price, line_total) VALUES ($1, $2, $3, 'Shop NoCost', 'Shop NoCost', 1, 300, 300)`, [b, ordId, P0])
+    const r0 = await call('GET', '/api/orders', { cookie: cookies.admin, query: { include_items: '1', limit: '50', branch_id: b } })
+    const noCost = ((r0.body?.orders ?? []) as any[]).find((o) => o.id === ordId)?.order_items?.find((i: any) => i.product_id === P0 || Number(i.product_id) === P0)
+    check(!!noCost && noCost.unit_cost === null, `${L} a purchase price of 0 (never entered) is sent as "no cost", not 0`, JSON.stringify(noCost?.unit_cost))
+
     // ================= 4. once: CSV formula cells, a future branch gets its counter
     if (first) {
       first = false

@@ -111,7 +111,20 @@ type DashboardOrder = {
   /** what the bill took in per payment mode (deposits included) and what was refunded to each mode (0015) */
   paid_by_mode?: Record<string, number>; refunds_by_mode?: Record<string, number>
 }
-type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null }
+type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null; unit_cost?: number | null }
+/** Product-wise net profit: revenue - purchase price x units sold. No purchase price -> "Add purchase price";
+ *  some sales without one -> the profit of the priced part, marked. Bills keep no cost snapshot: the current price is used. */
+function ProductProfit({ p }: { p: { qty: number; revenue: number; cost: number; costedQty: number; costedRevenue: number } }) {
+  if (p.costedQty <= 0) return <span className="text-[11px] font-semibold text-[#9CA3AF]" title="Set a purchase price in Stock & Inventory to see the profit">Add purchase price</span>
+  const profit = Math.round((p.costedRevenue - p.cost) * 100) / 100
+  const partial = p.costedQty < p.qty
+  return (
+    <span className={`font-bold ${profit >= 0 ? 'text-emerald-700' : 'text-red-600'}`} title={partial ? `Only ${Math.round(p.costedQty)} of ${Math.round(p.qty)} sold have a purchase price` : undefined}>
+      {formatCurrency(profit)}{partial ? ' *' : ''}
+    </span>
+  )
+}
+
 type DashboardCoupon = {
   id: number
   code: string
@@ -521,6 +534,8 @@ export default function Dashboard() {
           quantity: left,
           line_total: bought > 0 ? Math.round(toNumber(row.line_total, 0) * left / bought * 100) / 100 : 0,
           is_manual: Boolean(row.is_manual),
+          // the line's current purchase price (size, else product), sent to Admin / Manager only; null = not set
+          unit_cost: row.unit_cost === null || row.unit_cost === undefined ? null : toNumber(row.unit_cost, 0),
         }
       }))
 
@@ -699,7 +714,8 @@ export default function Dashboard() {
           is_manual: (row as Record<string,unknown>).is_manual === true || (row as Record<string,unknown>).source === 'manual',
         })))
 
-    const productMap    = new Map<string, { name: string; variant: string; qty: number; revenue: number; billCount: number }>()
+    // product-wise profit: cost = purchase price x units sold, over the lines whose product has a purchase price
+    const productMap    = new Map<string, { name: string; variant: string; qty: number; revenue: number; billCount: number; cost: number; costedQty: number; costedRevenue: number }>()
     const productOrders = new Map<string, Set<string>>()
     const categoryMap   = new Map<string, { name: string; qty: number; revenue: number }>()
     const prodCatLookup = new Map(products.map(p => [String(p.name || '').trim().toLowerCase(), p.category || 'Uncategorized']))
@@ -707,7 +723,8 @@ export default function Dashboard() {
     let totalProductsSold = 0
     let totalManualRevenue = 0
 
-    completedItems.forEach(({ product_name, category, quantity, line_total, order_id, is_manual }) => {
+    completedItems.forEach(({ product_name, category, quantity, line_total, order_id, is_manual, ...rest }) => {
+      const unitCost = (rest as { unit_cost?: number | null }).unit_cost
       const qty = toNumber(quantity, 0)
       const rev = toNumber(line_total, 0)
       totalProductsSold += qty
@@ -717,8 +734,10 @@ export default function Dashboard() {
       const mainName   = dashIdx > 0 ? rawKey.slice(0, dashIdx) : rawKey
       const variantName = dashIdx > 0 ? rawKey.slice(dashIdx + 3) : ''
 
-      const pc = productMap.get(rawKey) || { name: mainName, variant: variantName, qty: 0, revenue: 0, billCount: 0 }
-      pc.qty += qty; pc.revenue += rev; productMap.set(rawKey, pc)
+      const pc = productMap.get(rawKey) || { name: mainName, variant: variantName, qty: 0, revenue: 0, billCount: 0, cost: 0, costedQty: 0, costedRevenue: 0 }
+      pc.qty += qty; pc.revenue += rev
+      if (unitCost !== null && unitCost !== undefined) { pc.cost += unitCost * qty; pc.costedQty += qty; pc.costedRevenue += rev }
+      productMap.set(rawKey, pc)
 
       if (!productOrders.has(rawKey)) productOrders.set(rawKey, new Set())
       productOrders.get(rawKey)!.add(order_id)
@@ -3003,6 +3022,14 @@ export default function Dashboard() {
                                 <p className="font-bold text-[#111111] mt-1">{Math.round(p.qty)}</p>
                               </div>
                               <div className="flex flex-col justify-between">
+                                <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Selling Price</p>
+                                <p className="font-bold text-[#111111] mt-1">{formatCurrency(p.qty > 0 ? p.revenue / p.qty : 0)}</p>
+                              </div>
+                              <div className="flex flex-col justify-between">
+                                <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Net Profit</p>
+                                <ProductProfit p={p} />
+                              </div>
+                              <div className="flex flex-col justify-between">
                                 <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Bills</p>
                                 <p className="font-bold text-[#111111] mt-1">{p.billCount}</p>
                               </div>
@@ -3015,7 +3042,7 @@ export default function Dashboard() {
                         ))}
                       </div>
                       <div className="hidden md:block overflow-x-auto rounded-xl border border-[#E5E7EB]/30">
-                        <table className="w-full min-w-[580px] text-left text-[12px]">
+                        <table className="w-full min-w-[780px] text-left text-[12px]" data-testid="product-analytics-table">
                           <thead className="bg-[#F9FAFB] text-[10px] uppercase tracking-wider text-[#374151]">
                             <tr>
                               <th className="px-4 py-2.5 font-black">#</th>
@@ -3023,6 +3050,8 @@ export default function Dashboard() {
                               <th className="px-4 py-2.5 font-black">Variant / SKU</th>
                               <th className="px-4 py-2.5 font-black">Qty Sold</th>
                               <th className="px-4 py-2.5 font-black">Revenue</th>
+                              <th className="px-4 py-2.5 font-black" title="Average selling price per piece (revenue ÷ quantity sold)">Selling Price</th>
+                              <th className="px-4 py-2.5 font-black" title="Revenue minus purchase price × quantity sold">Net Profit</th>
                               <th className="px-4 py-2.5 font-black">Bills</th>
                               <th className="px-4 py-2.5 font-black">Avg Revenue/Bill</th>
                             </tr>
@@ -3035,6 +3064,8 @@ export default function Dashboard() {
                                 <td className="px-4 py-2 text-[#374151]">{p.variant || '-'}</td>
                                 <td className="px-4 py-2 font-bold">{Math.round(p.qty)}</td>
                                 <td className="px-4 py-2 font-bold text-emerald-700">{formatCurrency(p.revenue)}</td>
+                                <td className="px-4 py-2 font-bold text-[#111111]" data-testid="product-selling-price">{formatCurrency(p.qty > 0 ? p.revenue / p.qty : 0)}</td>
+                                <td className="px-4 py-2" data-testid="product-net-profit"><ProductProfit p={p} /></td>
                                 <td className="px-4 py-2 text-[#374151]">{p.billCount}</td>
                                 <td className="px-4 py-2 font-bold text-[#111111]">{formatCurrency(p.billCount > 0 ? p.revenue / p.billCount : 0)}</td>
                               </tr>

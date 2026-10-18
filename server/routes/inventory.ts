@@ -56,6 +56,9 @@ export const inventoryRoutes = [
   route({
     method: 'get', path: '/api/inventory/low-stock-alerts', perm: 'inventory.alerts',
     async handler({ db, branch }) {
+      // 0018: the Admin switched this branch's low-stock alert off -> nothing to alert about
+      const on = (await db.query(`SELECT low_stock_alert_enabled FROM public.store_settings WHERE branch_id = $1`, [branch])).rows[0]
+      if (on && on.low_stock_alert_enabled === false) return { items: [] }
       const r = await db.query(
         `SELECT 'p-' || p.id AS id, p.name, NULL::text AS variant_name, p.stock_quantity AS quantity,
                 CASE WHEN p.low_stock_alert > 0 THEN p.low_stock_alert ELSE 5 END AS threshold

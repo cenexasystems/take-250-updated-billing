@@ -92,6 +92,8 @@ export interface StoreSettings {
   themeColor: string
   websiteUrl?: string
   gstEnabled: boolean
+  /** 0018: the branch's low-stock popup + sound (default on) */
+  lowStockAlertEnabled: boolean
 }
 
 interface SettingsState {
@@ -320,7 +322,8 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
           instagramId: data.instagram_id || '',
           logoUrl: data.logo_url || null,
           themeColor: data.theme_color || '#0A0A0A',
-          gstEnabled: data.gst_enabled
+          gstEnabled: data.gst_enabled,
+          lowStockAlertEnabled: data.low_stock_alert_enabled !== false,
         }
         set((state) => ({
           settings: resolved,
@@ -341,7 +344,8 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
       instagramId: '',
       logoUrl: null,
       themeColor: '#0A0A0A',
-      gstEnabled: false
+      gstEnabled: false,
+      lowStockAlertEnabled: true,
     }
     set((state) => ({
       settings: fallback,

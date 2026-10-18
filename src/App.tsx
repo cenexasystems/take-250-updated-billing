@@ -153,9 +153,11 @@ function AppShell() {
 
   // Polling (every ~12 s, paused while the tab is hidden) replaces the realtime products subscription of the original.
   // It reads the change stamps of the ONE branch on screen; switching branch starts a fresh baseline.
-  useBranchPolling(catalogBranch, ['products', 'product_variants'], (changed) => {
+  useBranchPolling(catalogBranch, ['products', 'product_variants', 'store_settings'], (changed) => {
     if (changed.includes('products')) void refreshProducts()
     if (changed.includes('product_variants') && catalogBranch) void refetchVariants(catalogBranch)
+    // e.g. the Admin switched this branch's low-stock alert off / on (0018)
+    if (changed.includes('store_settings') && catalogBranch) void fetchSettings(catalogBranch as PosBranch)
   }, { enabled: hasStaffOrAdminAccess })
 
   return (

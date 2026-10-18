@@ -19,6 +19,7 @@ export default function BranchHub({ onNavigate }: BranchHubProps) {
   const accent = posAccent(branch)
   const products = useProductStore((s) => s.products)
   const { settings, fetchSettings } = useSettingsStore()
+  const alertOn = useSettingsStore((s) => s.settingsByBranch[branch]?.lowStockAlertEnabled !== false) // 0018
 
   useEffect(() => { void fetchSettings(branch) }, [fetchSettings, branch])
 
@@ -74,7 +75,7 @@ export default function BranchHub({ onNavigate }: BranchHubProps) {
         </div>
       </div>
 
-      {lowStockCount > 0 && (
+      {alertOn && lowStockCount > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
           <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
           <div>

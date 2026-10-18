@@ -1,15 +1,24 @@
 import { useEffect, useRef } from 'react'
 import { api } from '../lib/apiClient'
 import { useAlarmStore, type LowStockItem } from '../store/alarmStore'
-import { useBranchStore, type PosBranch } from '../store/store'
+import { useAdminAuthStore, useBranchStore, useSettingsStore, type PosBranch } from '../store/store'
 import { alarmSound } from '../lib/alarmAudio'
 
 /**
  * @param branch  Only products/variants of this branch raise the alarm ('pos1' | 'pos2').
  *                 Pass null for the admin's all-branches view.
  */
+/** 0018: Store Settings "Low stock alert" of a branch: true / false, or null while its settings are still loading. */
+const alertSetting = (b: string | null | undefined): boolean | null => {
+  if (!b) return true
+  const s = useSettingsStore.getState().settingsByBranch[b as PosBranch]
+  return s ? s.lowStockAlertEnabled !== false : null
+}
+
 export function useLowStockMonitor(enabled: boolean = true, role?: string | null, branch?: PosBranch | null) {
   const setLowStockItems = useAlarmStore((state) => state.setLowStockItems)
+  // every branch's switch, as one key: turning one off (or on) re-runs the monitor at once
+  const alertKey = useSettingsStore((s) => Object.entries(s.settingsByBranch).map(([b, v]) => `${b}:${v?.lowStockAlertEnabled !== false}`).sort().join(','))
   const isCheckingRef = useRef(false)
   const enabledRef = useRef(enabled)
   enabledRef.current = enabled
@@ -25,10 +34,19 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
       // server); staff and manager always get their own branch from the session.
       const checkedBranch = branchRef.current
       const allBranchIds = useBranchStore.getState().branches.map((b) => b.id as PosBranch)
-      const targets: Array<PosBranch | undefined> = checkedBranch
+      const allTargets: Array<PosBranch | undefined> = checkedBranch
         ? [checkedBranch]
         : role === 'admin' ? (allBranchIds.length ? allBranchIds : (['pos1', 'pos2', 'pos3'] as PosBranch[])) : [undefined]
+      // 0018: branches whose low-stock alert is off are not asked at all (staff / manager: their own branch)
+      const ownBranch = useAdminAuthStore.getState().branch
+      // a branch whose settings have not loaded yet is not asked either: the load re-runs this check (alertKey)
+      if (allTargets.some((t) => alertSetting(t ?? ownBranch) === null)) return
+      const targets = allTargets.filter((t) => alertSetting(t ?? ownBranch) === true)
       const flagged: LowStockItem[] = []
+      if (!targets.length) {
+        if (enabledRef.current && branchRef.current === checkedBranch) setLowStockItems([]) // off: no popup, no sound
+        return
+      }
 
       if (role === 'staff') {
         // Staff has no stock screen and may not read the stock list: the server answers with ONLY the low items
@@ -138,7 +156,7 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
       clearInterval(interval)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [enabled, role, branch])
+  }, [enabled, role, branch, alertKey])
 
   // Re-check stock levels when enabled changes from false to true (e.g., on login)
   useEffect(() => {

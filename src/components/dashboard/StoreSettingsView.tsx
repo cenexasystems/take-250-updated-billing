@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Store, Phone, MapPin, Palette, RotateCcw, Save, Upload, Trash2, Loader2, Shield } from 'lucide-react'
+import { Store, Phone, MapPin, Palette, RotateCcw, Save, Upload, Trash2, Loader2, Shield, BellRing } from 'lucide-react'
+import Toggle from '../common/Toggle'
 import { api } from '../../lib/apiClient'
 import { uploadBrandingLogo } from '../../lib/storage'
 import { useAdminAuthStore, useBranchStore, useSettingsStore, type PosBranch } from '../../store/store'
@@ -29,11 +30,12 @@ type FormState = {
   instagramId: string
   themeColor: string
   logoUrl: string
+  lowStockAlert: boolean
 }
 
 const emptyForm: FormState = {
   name: '', ownerName: '', businessType: '', phoneNumber: '', shopContactNumber: '',
-  email: '', address: '', instagramId: '', themeColor: '#0A0A0A', logoUrl: '',
+  email: '', address: '', instagramId: '', themeColor: '#0A0A0A', logoUrl: '', lowStockAlert: true,
 }
 
 export default function StoreSettingsView() {
@@ -94,6 +96,7 @@ export default function StoreSettingsView() {
       instagramId: currentBranchSettings.instagramId,
       themeColor: currentBranchSettings.themeColor || '#0A0A0A',
       logoUrl: currentBranchSettings.logoUrl || '',
+      lowStockAlert: currentBranchSettings.lowStockAlertEnabled !== false,
     })
   }, [target, settingsByBranch])
 
@@ -111,6 +114,7 @@ export default function StoreSettingsView() {
       phoneNumber, shopContactNumber: shopContactNumber || phoneNumber, email: currentBranchSettings.email,
       address: currentBranchSettings.address, instagramId: currentBranchSettings.instagramId, themeColor: currentBranchSettings.themeColor,
       logoUrl: currentBranchSettings.logoUrl || '',
+      lowStockAlert: currentBranchSettings.lowStockAlertEnabled !== false,
     })
     setMessage(null)
   }
@@ -142,6 +146,7 @@ export default function StoreSettingsView() {
         instagram_id: form.instagramId.trim(),
         theme_color: normalizeHex(form.themeColor),
         logo_url: form.logoUrl || null,
+        ...(role === 'admin' ? { low_stock_alert_enabled: form.lowStockAlert } : {}),
       }
       // the server writes the row of the session's branch (an admin names the branch being edited)
       await api('PUT', '/api/settings', { body: payload, branchId: branchToSave })
@@ -407,6 +412,22 @@ export default function StoreSettingsView() {
                 <textarea value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} rows={2} className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-[#FBFAF6] text-sm font-bold outline-none focus:border-gray-400 resize-none" />
               </div>
             </div>
+
+            {/* Alerts (Admin only): the branch's low-stock popup and sound */}
+            {role === 'admin' && (
+              <div className="bg-white border border-gray-200 rounded-3xl p-6 shadow-sm space-y-3.5" data-testid="low-stock-alert-setting">
+                <p className="text-xs font-black uppercase tracking-wide text-gray-700 flex items-center gap-1.5">
+                  <BellRing size={15} className={accent.text} /> Alerts
+                </p>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <label htmlFor="low-stock-alert-switch" className="block text-sm font-black text-[#111111]">Low stock alert</label>
+                    <p className="text-[11px] text-gray-500 font-medium mt-0.5">When off, the low-stock popup and sound are disabled for this branch.</p>
+                  </div>
+                  <Toggle id="low-stock-alert-switch" label="Low stock alert" checked={form.lowStockAlert} onChange={(v) => setForm((f) => ({ ...f, lowStockAlert: v }))} />
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

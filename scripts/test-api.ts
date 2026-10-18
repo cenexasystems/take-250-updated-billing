@@ -926,6 +926,34 @@ async function run() {
     if (PART === '' || PART === '8') {
       await shopSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o as any), q: (sql, params) => rows(sql, params), check })
 
+      // ---- U. Store Settings "Low stock alert" switch per branch (0018): default on; off silences only that branch; Admin only
+      {
+        for (const b of BRANCHES) {
+          const n = b.slice(-1)
+          await rows(`INSERT INTO products (name, category, price, stock_quantity, stock, branch_id, is_active, low_stock_alert, sku) VALUES ($1, 'Alert Cat', 100, 1, 1, $2, true, 5, $3)`, [`Alert Item ${n}`, b, `SKU-ALERT-${n}`])
+        }
+        const alerts = async (b: string) => ((await call('GET', '/api/inventory/low-stock-alerts', { cookie: cookies[`staff${b.slice(-1)}` as Actor] })).body?.items ?? []) as any[]
+        const setAlert = (b: string, on: boolean, who: Actor = 'admin') => call('PUT', '/api/settings', { cookie: cookies[who], ...(who === 'admin' ? { query: { branch_id: b } } : {}), body: { low_stock_alert_enabled: on } })
+        for (const b of BRANCHES) {
+          const n = b.slice(-1), other = BRANCHES.find((x) => x !== b)!
+          const st = await call('GET', '/api/settings', { cookie: cookies[`staff${n}` as Actor] })
+          check(st.status === 200 && st.body.settings.low_stock_alert_enabled === true, `[${b}] low stock alert: ON by default (read by Staff through the existing settings read)`)
+          check((await alerts(b)).some((x) => x.name === `Alert Item ${n}`), `[${b}] low stock alert ON: the Staff alert endpoint lists the low item`)
+          const mgrPut = await setAlert(b, false, `manager${n}` as Actor), staffPut = await setAlert(b, false, `staff${n}` as Actor)
+          const forged = await call('PUT', '/api/settings', { cookie: cookies[`manager${n}` as Actor], query: { branch_id: other }, body: { low_stock_alert_enabled: false } })
+          check(mgrPut.status === 403 && staffPut.status === 403 && forged.status === 403, `[${b}] Manager and Staff cannot change the low stock alert (403, forged branch too)`, `${mgrPut.status} ${staffPut.status} ${forged.status}`)
+          const off = await setAlert(b, false)
+          check(off.status === 200 && off.body.settings.low_stock_alert_enabled === false, `[${b}] Admin switches the low stock alert OFF`, `${off.status} ${JSON.stringify(off.body).slice(0, 120)}`)
+          check((await alerts(b)).length === 0, `[${b}] OFF: the Staff alert endpoint returns an empty list`)
+          check((await alerts(other)).some((x) => x.name === `Alert Item ${other.slice(-1)}`), `[${b}] OFF in ${b} does not touch ${other}: its alerts still come`)
+          check((await call('GET', '/api/settings', { cookie: cookies[`manager${n}` as Actor] })).body.settings.low_stock_alert_enabled === false, `[${b}] Manager reads OFF through the settings read`)
+          const low = await call('GET', '/api/inventory/low-stock', { cookie: cookies[`manager${n}` as Actor] })
+          check(low.status === 200 && (low.body.products as any[]).some((x) => x.name === `Alert Item ${n}`), `[${b}] the stock list data (low-stock highlighting) is unchanged by the switch`)
+          await setAlert(b, true)
+          check((await alerts(b)).some((x) => x.name === `Alert Item ${n}`), `[${b}] back ON: the alerts resume`)
+        }
+      }
+
       // ---- image upload on a serverless host (no disk fallback): each Blob outcome gives a clear answer, never "Server error"
       const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
       const logged: string[] = []

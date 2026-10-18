@@ -11,6 +11,8 @@ const settingsFields = {
   name: z.string().trim().min(1).max(200), owner_name: z.string().max(200), phone: z.string().max(100), email: z.string().max(200),
   address: z.string().max(1000), gst_enabled: z.boolean(), business_type: z.string().max(200), instagram_id: z.string().max(200),
   logo_url: z.string().max(2000).nullable(), theme_color: z.string().regex(/^#[0-9a-fA-F]{6}$/), website_url: z.string().max(300),
+  // 0018: the branch's low-stock popup + sound on / off (Admin only: settings.write)
+  low_stock_alert_enabled: z.boolean(),
 }
 
 export const adminRoutes = [

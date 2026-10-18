@@ -159,6 +159,21 @@ export async function shopSuite(c: ShopCtx) {
     check(st.status === 200 && st.body.enquiry.status === 'contacted' && num(st.body.enquiry.delivery_charge) === 60 && st.body.enquiry.admin_note === 'Will deliver Friday', `${L} status, delivery charge and admin note saved`, JSON.stringify(st.body))
     check(hist.length === 2 && hist[0].new_status === 'new' && hist[0].changed_by_role === 'customer' && hist[1].old_status === 'new' && hist[1].new_status === 'contacted' && hist[1].changed_by_role === 'admin', `${L} the status change is in the history`, JSON.stringify(hist))
     check((await call('PATCH', `/api/shop-admin/enquiries/${id1}`, { cookie: cookies.admin, body: { status: 'shipped' } })).status === 400, `${L} an unknown status is refused`)
+    // 0019: delivery date (optional): saved, listed, cleared; impossible / too early / too late refused; Admin only
+    const day = async (offset: string) => (await one(`SELECT to_char((now() AT TIME ZONE 'Asia/Kolkata')::date + ${offset}, 'YYYY-MM-DD') AS d`)).d as string
+    const in3 = await day("3"), past = await day("-400"), tooLate = await day("400")
+    const pd = (v: unknown, who: Actor | 'admin' = 'admin') => call('PATCH', `/api/shop-admin/enquiries/${id1}`, { cookie: cookies[who as Actor], body: { delivery_date: v } })
+    const okD = await pd(in3)
+    const listedD = ((await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { in_branch: b } })).body.enquiries as any[]).find((x) => x.id === id1)
+    check(okD.status === 200 && okD.body.enquiry.delivery_date === in3 && listedD?.delivery_date === in3, `${L} a delivery date is saved and listed (${in3})`, JSON.stringify(okD.body))
+    const bad = [await pd('2026-02-30'), await pd(past), await pd(tooLate), await pd('tomorrow')]
+    check(bad.every((r) => r.status === 400) && /valid date/.test(bad[0].body.error) && /before the request date/.test(bad[1].body.error) && /one year/.test(bad[2].body.error),
+      `${L} an impossible date, a date before the request, more than a year ahead, or text is refused`, bad.map((r) => `${r.status} ${r.body?.error}`).join(' | '))
+    check(((await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { in_branch: b } })).body.enquiries as any[]).find((x) => x.id === id1)?.delivery_date === in3, `${L} a refused date leaves the saved one unchanged`)
+    check((await pd(in3, mgr)).status === 403 && (await pd(in3, staff)).status === 403, `${L} Manager and Staff cannot set a delivery date (403)`)
+    const clr = await pd(null)
+    check(clr.status === 200 && clr.body.enquiry.delivery_date === null, `${L} the delivery date can be cleared`)
+    await pd(in3)
     const pulse = await call('GET', '/api/shop-admin/enquiries/pulse', { cookie: cookies.admin, query: { since: '2000-01-01T00:00:00Z' } })
     check(pulse.status === 200 && (pulse.body.fresh as any[]).some((e) => e.enquiry_no) && typeof pulse.body.latest === 'string', `${L} the Admin notification poll reports new requests`)
     const later = await call('GET', '/api/shop-admin/enquiries/pulse', { cookie: cookies.admin, query: { since: pulse.body.latest } })

@@ -13,15 +13,17 @@ const STATUSES = Object.keys(ENQUIRY_STATUS_LABEL)
 type Item = { name: string; variant_name: string | null; quantity: number; unit_price: number; line_total: number }
 type Enquiry = {
   id: string; branch_id: string; branch_name: string; enquiry_no: string; customer_name: string; phone: string; address: string; note: string
-  status: string; items_total: number; delivery_charge: number | null; admin_note: string; created_at: string; items: Item[]
+  status: string; items_total: number; delivery_charge: number | null; delivery_date?: string | null; admin_note: string; created_at: string; items: Item[]
 }
 type Period = 'all' | 'today' | 'week' | 'month' | 'year' | 'custom'
 const PERIODS: Array<{ id: Exclude<Period, 'custom'>; label: string }> = [
   { id: 'all', label: 'All Time' }, { id: 'today', label: 'Today' }, { id: 'week', label: 'This Week' }, { id: 'month', label: 'This Month' }, { id: 'year', label: 'This Year' },
 ]
 // column widths: fixed, so rows never jump when a cell's content changes (the table scrolls sideways inside its box)
-const COLS: Array<[string, number]> = [['Request ID', 130], ['Date & Time', 150], ['Branch', 150], ['Customer', 190], ['Address', 220], ['Items', 230], ['Total', 100], ['Delivery', 110], ['Status', 150], ['Notes', 220]]
+const COLS: Array<[string, number]> = [['Request ID', 130], ['Date & Time', 150], ['Branch', 150], ['Customer', 190], ['Address', 220], ['Items', 230], ['Total', 100], ['Delivery', 160], ['Status', 150], ['Notes', 220]]
 const ITEMS_SHOWN = 2
+/** 'YYYY-MM-DD' -> 'dd/mm/yyyy' */
+const dmy = (iso?: string | null) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '')
 const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 /**
@@ -44,7 +46,7 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState<string | null>(null)
-  const [drafts, setDrafts] = useState<Record<string, { note?: string; delivery?: string }>>({})
+  const [drafts, setDrafts] = useState<Record<string, { note?: string; delivery?: string; date?: string }>>({})
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -84,10 +86,10 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
   }
 
   const exportCsv = () => {
-    const header = ['Request ID', 'Date & Time', 'Branch', 'Customer', 'Phone', 'Address', 'Items', 'Items total (INR)', 'Delivery charge (INR)', 'Status', 'Customer note', 'Admin note']
+    const header = ['Request ID', 'Date & Time', 'Branch', 'Customer', 'Phone', 'Address', 'Items', 'Items total (INR)', 'Delivery date', 'Delivery charge (INR)', 'Status', 'Customer note', 'Admin note']
     const body = rows.map((e) => [e.enquiry_no, new Date(e.created_at).toLocaleString('en-IN'), e.branch_name, e.customer_name, formatPhoneForDisplay(e.phone), e.address,
       e.items.map((i) => `${i.name}${i.variant_name ? ` (${i.variant_name})` : ''} x${i.quantity} @ ${Number(i.unit_price).toFixed(2)}`).join('; '),
-      Number(e.items_total).toFixed(2), e.delivery_charge === null ? '' : Number(e.delivery_charge).toFixed(2), ENQUIRY_STATUS_LABEL[e.status] ?? e.status, e.note, e.admin_note])
+      Number(e.items_total).toFixed(2), dmy(e.delivery_date), e.delivery_charge === null ? '' : Number(e.delivery_charge).toFixed(2), ENQUIRY_STATUS_LABEL[e.status] ?? e.status, e.note, e.admin_note])
     downloadCsvFile(`online_requests_${localDay(new Date())}.csv`, buildCsv(header, body)) // buildCsv neutralises = + - @ cells
   }
 
@@ -190,12 +192,32 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
                       )}
                     </td>
                     <td className="whitespace-nowrap px-2 py-3 text-[11px] font-black text-[#111111]">{formatCurrency(Number(e.items_total))}</td>
-                    <td className="px-2 py-3 text-[11px]">
-                      <input type="number" min={0} step="0.01" aria-label={`Delivery charge for ${e.enquiry_no}`} placeholder="Not set"
-                        value={draft.delivery ?? (e.delivery_charge === null ? '' : String(e.delivery_charge))}
-                        onChange={(ev) => setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], delivery: ev.target.value } }))}
-                        onBlur={() => { if (draft.delivery === undefined) return; const v = draft.delivery.trim(); void save(e, { delivery_charge: v === '' ? null : Number(v) }) }}
-                        className="h-9 w-24 rounded-lg border border-gray-200 px-2 text-xs font-bold" data-testid="enq-delivery" />
+                    <td className="px-2 py-3 text-[11px]" data-testid="enq-delivery-cell">
+                      <label className="block text-[9px] font-black uppercase text-gray-500">Delivery date
+                        <input type="date" aria-label={`Delivery date for ${e.enquiry_no}`} min={localDay(new Date(e.created_at))}
+                          value={draft.date ?? (e.delivery_date ?? '')}
+                          onChange={(ev) => setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], date: ev.target.value } }))}
+                          onBlur={() => { if (draft.date === undefined || draft.date === (e.delivery_date ?? '')) return; void save(e, { delivery_date: draft.date || null }).then(() => setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], date: undefined } }))) }}
+                          className="mt-0.5 h-9 w-full rounded-lg border border-gray-200 px-2 text-xs font-bold normal-case" data-testid="enq-delivery-date" />
+                      </label>
+                      {e.delivery_date && (() => {
+                        const today = localDay(new Date())
+                        const open = !['delivered', 'cancelled'].includes(e.status)
+                        const tag = open && e.delivery_date === today ? 'Today' : open && e.delivery_date < today ? 'Overdue' : ''
+                        return (
+                          <p className="mt-0.5 flex items-center gap-1 font-semibold text-[#374151]" data-testid="enq-delivery-date-text">
+                            {dmy(e.delivery_date)}
+                            {tag && <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-black ${tag === 'Today' ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`} data-testid="enq-delivery-badge">{tag}</span>}
+                          </p>
+                        )
+                      })()}
+                      <label className="mt-1 block text-[9px] font-black uppercase text-gray-500">Delivery charge
+                        <input type="number" min={0} step="0.01" aria-label={`Delivery charge for ${e.enquiry_no}`} placeholder="Not set"
+                          value={draft.delivery ?? (e.delivery_charge === null ? '' : String(e.delivery_charge))}
+                          onChange={(ev) => setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], delivery: ev.target.value } }))}
+                          onBlur={() => { if (draft.delivery === undefined) return; const v = draft.delivery.trim(); void save(e, { delivery_charge: v === '' ? null : Number(v) }) }}
+                          className="mt-0.5 h-9 w-full rounded-lg border border-gray-200 px-2 text-xs font-bold normal-case" data-testid="enq-delivery" />
+                      </label>
                     </td>
                     <td className="px-2 py-3">
                       <select value={e.status} disabled={saving === e.id} onChange={(ev) => void save(e, { status: ev.target.value })} className="h-9 rounded-lg border border-gray-200 bg-white px-2 text-[11px] font-black text-[#111111]" data-testid="enq-status" aria-label={`Status of ${e.enquiry_no}`}>
@@ -204,6 +226,7 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
                     </td>
                     <td className="px-2 py-3 text-[11px]">
                       {e.note && <p className="mb-1 line-clamp-2 text-[#374151] break-words" title={e.note}><span className="font-black">Customer:</span> {e.note}</p>}
+                      {e.delivery_date && <p className="mb-1 text-[#374151]" data-testid="enq-note-delivery"><span className="font-black">Delivery:</span> {dmy(e.delivery_date)}</p>}
                       <textarea rows={2} maxLength={1000} placeholder="Admin note" aria-label={`Admin note for ${e.enquiry_no}`}
                         value={draft.note ?? e.admin_note}
                         onChange={(ev) => setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], note: ev.target.value } }))}

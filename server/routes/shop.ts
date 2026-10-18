@@ -197,7 +197,7 @@ const adminRoutes = [
       }
       const r = await db.query(
         `SELECT e.id, e.branch_id, b.short_label AS branch_name, e.enquiry_no, e.customer_name, e.phone, e.address, e.note, e.status,
-                e.items_total, e.delivery_charge, e.admin_note, e.created_at, e.updated_at,
+                e.items_total, e.delivery_charge, to_char(e.delivery_date, 'YYYY-MM-DD') AS delivery_date, e.admin_note, e.created_at, e.updated_at,
                 COALESCE((SELECT jsonb_agg(jsonb_build_object('name', i.name, 'variant_name', i.variant_name, 'quantity', i.quantity,
                                                               'unit_price', i.unit_price, 'line_total', i.line_total) ORDER BY i.id)
                             FROM public.shop_enquiry_items i WHERE i.enquiry_id = e.id AND i.branch_id = e.branch_id), '[]'::jsonb) AS items
@@ -228,6 +228,8 @@ const adminRoutes = [
     method: 'patch', path: '/api/shop-admin/enquiries/:id', perm: 'shop.enquiries',
     body: z.object({
       status: z.enum(ENQUIRY_STATUSES), admin_note: clean(1000), delivery_charge: z.number().finite().min(0).max(1_000_000).nullable(),
+      // 0019: YYYY-MM-DD, or null to clear
+      delivery_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Delivery date must be a date').nullable(),
     }).partial().strict(),
     async handler({ db, body, params, session }) {
       if (!/^[0-9a-f-]{36}$/i.test(params.id)) throw notFound()
@@ -237,7 +239,20 @@ const adminRoutes = [
         if (body.status) await t.query(`SELECT public.set_shop_enquiry_status($1, $2, $3, $4)`, [e.id, e.branch_id, body.status, session!.role])
         if (body.admin_note !== undefined) await t.query(`UPDATE public.shop_enquiries SET admin_note = $1, updated_at = now() WHERE id = $2 AND branch_id = $3`, [body.admin_note, e.id, e.branch_id])
         if (body.delivery_charge !== undefined) await t.query(`UPDATE public.shop_enquiries SET delivery_charge = $1, updated_at = now() WHERE id = $2 AND branch_id = $3`, [body.delivery_charge, e.id, e.branch_id])
-        const row = (await t.query(`SELECT id, status, admin_note, delivery_charge, updated_at FROM public.shop_enquiries WHERE id = $1 AND branch_id = $2`, [e.id, e.branch_id])).rows[0]
+        if (body.delivery_date !== undefined) {
+          if (body.delivery_date !== null) {
+            // a real calendar date, not before the request date, at most one year ahead (India time, as the shop sees it)
+            const chk = (await t.query(
+              `SELECT to_char($1::text::date, 'YYYY-MM-DD') = $1::text AS real, $1::text::date < (created_at AT TIME ZONE 'Asia/Kolkata')::date AS early,
+                      $1::text::date > (now() AT TIME ZONE 'Asia/Kolkata')::date + interval '1 year' AS late
+                 FROM public.shop_enquiries WHERE id = $2 AND branch_id = $3`, [body.delivery_date, e.id, e.branch_id]).catch(() => ({ rows: [{ real: false }] }))).rows[0]
+            if (!chk?.real) throw new ApiError(400, 'Delivery date must be a valid date')
+            if (chk.early) throw new ApiError(400, 'Delivery date cannot be before the request date')
+            if (chk.late) throw new ApiError(400, 'Delivery date can be at most one year ahead')
+          }
+          await t.query(`UPDATE public.shop_enquiries SET delivery_date = $1::date, updated_at = now() WHERE id = $2 AND branch_id = $3`, [body.delivery_date, e.id, e.branch_id])
+        }
+        const row = (await t.query(`SELECT id, status, admin_note, delivery_charge, to_char(delivery_date, 'YYYY-MM-DD') AS delivery_date, updated_at FROM public.shop_enquiries WHERE id = $1 AND branch_id = $2`, [e.id, e.branch_id])).rows[0]
         return { enquiry: row }
       })
     },

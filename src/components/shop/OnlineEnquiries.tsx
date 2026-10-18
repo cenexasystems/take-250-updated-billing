@@ -4,6 +4,7 @@ import { api } from '../../lib/apiClient'
 import { buildCsv, downloadCsvFile } from '../../lib/csv'
 import { formatCurrency } from '../../lib/retail'
 import { formatPhoneForDisplay } from '../../lib/phone'
+import { getPeriodRange } from '../../lib/dateRanges'
 import { useBranchStore } from '../../store/store'
 import { useShopAlertStore } from '../../store/shopAlertStore'
 
@@ -14,6 +15,13 @@ type Enquiry = {
   id: string; branch_id: string; branch_name: string; enquiry_no: string; customer_name: string; phone: string; address: string; note: string
   status: string; items_total: number; delivery_charge: number | null; admin_note: string; created_at: string; items: Item[]
 }
+type Period = 'all' | 'today' | 'week' | 'month' | 'year' | 'custom'
+const PERIODS: Array<{ id: Exclude<Period, 'custom'>; label: string }> = [
+  { id: 'all', label: 'All Time' }, { id: 'today', label: 'Today' }, { id: 'week', label: 'This Week' }, { id: 'month', label: 'This Month' }, { id: 'year', label: 'This Year' },
+]
+// column widths: fixed, so rows never jump when a cell's content changes (the table scrolls sideways inside its box)
+const COLS: Array<[string, number]> = [['Request ID', 130], ['Date & Time', 150], ['Branch', 150], ['Customer', 190], ['Address', 220], ['Items', 230], ['Total', 100], ['Delivery', 110], ['Status', 150], ['Notes', 220]]
+const ITEMS_SHOWN = 2
 const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 /**
@@ -30,6 +38,8 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
   const [shop, setShop] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
+  const [period, setPeriod] = useState<Period>('all') // quick period; typing a date by hand makes it 'custom'
+  const [open, setOpen] = useState<Record<string, { address?: boolean; items?: boolean }>>({}) // expanded cells per row
   const [q, setQ] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -81,6 +91,14 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
     downloadCsvFile(`online_requests_${localDay(new Date())}.csv`, buildCsv(header, body)) // buildCsv neutralises = + - @ cells
   }
 
+  const pickPeriod = (pr: Exclude<Period, 'custom'>) => {
+    setPeriod(pr)
+    if (pr === 'all') { setFrom(''); setTo(''); return }
+    const r = getPeriodRange(pr)
+    setFrom(r.from); setTo(r.to)
+  }
+  const toggle = (id: string, cell: 'address' | 'items') => setOpen((o) => ({ ...o, [id]: { ...o[id], [cell]: !o[id]?.[cell] } }))
+
   const input = 'mt-1 w-full h-11 rounded-xl bg-[#F9FAFB] border border-gray-200 px-2.5 text-xs font-bold text-gray-800 focus:outline-none focus:border-[#D4AF37]'
   return (
     <div className="space-y-4 sm:space-y-6 rounded-[20px] sm:rounded-[28px] border border-[#E5E7EB]/60 bg-[#FBFAF6] p-3 sm:p-6 lg:p-7 shadow-sm" data-testid="online-enquiries">
@@ -112,17 +130,28 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
               </select>
             )}
           </label>
-          <label className="text-[10px] font-black uppercase text-gray-500">From<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={input} /></label>
-          <label className="text-[10px] font-black uppercase text-gray-500">To<input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={input} /></label>
+          <label className="text-[10px] font-black uppercase text-gray-500">From<input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPeriod('custom') }} className={input} data-testid="enq-from" /></label>
+          <label className="text-[10px] font-black uppercase text-gray-500">To<input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPeriod('custom') }} className={input} data-testid="enq-to" /></label>
           <label className="col-span-2 sm:col-span-1 text-[10px] font-black uppercase text-gray-500">Search<input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ID, name or phone" className={input} data-testid="enq-search" /></label>
+        </div>
+        {/* quick periods, as on the Analytics screen: they fill From / To (All Time clears them) */}
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-[#F8F8F8] p-2" data-testid="enq-periods">
+          <span className="text-[10px] font-bold uppercase text-[#6B7280] ml-1 mr-1">Period:</span>
+          {PERIODS.map((pr) => (
+            <button key={pr.id} type="button" onClick={() => pickPeriod(pr.id)} aria-pressed={period === pr.id} data-testid={`enq-period-${pr.id}`}
+              className={`px-4 py-1.5 rounded-full text-[11px] font-bold uppercase transition-all cursor-pointer ${period === pr.id ? 'bg-[#7A1220] text-white shadow-sm' : 'text-[#6B7280] hover:text-[#111111]'}`}>
+              {pr.label}
+            </button>
+          ))}
         </div>
         <p className="text-[11px] font-bold text-[#374151]">{rows.length} request(s){branch ? ' for this branch · open Global Admin to see every branch' : ''}</p>
         {error && <p className="text-xs font-bold text-red-600" role="alert">{error}</p>}
 
         <div className="overflow-x-auto rounded-xl border border-[#E5E7EB]/60 bg-[#FBFAF6]">
-          <table className="w-full text-left text-[13px]">
+          <table className="table-fixed text-left text-[13px]" style={{ width: COLS.reduce((w, [, px]) => w + px, 0) }} data-testid="enq-table">
+            <colgroup>{COLS.map(([h, px]) => <col key={h} style={{ width: px }} />)}</colgroup>
             <thead className="bg-[#F9FAFB] text-[10px] uppercase tracking-wider text-[#374151]">
-              <tr>{['Request ID', 'Date & Time', 'Branch', 'Customer', 'Address', 'Items', 'Total', 'Delivery', 'Status', 'Notes'].map((h) => <th key={h} className="px-2 py-3 font-black">{h}</th>)}</tr>
+              <tr>{COLS.map(([h]) => <th key={h} className="px-2 py-3 font-black">{h}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-[#E5E7EB]/30 bg-white">
               {rows.map((e) => {
@@ -132,18 +161,33 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
                   <tr key={e.id} id={`enq-${e.id}`} className={`align-top ${focusId === e.id ? 'bg-[#FBF3D9]' : 'hover:bg-[#F9FAFB]'}`} data-testid="enq-row" onClick={() => focusId === e.id && focus(null)}>
                     <td className="whitespace-nowrap px-2 py-3 text-[11px] font-black text-[#111111]">{e.enquiry_no}</td>
                     <td className="whitespace-nowrap px-2 py-3 text-[11px] text-[#374151]">{new Date(e.created_at).toLocaleString('en-IN')}</td>
-                    <td className="whitespace-nowrap px-2 py-3 text-[11px] font-semibold text-[#374151]">{e.branch_name}</td>
+                    <td className="truncate px-2 py-3 text-[11px] font-semibold text-[#374151]" title={e.branch_name}>{e.branch_name}</td>
                     <td className="px-2 py-3 text-[11px]">
-                      <p className="font-black text-[#111111] break-words" data-testid="enq-customer">{e.customer_name}</p>
-                      <p className="font-semibold text-[#374151]">{formatPhoneForDisplay(e.phone)}</p>
-                      <div className="mt-1 flex gap-1.5">
-                        <a href={`tel:+${wa}`} className="inline-flex items-center gap-1 rounded-lg border border-[#E5E7EB] px-2 py-1 text-[10px] font-black text-[#111111]" data-testid="enq-call"><Phone size={11} /> Call</a>
-                        <a href={`https://wa.me/${wa}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg bg-[#25D366] px-2 py-1 text-[10px] font-black text-white" data-testid="enq-wa"><MessageCircle size={11} /> WhatsApp</a>
+                      {/* one left-aligned stack: name, phone, then Call and WhatsApp side by side (same size, same line) */}
+                      <div className="flex flex-col items-start gap-1" data-testid="enq-customer-cell">
+                        <p className="w-full truncate font-black text-[#111111]" title={e.customer_name} data-testid="enq-customer">{e.customer_name}</p>
+                        <p className="font-semibold text-[#374151]" data-testid="enq-phone">{formatPhoneForDisplay(e.phone)}</p>
+                        <div className="flex items-center gap-1.5">
+                          <a href={`tel:+${wa}`} className="inline-flex h-7 w-[84px] items-center justify-center gap-1 rounded-lg border border-[#E5E7EB] bg-white text-[10px] font-black text-[#111111]" data-testid="enq-call"><Phone size={11} /> Call</a>
+                          <a href={`https://wa.me/${wa}`} target="_blank" rel="noopener noreferrer" className="inline-flex h-7 w-[84px] items-center justify-center gap-1 rounded-lg border border-[#25D366] bg-[#25D366] text-[10px] font-black text-white" data-testid="enq-wa"><MessageCircle size={11} /> WhatsApp</a>
+                        </div>
                       </div>
                     </td>
-                    <td className="min-w-[160px] px-2 py-3 text-[11px] text-[#374151] break-words whitespace-pre-line">{e.address}</td>
-                    <td className="min-w-[180px] px-2 py-3 text-[11px] text-[#374151]">
-                      {e.items.map((i, k) => <p key={k}>{i.name}{i.variant_name ? ` (${i.variant_name})` : ''} × {i.quantity} · {formatCurrency(Number(i.unit_price))}</p>)}
+                    <td className="px-2 py-3 text-[11px] text-[#374151]">
+                      {/* first ~2 lines; a click shows the whole address, another click folds it again */}
+                      <button type="button" onClick={(ev) => { ev.stopPropagation(); toggle(e.id, 'address') }} aria-expanded={!!open[e.id]?.address} title={open[e.id]?.address ? 'Show less' : 'Show the full address'}
+                        className={`w-full text-left break-words whitespace-pre-line cursor-pointer ${open[e.id]?.address ? 'block' : 'line-clamp-2'}`} data-testid="enq-address">{e.address}</button>
+                      {e.address.length > 60 && (
+                        <button type="button" onClick={(ev) => { ev.stopPropagation(); toggle(e.id, 'address') }} className="mt-0.5 text-[10px] font-black text-[#8A6A0A] cursor-pointer" data-testid="enq-address-toggle">{open[e.id]?.address ? 'less' : 'more'}</button>
+                      )}
+                    </td>
+                    <td className="px-2 py-3 text-[11px] text-[#374151]">
+                      {(open[e.id]?.items ? e.items : e.items.slice(0, ITEMS_SHOWN)).map((i, k) => <p key={k} className="truncate" title={`${i.name}${i.variant_name ? ` (${i.variant_name})` : ''} × ${i.quantity}`}>{i.name}{i.variant_name ? ` (${i.variant_name})` : ''} × {i.quantity} · {formatCurrency(Number(i.unit_price))}</p>)}
+                      {e.items.length > ITEMS_SHOWN && (
+                        <button type="button" onClick={(ev) => { ev.stopPropagation(); toggle(e.id, 'items') }} className="mt-0.5 text-[10px] font-black text-[#8A6A0A] cursor-pointer" data-testid="enq-items-toggle">
+                          {open[e.id]?.items ? 'less' : `+${e.items.length - ITEMS_SHOWN} more`}
+                        </button>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-2 py-3 text-[11px] font-black text-[#111111]">{formatCurrency(Number(e.items_total))}</td>
                     <td className="px-2 py-3 text-[11px]">
@@ -158,8 +202,8 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
                         {STATUSES.map((s) => <option key={s} value={s}>{ENQUIRY_STATUS_LABEL[s]}</option>)}
                       </select>
                     </td>
-                    <td className="min-w-[180px] px-2 py-3 text-[11px]">
-                      {e.note && <p className="mb-1 text-[#374151] break-words"><span className="font-black">Customer:</span> {e.note}</p>}
+                    <td className="px-2 py-3 text-[11px]">
+                      {e.note && <p className="mb-1 line-clamp-2 text-[#374151] break-words" title={e.note}><span className="font-black">Customer:</span> {e.note}</p>}
                       <textarea rows={2} maxLength={1000} placeholder="Admin note" aria-label={`Admin note for ${e.enquiry_no}`}
                         value={draft.note ?? e.admin_note}
                         onChange={(ev) => setDrafts((d) => ({ ...d, [e.id]: { ...d[e.id], note: ev.target.value } }))}

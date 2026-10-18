@@ -254,6 +254,8 @@ export const salesRoutes = [
         FROM public.advance_orders a WHERE a.completed_order_id = o.id AND a.branch_id = o.branch_id) AS advance_ref`
       // per payment mode: what the bill took in (deposits included) and what was refunded to each mode (0015)
       const modes = `, public.order_paid_by_mode(o.id, o.branch_id) AS paid_by_mode, public.order_refunds_by_mode(o.id, o.branch_id) AS refunds_by_mode`
+        // what was typed for "Other" on this bill's returns (0017), so Order History can say "Other (Store credit)"
+        + `, (SELECT string_agg(DISTINCT r.refund_mode_label, ', ') FROM public.order_returns r WHERE r.order_id = o.id AND r.branch_id = o.branch_id AND r.refund_mode_label IS NOT NULL) AS refund_other_labels`
       const rows = await db.query(`SELECT o.*${items}${advanceRef}${modes} FROM public.orders o WHERE ${where} ORDER BY o.created_at DESC LIMIT ${query.limit} OFFSET ${query.offset}`, p)
       const total = await db.query(`SELECT count(*)::int AS n FROM public.orders o WHERE ${where}`, p)
       return { orders: rows.rows, total: total.rows[0].n }
@@ -319,7 +321,7 @@ export const salesRoutes = [
                      AND ($4::text IS NULL OR COALESCE((public.return_refund_split(r.id, r.branch_id) ->> $4)::numeric, 0) > 0)`
       const p = [branch, query.from ?? null, query.to ?? null, query.mode ?? null]
       const rows = await db.query(
-        `SELECT r.id, r.return_no, r.order_id, r.invoice_no, r.refund_amount, r.refund_mode, r.reason, r.note, r.created_by_role, r.created_at,
+        `SELECT r.id, r.return_no, r.order_id, r.invoice_no, r.refund_amount, r.refund_mode, r.refund_mode_label, r.reason, r.note, r.created_by_role, r.created_at,
                 public.return_refund_split(r.id, r.branch_id) AS refunds,
                 COALESCE((SELECT json_agg(json_build_object('name', i.item_name, 'quantity', i.quantity, 'restocked', i.restocked, 'refund_amount', i.refund_amount) ORDER BY i.id)
                             FROM public.order_return_items i WHERE i.return_id = r.id AND i.branch_id = r.branch_id), '[]'::json) AS items
@@ -353,7 +355,8 @@ export const salesRoutes = [
   // the refund amount shown BEFORE confirming: the same SQL, dry run (nothing written)
   route({
     method: 'post', path: '/api/orders/:id/return/preview', perm: 'orders.return',
-    body: returnLines.extend({ refund_mode: z.enum(['cash', 'card', 'qr', 'other', 'original']).default('cash') }),
+    // 0017: one refund mode per return; the old 'original' (split back to the bill's modes) is no longer accepted
+    body: returnLines.extend({ refund_mode: z.enum(['cash', 'card', 'qr', 'other']).default('cash') }),
     async handler({ db, branch, body, params, session }) {
       // another branch's (or a made-up) bill is a plain 404, never an SQL error text
       if (!(await db.query(`SELECT 1 FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])).rows[0]) throw notFound()
@@ -366,14 +369,27 @@ export const salesRoutes = [
     method: 'post', path: '/api/orders/:id/return', perm: 'orders.return', status: 201,
     body: returnLines.extend({
       reason: z.enum(RETURN_REASONS), note: z.string().trim().max(300).default(''),
-      refund_mode: z.enum(['cash', 'card', 'qr', 'other', 'original']).default('cash'), idempotency_key: z.string().min(8).max(80).optional(),
+      refund_mode: z.enum(['cash', 'card', 'qr', 'other']).default('cash'), idempotency_key: z.string().min(8).max(80).optional(),
+      // "Other": the mode typed by hand (e.g. "Store credit"), required for 'other', stored with the return (0017)
+      refund_mode_label: z.string().max(200).optional(),
     }).strict(),
     async handler({ db, branch, body, params, session }) {
+      // control characters out, spaces collapsed; 1-40 characters
+      // eslint-disable-next-line no-control-regex -- strips control characters from the typed mode
+      const label = body.refund_mode === 'other' ? (body.refund_mode_label ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim() : ''
+      if (body.refund_mode === 'other' && !label) throw new ApiError(400, 'Enter the other refund mode (max 40 characters)')
+      if (label.length > 40) throw new ApiError(400, 'The other refund mode can be at most 40 characters')
       return db.tx(async (t) => {
         if (!(await t.query(`SELECT 1 FROM public.orders WHERE id = $1 AND branch_id = $2`, [params.id, branch])).rows[0]) throw notFound()
         const r = await t.query(`SELECT public.process_order_return($1, $2, $3::jsonb, $4, $5, $6, $7, $8, false) AS r`,
           [params.id, branch, JSON.stringify(body.items), body.reason, body.note, body.refund_mode, session!.role, body.idempotency_key ?? null])
-        return r.rows[0].r
+        const rec = r.rows[0].r
+        // a replay returns the FIRST return as stored (label included); a new "Other" return gets its label in this transaction
+        if (label && !rec.replayed) {
+          await t.query(`UPDATE public.order_returns SET refund_mode_label = $1 WHERE id = $2 AND branch_id = $3`, [label, rec.return_id, branch])
+          return { ...rec, refund_mode_label: label }
+        }
+        return rec
       })
     },
   }),

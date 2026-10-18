@@ -7,7 +7,7 @@ import type { PosBranch } from '../../store/store'
 import { PAY_MODES, payModeLabel, refundModeText, type PayMode } from '../../lib/refundModes'
 
 type ReturnRow = {
-  id: string; return_no: string; order_id: string; invoice_no: string; refund_amount: number; refund_mode: string
+  id: string; return_no: string; order_id: string; invoice_no: string; refund_amount: number; refund_mode: string; refund_mode_label?: string | null
   /** refund per payment mode (0015; derived for older returns) */
   refunds: Record<string, number>
   reason: string; note: string; created_by_role: string; created_at: string
@@ -17,7 +17,7 @@ type Totals = { refund: number } & Record<PayMode, number>
 
 const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const itemsText = (r: ReturnRow) => r.items.map((i) => `${i.name} x${i.quantity}${i.restocked ? '' : ' (damaged)'}`).join('; ')
-const modeText = (r: ReturnRow) => refundModeText(r.refunds, (n) => Number(n).toFixed(2), r.refund_mode, Number(r.refund_amount))
+const modeText = (r: ReturnRow) => refundModeText(r.refunds, (n) => Number(n).toFixed(2), r.refund_mode, Number(r.refund_amount), r.refund_mode_label)
 
 /** Every return of this branch, newest RETURN time first (not the sale date), so the day's refunds can be matched with the cash drawer. */
 export default function ReturnsList({ branch, onBack }: { branch: PosBranch; onBack: () => void }) {
@@ -112,7 +112,7 @@ export default function ReturnsList({ branch, onBack }: { branch: PosBranch; onB
                   <td className="whitespace-nowrap px-2 py-3 text-[11px] font-bold text-[#111111]">{formatInvoiceNo(r.invoice_no)}</td>
                   <td className="min-w-[160px] px-2 py-3 text-left text-[11px] font-semibold text-[#374151]">{itemsText(r)}</td>
                   <td className="whitespace-nowrap px-2 py-3 text-[11px] font-black text-[#111111]">{formatCurrency(Number(r.refund_amount))}</td>
-                  <td className="whitespace-nowrap px-2 py-3 text-[11px] font-semibold text-[#374151]" data-testid="returns-mode">{refundModeText(r.refunds, formatCurrency, r.refund_mode, Number(r.refund_amount))}</td>
+                  <td className="whitespace-nowrap px-2 py-3 text-[11px] font-semibold text-[#374151]" data-testid="returns-mode">{refundModeText(r.refunds, formatCurrency, r.refund_mode, Number(r.refund_amount), r.refund_mode_label)}</td>
                   <td className="px-2 py-3 text-[11px] font-semibold text-[#374151]">{r.reason}{r.note ? ` · ${r.note}` : ''}</td>
                   <td className="whitespace-nowrap px-2 py-3 text-[11px] font-semibold uppercase text-[#374151]">{r.created_by_role}</td>
                   <td className="whitespace-nowrap px-2 py-3 text-[11px] text-[#374151]">{new Date(r.created_at).toLocaleString('en-IN')}</td>

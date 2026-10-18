@@ -201,6 +201,8 @@ export interface ReturnReceiptData {
   reason: string
   note?: string
   refundMode: string
+  /** what was typed for "Other" (0017) */
+  refundModeLabel?: string | null
   /** the refund per payment mode (0015), e.g. { cash: 180, card: 120 } */
   refunds?: Record<string, number> | null
   createdByRole?: string
@@ -252,7 +254,7 @@ export function printReturnReceipt(data: ReturnReceiptData) {
           <div>Original Inv: #${esc(formatInvoiceNo(data.originalInvoiceNo))}</div>
           <div>Date: ${esc(dateStr)}</div>
           <div>Reason: ${esc(data.reason)}${data.note ? ` (${esc(data.note)})` : ''}</div>
-          ${refundModeLines(data.refunds, data.refundMode, data.refundTotal).map((l) => `<div style="display:flex;justify-content:space-between;"><span>Refund - ${esc(l.label)}</span><span>${formatCurrency(l.amount)}</span></div>`).join('')}
+          ${refundModeLines(data.refunds, data.refundMode, data.refundTotal, data.refundModeLabel).map((l) => `<div style="display:flex;justify-content:space-between;"><span>Refund - ${esc(l.label)}</span><span>${formatCurrency(l.amount)}</span></div>`).join('')}
         </div>
         <table class="border-bottom" style="width: 100%; table-layout: fixed; border-collapse: collapse;">
           <thead><tr style="font-size: 10px; border-bottom: 1px dashed #000;">

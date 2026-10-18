@@ -111,6 +111,8 @@ type DashboardOrder = {
   advance_ref?: { deposit_id: string; payments: Array<{ payment_type: string; amount: number; method: string; received_at: string }> } | null
   /** what the bill took in per payment mode (deposits included) and what was refunded to each mode (0015) */
   paid_by_mode?: Record<string, number>; refunds_by_mode?: Record<string, number>
+  /** what was typed for "Other" on this bill's returns (0017) */
+  refund_other_labels?: string | null
 }
 type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null; unit_cost?: number | null }
 /** Analytics > Products: "Add purchase price" (muted) where a product has no purchase price, for Total Cost, Net Profit and Margin. */
@@ -521,6 +523,7 @@ export default function Dashboard() {
     taxable_amount: toNumber(row.taxable_amount, 0), cgst_amount: toNumber(row.cgst_amount, 0), sgst_amount: toNumber(row.sgst_amount, 0),
     advance_ref: (row.advance_ref as DashboardOrder['advance_ref']) ?? null,
     paid_by_mode: (row.paid_by_mode as Record<string, number>) ?? {}, refunds_by_mode: (row.refunds_by_mode as Record<string, number>) ?? {},
+    refund_other_labels: (row.refund_other_labels as string | null) ?? null,
   })
 
   // Load dashboard data
@@ -1787,7 +1790,8 @@ export default function Dashboard() {
             const patch = (o: DashboardOrder) => o.id === rec.order_id || o.id === returnOrderId
               ? { ...o, status: rec.order_status, returned_amount: (o.returned_amount ?? 0) + Number(rec.refund_amount),
                   // the refund per mode (0015) moves the mode cards at once, on the bill's own (original) date
-                  refunds_by_mode: Object.entries(rec.refunds ?? {}).reduce((acc, [m, v]) => ({ ...acc, [m]: toNumber(acc[m], 0) + Number(v) }), { ...(o.refunds_by_mode ?? {}) } as Record<string, number>) } : o
+                  refunds_by_mode: Object.entries(rec.refunds ?? {}).reduce((acc, [m, v]) => ({ ...acc, [m]: toNumber(acc[m], 0) + Number(v) }), { ...(o.refunds_by_mode ?? {}) } as Record<string, number>),
+                  refund_other_labels: rec.refund_mode_label ? [o.refund_other_labels, rec.refund_mode_label].filter(Boolean).join(', ') : o.refund_other_labels } : o
             setOrders(prev => prev.map(patch))
             setSearchResults(prev => prev.map(patch))
             void fetchProducts(branch, true) // the stock just changed
@@ -3864,7 +3868,7 @@ export default function Dashboard() {
                                         )}
                                         {toNumber(o.returned_amount, 0) > 0 && (
                                           <>
-                                            <div className="flex justify-between gap-3"><span className="font-semibold text-amber-700">Returned{Object.keys(o.refunds_by_mode ?? {}).length ? ` (${refundModeText(o.refunds_by_mode, formatCurrency)})` : ''}</span><span className="font-bold text-amber-700">-{formatCurrency(toNumber(o.returned_amount, 0))}</span></div>
+                                            <div className="flex justify-between gap-3"><span className="font-semibold text-amber-700">Returned{Object.keys(o.refunds_by_mode ?? {}).length ? ` (${refundModeText(o.refunds_by_mode, formatCurrency, undefined, undefined, o.refund_other_labels)})` : ''}</span><span className="font-bold text-amber-700">-{formatCurrency(toNumber(o.returned_amount, 0))}</span></div>
                                             <div className="flex justify-between gap-3"><span className="font-black text-[#111111]">Net amount</span><span className="font-black text-[#111111]">{formatCurrency(Math.max(0, d.total - toNumber(o.returned_amount, 0)))}</span></div>
                                           </>
                                         )}

@@ -47,7 +47,7 @@ export function returnReceiptPdf(data: ReturnReceiptData): File {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(THEME_PALETTE.primary)
   doc.text('TOTAL REFUND', 142, y + 5, { align: 'right' }); doc.text(money(data.refundTotal), right - 3, y + 5, { align: 'right' })
   y += 13
-  refundModeLines(data.refunds, data.refundMode, data.refundTotal).forEach((l) => {
+  refundModeLines(data.refunds, data.refundMode, data.refundTotal, data.refundModeLabel).forEach((l) => {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(ink)
     doc.text(`Refund - ${l.label}`, 142, y, { align: 'right' }); doc.text(money(l.amount), right - 3, y, { align: 'right' }); y += 6
   })

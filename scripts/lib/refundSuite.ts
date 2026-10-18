@@ -41,8 +41,8 @@ export async function refundSuite(c: RefundCtx) {
     const line = async (orderId: string) => num((await one(`SELECT id FROM order_items WHERE order_id = $1`, [orderId])).id)
     const listed = async (orderId: string, as: Actor = mgr) => ((await call('GET', '/api/orders', { cookie: cookies[as], query: { limit: '1000' } })).body.orders as any[]).find((o) => o.id === orderId)
     const preview = (orderId: string, item: number, mode: string, qty = 1) => call('POST', `/api/orders/${orderId}/return/preview`, { cookie: cookies[staff], body: { items: [{ order_item_id: item, quantity: qty }], refund_mode: mode } })
-    const ret = (orderId: string, item: number, mode: string, qty = 1, as: Actor = staff) => call('POST', `/api/orders/${orderId}/return`, { cookie: cookies[as],
-      body: { items: [{ order_item_id: item, quantity: qty, restock: true }], reason: 'Wrong size', refund_mode: mode, idempotency_key: `rf-${b}-${Math.random().toString(36).slice(2)}` } })
+    const ret = (orderId: string, item: number, mode: string, qty = 1, as: Actor = staff, label?: string) => call('POST', `/api/orders/${orderId}/return`, { cookie: cookies[as],
+      body: { items: [{ order_item_id: item, quantity: qty, restock: true }], reason: 'Wrong size', refund_mode: mode, ...(label !== undefined ? { refund_mode_label: label } : {}), idempotency_key: `rf-${b}-${Math.random().toString(36).slice(2)}` } })
 
     // ================= 1. split bill Cash 600 + Card 400 (2 x 500); return 1 item as Cash, on the ORIGINAL date
     const split = { payment_method: 'split', split_details: { payments: [{ method: 'cash', amount: 600 }, { method: 'card', amount: 400 }] } }
@@ -54,7 +54,7 @@ export async function refundSuite(c: RefundCtx) {
     check(norm(o1.paid_by_mode) === norm({ cash: 600, card: 400 }), `${L} the split bill is paid Cash 600 + Card 400`, JSON.stringify(o1.paid_by_mode))
     const pvCash = await preview(s1.order_id, i1, 'cash'), pvOrig = await preview(s1.order_id, i1, 'original')
     check(pvCash.status === 200 && num(pvCash.body.refund_amount) === 500 && norm(pvCash.body.refunds) === norm({ cash: 500 }), `${L} preview (Cash): ₹500 all to Cash`, JSON.stringify(pvCash.body.refunds))
-    check(norm(pvOrig.body.refunds) === norm({ cash: 300, card: 200 }) && sumOf(pvOrig.body.refunds) === 500, `${L} preview (Original): ₹500 split Cash 300 + Card 200 in proportion, adds up`, JSON.stringify(pvOrig.body.refunds))
+    check(pvOrig.status === 400, `${L} 0017: the "Original payment mode (SPLIT)" refund is no longer offered (preview refused)`, `${pvOrig.status} ${JSON.stringify(pvOrig.body)}`)
     const before = modeRevenue([o1]), todayBefore = await listed(today.order_id)
     const r1 = await ret(s1.order_id, i1, 'cash')
     check(r1.status === 201 && r1.body.refund_mode === 'cash' && norm(r1.body.refunds) === norm({ cash: 500 }), `${L} return 1 of 2 refunded as Cash: refunds {cash: 500} stored`, JSON.stringify(r1.body.refunds))
@@ -68,33 +68,48 @@ export async function refundSuite(c: RefundCtx) {
     check(norm(todayAfter.refunds_by_mode) === '{}' && num(todayAfter.returned_amount) === 0 && todayAfter.created_at === todayBefore.created_at && new Date(o1.created_at) < new Date(todayAfter.created_at) && num(o1.returned_amount) === 500,
       `${L} the refund sits on the original (yesterday's) bill; today's bills are unchanged`)
 
-    // ================= 2. same bill shape, return with Original (SPLIT)
+    // ================= 2. same bill shape: "original" refused; refunded as Card -> only the Card card drops
     const s2 = await sell(split), i2 = await line(s2.order_id)
-    const r2r = await ret(s2.order_id, i2, 'original')
-    check(r2r.status === 201 && norm(r2r.body.refunds) === norm({ cash: 300, card: 200 }) && sumOf(r2r.body.refunds) === num(r2r.body.refund_amount), `${L} Original (SPLIT): refund divided Cash 300 + Card 200 and adds up`, JSON.stringify(r2r.body.refunds))
-    // odd amounts: the last mode takes the rounding remainder
+    const orig = await ret(s2.order_id, i2, 'original')
+    check(orig.status === 400 && !(await one(`SELECT 1 AS x FROM order_returns WHERE order_id = $1`, [s2.order_id])), `${L} 0017: a return with "original" (split) is rejected by the API and nothing is stored`, `${orig.status} ${JSON.stringify(orig.body)}`)
+    const m2b = modeRevenue([await listed(s2.order_id)])
+    const r2r = await ret(s2.order_id, i2, 'card')
+    const m2a = modeRevenue([await listed(s2.order_id)])
+    check(r2r.status === 201 && norm(r2r.body.refunds) === norm({ card: 500 }) && m2a.card === m2b.card - 500 && m2a.cash === m2b.cash && m2a.net === m2b.net - 500 && r2(m2a.cash + m2a.card + m2a.qr + m2a.other) === m2a.net,
+      `${L} refunded as Card: the whole ₹500 goes to Card; only the Card card drops; modes add up to the net`, JSON.stringify({ m2b, m2a }))
+    // "Other" with a typed mode: stored (sanitised), shown everywhere; without a label / too long: rejected
     const s2b = await sell({ payment_method: 'split', split_details: { payments: [{ method: 'cash', amount: 333.33 }, { method: 'qr', amount: 666.67 }] } }), i2b = await line(s2b.order_id)
-    const r2b = await ret(s2b.order_id, i2b, 'original')
-    check(sumOf(r2b.body.refunds) === num(r2b.body.refund_amount) && num(r2b.body.refunds.cash) === 166.67 && num(r2b.body.refunds.qr) === 333.33, `${L} Original on 333.33 / 666.67: parts round to the paisa and add up exactly (last mode takes the remainder)`, JSON.stringify(r2b.body.refunds))
+    const noLabel = await ret(s2b.order_id, i2b, 'other'), blank = await ret(s2b.order_id, i2b, 'other', 1, staff, '   '), long = await ret(s2b.order_id, i2b, 'other', 1, staff, 'x'.repeat(41))
+    check(noLabel.status === 400 && blank.status === 400 && long.status === 400 && /other refund mode/i.test(noLabel.body.error), `${L} "Other" without a label (or blank, or over 40 characters) is rejected`, `${noLabel.status} ${blank.status} ${long.status} ${noLabel.body?.error}`)
+    const r2b = await ret(s2b.order_id, i2b, 'other', 1, staff, '  Store\u0007  credit ')
+    const lbl = await one(`SELECT refund_mode, refund_mode_label FROM order_returns WHERE id = $1`, [r2b.body.return_id])
+    check(r2b.status === 201 && norm(r2b.body.refunds) === norm({ other: 500 }) && r2b.body.refund_mode_label === 'Store credit' && lbl.refund_mode === 'other' && lbl.refund_mode_label === 'Store credit',
+      `${L} refunded as Other "Store credit": all ₹500 to Other, the label stored cleaned (control characters and extra spaces removed)`, JSON.stringify({ body: r2b.body.refund_mode_label, lbl }))
+    const m2c = modeRevenue([await listed(s2b.order_id)])
+    check(m2c.other === -500 && m2c.cash === 333.33 && m2c.qr === 666.67 && m2c.net === 500 && r2(m2c.cash + m2c.card + m2c.qr + m2c.other) === m2c.net, `${L} the Other card drops by 500; modes still add up to the net`, JSON.stringify(m2c))
+    const lo = await listed(s2b.order_id)
+    check(lo.refund_other_labels === 'Store credit', `${L} Order History (bill list) carries the Other label for the returned line`, JSON.stringify(lo.refund_other_labels))
+    const hist = (await call('GET', `/api/orders/${s2b.order_id}/returns`, { cookie: cookies[staff] })).body.returns as any[]
+    check(hist.some((x) => x.refund_mode === 'other' && x.refund_mode_label === 'Store credit'), `${L} the bill's earlier returns (return receipt data) include the Other label`)
 
     // ================= 3. refunded as QR and as Other; the modes always add up to the net
     const s3 = await sell(split), i3 = await line(s3.order_id)
-    const r3a = await ret(s3.order_id, i3, 'qr'), r3b = await ret(s3.order_id, i3, 'other')
+    const r3a = await ret(s3.order_id, i3, 'qr'), r3b = await ret(s3.order_id, i3, 'other', 1, staff, 'Voucher')
     check(norm(r3a.body.refunds) === norm({ qr: 500 }) && norm(r3b.body.refunds) === norm({ other: 500 }), `${L} QR and Other refunds go to their own mode`, `${JSON.stringify(r3a.body.refunds)} ${JSON.stringify(r3b.body.refunds)}`)
     const o3 = await listed(s3.order_id), m3 = modeRevenue([o3])
     check(m3.cash === 600 && m3.card === 400 && m3.qr === -500 && m3.other === -500 && m3.net === 0 && r2(m3.cash + m3.card + m3.qr + m3.other) === m3.net, `${L} QR and Other cards each drop by 500; cards still add up to the net (0)`, JSON.stringify(m3))
     const over = await ret(s3.order_id, i3, 'cash')
     check(over.status === 400, `${L} the over-return guard still refuses a third unit of a 2-unit line`, String(over.status))
-    // single-mode bill: Original = that mode
+    // single-mode bill refunded to its own mode
     const s4 = await sell({ payment_method: 'card' }), i4 = await line(s4.order_id)
-    const r4 = await ret(s4.order_id, i4, 'original')
-    check(norm(r4.body.refunds) === norm({ card: 500 }), `${L} on a single-mode (Card) bill, Original = Card`, JSON.stringify(r4.body.refunds))
+    const r4 = await ret(s4.order_id, i4, 'card')
+    check(norm(r4.body.refunds) === norm({ card: 500 }), `${L} a Card bill refunded as Card`, JSON.stringify(r4.body.refunds))
     const s5 = await sell({ payment_method: 'qr' }), i5 = await line(s5.order_id)
     const pv5 = await preview(s5.order_id, i5, 'cash')
     const o5 = await listed(s5.order_id)
     check(norm(pv5.body.refunds) === norm({ cash: 500 }) && num(o5.paid_by_mode.cash || 0) === 0, `${L} a cash refund on a QR bill is allowed (the screen warns: no cash was received)`)
 
-    // ================= 4. advance order: deposit QR 300, balance split Cash 300 + Card 400; return as Cash, then Original
+    // ================= 4. advance order: deposit QR 300, balance split Cash 300 + Card 400; return as Cash, then GPay / QR
     const adv = await call('POST', '/api/advance-orders', { cookie: cookies[staff], body: { customer_name: `Rf Adv ${n}`, phone: '9876500067', product_name: 'Rf', total_amount: 1000, deposit_amount: 300, expected_delivery_date: '2030-01-01', payment_method: 'upi',
       products: [{ product_id: P, name: `Rf Item ${n}`, quantity: 2, unit: 'piece', unit_type: 'unit', base_price: 500, line_total: 1000 }] } })
     const done = await call('POST', `/api/advance-orders/${adv.body.order.id}/complete`, { cookie: cookies[staff], body: { payment_method: 'cash', final_amount: 700, split_details: { payments: [{ method: 'cash', amount: 300 }, { method: 'card', amount: 400 }] } } })
@@ -104,11 +119,11 @@ export async function refundSuite(c: RefundCtx) {
     const ib = await line(billId)
     const rb1 = await ret(billId, ib, 'cash')
     check(rb1.status === 201 && norm(rb1.body.refunds) === norm({ cash: 500 }), `${L} a return on the advance bill refunded as Cash`, JSON.stringify(rb1.body))
-    const rb2 = await ret(billId, ib, 'original')
-    check(norm(rb2.body.refunds) === norm({ cash: 150, card: 200, qr: 150 }) && sumOf(rb2.body.refunds) === 500, `${L} Original on the advance bill divides over deposit (QR) and balance modes: QR 150 + Cash 150 + Card 200`, JSON.stringify(rb2.body.refunds))
+    const rb2 = await ret(billId, ib, 'qr')
+    check(rb2.status === 201 && norm(rb2.body.refunds) === norm({ qr: 500 }), `${L} a return on the advance bill refunded as GPay / QR: all ₹500 to QR`, JSON.stringify(rb2.body.refunds))
     ob = await listed(billId)
     const mb = modeRevenue([ob])
-    check(mb.net === 0 && mb.cash === 300 - 500 - 150 && mb.card === 200 && mb.qr === 150 && r2(mb.cash + mb.card + mb.qr + mb.other) === mb.net, `${L} advance bill mode totals still add up to its net`, JSON.stringify(mb))
+    check(mb.net === 0 && mb.cash === 300 - 500 && mb.card === 400 && mb.qr === 300 - 500 && r2(mb.cash + mb.card + mb.qr + mb.other) === mb.net, `${L} advance bill mode totals still add up to its net`, JSON.stringify(mb))
     const advRow = ((await call('GET', '/api/advance-orders', { cookie: cookies[staff] })).body.orders as any[]).find((a) => a.id === adv.body.order.id)
     check(num(advRow.deposit_amount) === 300 && num(advRow.total_amount) === 1000 && advRow.bill_returned === true && advRow.deposit_method === 'upi', `${L} the advance order and its deposit are unchanged; "Bill returned" is set`)
 
@@ -127,10 +142,16 @@ export async function refundSuite(c: RefundCtx) {
     const crossRet = await call('POST', `/api/orders/${s4.order_id}/return`, { cookie: cookies[`staff${other.slice(-1)}` as Actor], body: { items: [{ order_item_id: i4, quantity: 1 }], reason: 'Wrong size', refund_mode: 'cash' } })
     check(crossRet.status === 404, `${L} another branch cannot return this bill`, String(crossRet.status))
 
-    // ================= 6. returns made before 0015 (no per-mode rows) are split at read time, nothing rewritten
+    // ================= 6. returns stored as "original" before 0017 / before 0015 (no per-mode rows) still display, nothing rewritten
     const s6 = await sell(split), i6 = await line(s6.order_id)
-    const r6 = await ret(s6.order_id, i6, 'original')
-    await q(`DELETE FROM order_return_refunds WHERE return_id = $1`, [r6.body.return_id]) // what an older return looks like
+    const r6 = await ret(s6.order_id, i6, 'cash')
+    // what an OLD split return looks like (a new one can no longer be made): refund_mode 'original', no per-mode rows
+    await q(`UPDATE order_returns SET refund_mode = 'original' WHERE id = $1`, [r6.body.return_id])
+    await q(`DELETE FROM order_return_refunds WHERE return_id = $1`, [r6.body.return_id])
+    const oldShown = ((await call('GET', '/api/returns', { cookie: cookies[mgr], query: { limit: '1000' } })).body.returns as any[]).find((x) => x.id === r6.body.return_id)
+    const oldBill = await listed(s6.order_id)
+    check(oldShown?.refund_mode === 'original' && norm(oldShown.refunds) === norm({ cash: 300, card: 200 }) && norm(oldBill.refunds_by_mode) === norm({ cash: 300, card: 200 }),
+      `${L} an old split return still displays its split (Returns list and Order History)`, JSON.stringify({ l: oldShown?.refunds, o: oldBill.refunds_by_mode }))
     const legacy = (await one(`SELECT public.return_refund_split($1, $2) AS s, refund_mode FROM order_returns WHERE id = $1`, [r6.body.return_id, b]))
     check(legacy.refund_mode === 'original' && norm(legacy.s) === norm({ cash: 300, card: 200 }), `${L} an older 'original' return is split at read time from the bill's modes`, JSON.stringify(legacy.s))
     await q(`UPDATE order_returns SET refund_mode = 'cash' WHERE id = $1`, [r6.body.return_id])

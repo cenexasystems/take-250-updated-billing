@@ -956,7 +956,11 @@ async function run() {
           check((await alerts(other)).some((x) => x.name === `Alert Item ${other.slice(-1)}`), `[${b}] OFF in ${b} does not touch ${other}: its alerts still come`)
           check((await call('GET', '/api/settings', { cookie: cookies[`manager${n}` as Actor] })).body.settings.low_stock_alert_enabled === false, `[${b}] Manager reads OFF through the settings read`)
           const low = await call('GET', '/api/inventory/low-stock', { cookie: cookies[`manager${n}` as Actor] })
-          check(low.status === 200 && (low.body.products as any[]).some((x) => x.name === `Alert Item ${n}`), `[${b}] the stock list data (low-stock highlighting) is unchanged by the switch`)
+          check(low.status === 200 && low.body.products.length === 0 && low.body.variants.length === 0 && low.body.alerts_enabled === false, `[${b}] OFF: the alarm data Admin / Manager screens poll is empty too (no screen can ring for this branch)`)
+          const otherLow = await call('GET', '/api/inventory/low-stock', { cookie: cookies[`manager${other.slice(-1)}` as Actor] })
+          check((otherLow.body.products as any[]).some((x) => x.name === `Alert Item ${other.slice(-1)}`), `[${b}] OFF in ${b}: ${other}'s alarm data still comes`)
+          const list = await call('GET', '/api/products', { cookie: cookies[`manager${n}` as Actor] })
+          check((list.body.products as any[]).some((x) => x.name === `Alert Item ${n}` && Number(x.stock_quantity) === 1), `[${b}] the stock list itself (low-stock highlighting) is unchanged by the switch`)
           await setAlert(b, true)
           check((await alerts(b)).some((x) => x.name === `Alert Item ${n}`), `[${b}] back ON: the alerts resume`)
         }

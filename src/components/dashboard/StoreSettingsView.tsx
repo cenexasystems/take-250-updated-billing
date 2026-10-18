@@ -119,6 +119,23 @@ export default function StoreSettingsView() {
     setMessage(null)
   }
 
+  // "Low stock alert" ON / OFF: saved for this branch the moment it is switched (no Save Changes needed)
+  const [alertSaving, setAlertSaving] = useState(false)
+  const toggleLowStockAlert = async (next: boolean) => {
+    if (target === 'admin' || role !== 'admin') return
+    const branchToSave: PosBranch = target
+    setAlertSaving(true); setMessage(null)
+    setForm((f) => ({ ...f, lowStockAlert: next }))
+    try {
+      await api('PUT', '/api/settings', { body: { low_stock_alert_enabled: next }, branchId: branchToSave })
+      await fetchSettings(branchToSave)
+      setMessage({ type: 'success', text: `Low stock alert turned ${next ? 'ON' : 'OFF'} for ${branchShortLabel(branchToSave)}.` })
+    } catch (e) {
+      setForm((f) => ({ ...f, lowStockAlert: !next }))
+      setMessage({ type: 'error', text: e instanceof Error ? e.message : 'The low stock alert could not be saved' })
+    } finally { setAlertSaving(false) }
+  }
+
   const handleSave = async () => {
     setSaving(true)
     setMessage(null)
@@ -146,7 +163,6 @@ export default function StoreSettingsView() {
         instagram_id: form.instagramId.trim(),
         theme_color: normalizeHex(form.themeColor),
         logo_url: form.logoUrl || null,
-        ...(role === 'admin' ? { low_stock_alert_enabled: form.lowStockAlert } : {}),
       }
       // the server writes the row of the session's branch (an admin names the branch being edited)
       await api('PUT', '/api/settings', { body: payload, branchId: branchToSave })
@@ -424,8 +440,12 @@ export default function StoreSettingsView() {
                     <label htmlFor="low-stock-alert-switch" className="block text-sm font-black text-[#111111]">Low stock alert</label>
                     <p className="text-[11px] text-gray-500 font-medium mt-0.5">When off, the low-stock popup and sound are disabled for this branch.</p>
                   </div>
-                  <Toggle id="low-stock-alert-switch" label="Low stock alert" checked={form.lowStockAlert} onChange={(v) => setForm((f) => ({ ...f, lowStockAlert: v }))} />
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className={`text-[11px] font-black ${form.lowStockAlert ? 'text-emerald-700' : 'text-gray-500'}`} data-testid="low-stock-alert-state">{form.lowStockAlert ? 'ON' : 'OFF'}</span>
+                    <Toggle id="low-stock-alert-switch" label="Low stock alert" checked={form.lowStockAlert} disabled={alertSaving} onChange={(v) => void toggleLowStockAlert(v)} />
+                  </div>
                 </div>
+                <p className="text-[10px] text-gray-400 font-semibold">Saved for {branchShortLabel(target)} as soon as you switch it. Each branch has its own setting.</p>
               </div>
             )}
           </div>

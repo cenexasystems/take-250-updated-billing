@@ -51,8 +51,10 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
       if (role === 'staff') {
         // Staff has no stock screen and may not read the stock list: the server answers with ONLY the low items
         // (name, quantity, threshold) of the staff member's own branch, already filtered by the same rules as below.
-        const res = await api<{ items: Array<{ id: string; name: string; variant_name: string | null; quantity: number; threshold: number }> }>('GET', '/api/inventory/low-stock-alerts')
-          .catch((err) => { console.warn('Low stock check warning:', err); return { items: [] } })
+        const res = await api<{ items: Array<{ id: string; name: string; variant_name: string | null; quantity: number; threshold: number }>; alerts_enabled?: boolean }>('GET', '/api/inventory/low-stock-alerts')
+          .catch((err) => { console.warn('Low stock check warning:', err); return { items: [] } as { items: never[]; alerts_enabled?: boolean } })
+        // the server says this branch's alert is off: refresh its settings so the monitor stops asking
+        if (res.alerts_enabled === false && ownBranch) void useSettingsStore.getState().fetchSettings(ownBranch as PosBranch)
         for (const it of res.items) {
           flagged.push({ id: it.id, name: it.name, ...(it.variant_name ? { variantName: it.variant_name } : {}), stock: Number(it.quantity) || 0, alertThreshold: Number(it.threshold) || 5 })
         }
@@ -62,7 +64,12 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
       }
 
       const results = await Promise.all(targets.map((b) =>
-        api<{ products: Array<Record<string, any>>; variants: Array<Record<string, any>> }>('GET', '/api/inventory/low-stock', { branchId: b })
+        api<{ products: Array<Record<string, any>>; variants: Array<Record<string, any>>; alerts_enabled?: boolean }>('GET', '/api/inventory/low-stock', { branchId: b })
+          .then((r) => {
+            // switched off meanwhile (another device): refresh that branch's settings so it is not asked again
+            if (r.alerts_enabled === false) void useSettingsStore.getState().fetchSettings((b ?? ownBranch) as PosBranch)
+            return r
+          })
           .catch((err) => { console.warn('Low stock check warning:', err); return { products: [], variants: [] } })))
       const prods = results.flatMap((r) => r.products)
       const variants = results.flatMap((r) => r.variants)

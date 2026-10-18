@@ -1,10 +1,23 @@
 import { z } from 'zod'
+import type { Db } from '../lib/db.js'
 import { actorName } from '../lib/auth.js'
 import { badRequest } from '../lib/errors.js'
 import { route } from '../lib/route.js'
 
 const idParam = z.coerce.number().int().positive()
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}([T ][0-9:.+Z-]+)?$/)
+
+/** 0018: the branch's Store Settings "Low stock alert" (on unless switched off). A database without migration 0018 has no
+ *  switch yet, so the alert stays on there instead of failing. */
+async function lowStockAlertOn(db: Db, branch: string): Promise<boolean> {
+  try {
+    const r = await db.query<{ low_stock_alert_enabled: boolean }>(`SELECT low_stock_alert_enabled FROM public.store_settings WHERE branch_id = $1`, [branch])
+    return r.rows[0]?.low_stock_alert_enabled !== false
+  } catch (e) {
+    if ((e as { code?: string })?.code === '42703') return true
+    throw e
+  }
+}
 
 export const inventoryRoutes = [
   // stock-ledger list + search (InventoryAnalyticsView, StockHistoryDrawer). Not the Analytics Dashboard.
@@ -34,10 +47,12 @@ export const inventoryRoutes = [
     },
   }),
 
-  // polling source for the low-stock alarm (replaces the realtime subscription)
+  // polling source for the low-stock alarm (replaces the realtime subscription). 0018: nothing when the branch's alert is OFF,
+  // so no screen can ring for that branch, even one still holding older settings
   route({
     method: 'get', path: '/api/inventory/low-stock', perm: 'inventory.read',
     async handler({ db, branch }) {
+      if (!(await lowStockAlertOn(db, branch!))) return { products: [], variants: [], alerts_enabled: false }
       const products = await db.query(
         `SELECT id, name, stock_quantity, low_stock_alert, barcode, has_variants, category, category_id
          FROM public.products WHERE branch_id = $1 AND is_active AND NOT has_variants`, [branch])
@@ -57,8 +72,7 @@ export const inventoryRoutes = [
     method: 'get', path: '/api/inventory/low-stock-alerts', perm: 'inventory.alerts',
     async handler({ db, branch }) {
       // 0018: the Admin switched this branch's low-stock alert off -> nothing to alert about
-      const on = (await db.query(`SELECT low_stock_alert_enabled FROM public.store_settings WHERE branch_id = $1`, [branch])).rows[0]
-      if (on && on.low_stock_alert_enabled === false) return { items: [] }
+      if (!(await lowStockAlertOn(db, branch!))) return { items: [], alerts_enabled: false }
       const r = await db.query(
         `SELECT 'p-' || p.id AS id, p.name, NULL::text AS variant_name, p.stock_quantity AS quantity,
                 CASE WHEN p.low_stock_alert > 0 THEN p.low_stock_alert ELSE 5 END AS threshold

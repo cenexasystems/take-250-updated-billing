@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { RefreshCw, TrendingUp, Receipt, Boxes, AlertTriangle, Store } from 'lucide-react'
 import { api } from '../../lib/apiClient'
-import type { PosBranch } from '../../store/store'
+import { useSettingsStore, type PosBranch } from '../../store/store'
 import { posAccent, branchLabel, branchShortLabel } from '../../lib/branchTheme'
 import BranchLogo from '../common/BranchLogo'
 import { formatCurrency } from '../../lib/retail'
@@ -78,7 +78,9 @@ export default function BusinessOverview({ onNavigate }: BusinessOverviewProps) 
   const combinedSales = sumOf((x) => x.todaySales)
   const combinedBills = sumOf((x) => x.bills)
   const combinedStockValue = sumOf((x) => x.stockValue)
-  const alertBranches = BRANCHES.filter((b) => stats[b].lowStock > 0)
+  // 0018: a branch whose low-stock alert is switched OFF is not listed in the attention banner (its counts stay on the cards)
+  const settingsByBranch = useSettingsStore((s) => s.settingsByBranch)
+  const alertBranches = BRANCHES.filter((b) => stats[b].lowStock > 0 && settingsByBranch[b]?.lowStockAlertEnabled !== false)
 
   return (
     <div className="space-y-5">

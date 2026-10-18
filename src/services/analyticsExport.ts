@@ -3,7 +3,7 @@ import html2canvas from 'html2canvas'
 import { BRAND_EN, BRAND_ADDRESS, BRAND_PHONE_DISPLAY, THEME_PALETTE } from '../lib/brand'
 import { LOGO_BASE64 } from '../lib/logoBase64'
 import { formatCurrency } from '../lib/retail'
-import { ADD_PURCHASE_PRICE, formatMargin, missingCostNote, type ProfitTotals } from '../lib/productProfit'
+import { ADD_PURCHASE_PRICE, CURRENT_COST_NOTE, NO_COST, STATE_BADGE, formatMargin, missingCostNote, noCostNote, type ItemState, type ProfitTotals } from '../lib/productProfit'
 
 export interface AnalyticsExportData {
   totalCompletedRevenue: number
@@ -34,7 +34,7 @@ export interface AnalyticsExportData {
   todayTopProducts: Array<{ name: string; qty: number; revenue: number }>
   todayBills?: Array<{ invoice_no?: string; id?: string; customer_name?: string; total: number; created_at: string; status: string; order_mode?: string }>
   /** cost / profit / margin from src/lib/productProfit.ts (missing = no purchase price: shown as "Add purchase price") */
-  topProducts: Array<{ name: string; variant?: string; qty: number; revenue: number; billCount: number; cost?: number | null; profit?: number | null; margin?: number | null; missing?: boolean }>
+  topProducts: Array<{ name: string; variant?: string; qty: number; revenue: number; billCount: number; cost?: number | null; profit?: number | null; margin?: number | null; missing?: boolean; state?: ItemState }>
   productTotals?: ProfitTotals
   topCategories: Array<{ name: string; qty: number; revenue: number }>
   categoryDist?: Array<{ name: string; value: number }>
@@ -138,27 +138,32 @@ export function exportAnalyticsToCSV({ data, activeTab, datePreset, dateFrom, da
     })
   } else if (activeTab === 'products') {
     rows.push(['--- PRODUCT PERFORMANCE BREAKDOWN ---'])
-    rows.push(['Rank', 'Product Name', 'Variant', 'Units Sold', 'Revenue (INR)', 'Total Cost (INR)', 'Net Profit (INR)', 'Margin (%)', 'Bill Count', 'Avg Revenue/Bill (INR)'])
+    rows.push(['Rank', 'Product Name', 'Variant', 'Units Sold', 'Revenue (INR)', 'Total Cost (INR)', 'Net Profit (INR)', 'Margin (%)', 'Bill Count', 'Avg Revenue/Bill (INR)', 'Note'])
     data.topProducts.forEach((item, index) => {
       const missing = item.missing === true
+      const state = item.state ?? 'ok'
+      const none = state !== 'ok' ? NO_COST : ADD_PURCHASE_PRICE
       rows.push([
         String(index + 1),
         item.name,
         item.variant || '-',
         String(Math.round(item.qty)),
         item.revenue.toFixed(2),
-        missing ? ADD_PURCHASE_PRICE : (item.cost ?? 0).toFixed(2),
-        missing ? ADD_PURCHASE_PRICE : (item.profit ?? 0).toFixed(2),
-        missing ? ADD_PURCHASE_PRICE : (item.margin === null || item.margin === undefined ? '-' : item.margin.toFixed(1)),
+        missing ? none : (item.cost ?? 0).toFixed(2),
+        missing ? none : (item.profit ?? 0).toFixed(2),
+        missing ? none : (item.margin === null || item.margin === undefined ? '-' : item.margin.toFixed(1)),
         String(item.billCount),
         (item.billCount > 0 ? item.revenue / item.billCount : 0).toFixed(2),
+        state !== 'ok' ? STATE_BADGE[state] : '',
       ])
     })
     if (data.productTotals) {
       const t = data.productTotals
       rows.push([])
-      rows.push(['Totals (products with a purchase price)', '', '', '', t.revenue.toFixed(2), t.cost.toFixed(2), t.profit.toFixed(2), t.margin === null ? '-' : t.margin.toFixed(1)])
+      rows.push(['Totals (products with a cost)', '', '', '', t.revenue.toFixed(2), t.cost.toFixed(2), t.profit.toFixed(2), t.margin === null ? '-' : t.margin.toFixed(1)])
       if (t.missingCount > 0) rows.push([missingCostNote(t.missingCount)])
+      if (t.noCostCount > 0) rows.push([noCostNote(t.noCostCount)])
+      rows.push([CURRENT_COST_NOTE])
     }
     rows.push([])
 
@@ -187,7 +192,9 @@ export function exportAnalyticsToCSV({ data, activeTab, datePreset, dateFrom, da
     .map((row) =>
       row
         .map((col) => {
-          const str = String(col ?? '')
+          let str = String(col ?? '')
+          // a cell starting with = + - @ becomes text; plain numbers (-150.00) and the lone "-" placeholder stay as they are
+          if (/^[=+\-@]/.test(str) && str !== '-' && !/^-?\d+(\.\d+)?$/.test(str)) str = `'${str}`
           if (str.includes(',') || str.includes('"') || str.includes('\n')) {
             return `"${str.replace(/"/g, '""')}"`
           }
@@ -419,18 +426,18 @@ export async function exportAnalyticsToPDF({
                     (p, idx) => `
                   <tr style="border-bottom: 1px solid #F3F4F6;">
                     <td style="padding: 5px 0; font-weight: 800; color: #6B7280;">${idx + 1}</td>
-                    <td style="padding: 5px 0; font-weight: 700; color: #111; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.name}</td>
+                    <td style="padding: 5px 0; font-weight: 700; color: #111; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.name}${p.state && p.state !== 'ok' ? ` <span style="font-size: 6.5px; font-weight: 900; color: #92400E; text-transform: uppercase;">${STATE_BADGE[p.state]}</span>` : ''}</td>
                     <td style="padding: 5px 0; text-align: right; font-weight: 800; color: #4B5563;">${Math.round(p.qty)} pcs</td>
                     <td style="padding: 5px 0; text-align: right; font-weight: 900; color: ${THEME_PALETTE.primary};">${formatCurrency(p.revenue)}</td>
-                    <td style="padding: 5px 0; text-align: right; font-weight: 800; color: ${p.missing ? '#9CA3AF' : (p.profit ?? 0) > 0 ? '#047857' : '#B91C1C'};">${p.missing ? ADD_PURCHASE_PRICE : formatCurrency(p.profit ?? 0)}</td>
-                    <td style="padding: 5px 0; text-align: right; font-weight: 800; color: ${p.missing ? '#9CA3AF' : (p.margin ?? 0) > 0 ? '#047857' : '#B91C1C'};">${p.missing ? ADD_PURCHASE_PRICE : formatMargin(p.margin ?? null)}</td>
+                    <td style="padding: 5px 0; text-align: right; font-weight: 800; color: ${p.missing ? '#9CA3AF' : (p.profit ?? 0) < 0 ? '#B91C1C' : '#047857'};">${p.missing ? (p.state && p.state !== 'ok' ? NO_COST : ADD_PURCHASE_PRICE) : formatCurrency(p.profit ?? 0)}</td>
+                    <td style="padding: 5px 0; text-align: right; font-weight: 800; color: ${p.missing ? '#9CA3AF' : (p.margin ?? 0) > 0 ? '#047857' : '#B91C1C'};">${p.missing ? (p.state && p.state !== 'ok' ? NO_COST : ADD_PURCHASE_PRICE) : formatMargin(p.margin ?? null)}</td>
                   </tr>
                 `
                   )
                   .join('')}
               </tbody>
             </table>
-            ${data.productTotals ? `<p style="margin: 8px 0 0 0; font-size: 8px; font-weight: 800; color: #374151;">Net profit ${formatCurrency(data.productTotals.profit)} · Margin ${formatMargin(data.productTotals.margin)} · Cost ${formatCurrency(data.productTotals.cost)}</p>${data.productTotals.missingCount > 0 ? `<p style="margin: 2px 0 0 0; font-size: 7.5px; color: #6B7280;">${missingCostNote(data.productTotals.missingCount)}</p>` : ''}` : ''}
+            ${data.productTotals ? `<p style="margin: 8px 0 0 0; font-size: 8px; font-weight: 800; color: #374151;">Products with a cost: revenue ${formatCurrency(data.productTotals.revenue)} · cost ${formatCurrency(data.productTotals.cost)} · net profit ${formatCurrency(data.productTotals.profit)} · margin ${formatMargin(data.productTotals.margin)}</p>${[missingCostNote(data.productTotals.missingCount), noCostNote(data.productTotals.noCostCount), CURRENT_COST_NOTE].filter(Boolean).map((t) => `<p style="margin: 2px 0 0 0; font-size: 7.5px; color: #6B7280;">${t}</p>`).join('')}` : ''}
           </div>
         </div>
 

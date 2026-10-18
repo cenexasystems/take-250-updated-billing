@@ -238,12 +238,29 @@ export const salesRoutes = [
       }
       if (query.customer) conds.push(like('o.customer_name', query.customer.trim()))
       const where = conds.join(' AND ')
-      // product-wise profit (Analytics): each line's CURRENT purchase price (the size's, else the product's). Bills keep no
-      // cost snapshot, so a purchase price changed later changes past profit too. 0 = never entered (products default to 0)
-      // -> null, so the screen asks for a purchase price instead of showing the whole revenue as profit. Admin only.
-      const unitCost = session?.role !== 'admin' ? '' : ` || jsonb_build_object('unit_cost', COALESCE(
-          (SELECT NULLIF(v.purchase_price, 0) FROM public.product_variants v WHERE v.id = i.variant_id AND v.branch_id = i.branch_id),
-          (SELECT NULLIF(pr.purchase_price, 0) FROM public.products pr WHERE pr.id = i.product_id AND pr.branch_id = i.branch_id)))`
+      // product-wise profit (Analytics, Admin only): each line's CURRENT cost and state, resolved here once.
+      //   unit_cost: the size's purchase price, else the product's, else (a line without a size of a product with sizes) the
+      //   sizes' costs averaged by units sold in this branch (plain average when none sold); 0 = never entered = null.
+      //   cost_source: 'variant' | 'product' | 'sizes_avg';  item_state: 'unregistered' (POS placeholder) | 'deleted' | 'ok'.
+      // Bills keep no cost snapshot, so a cost entered later applies to past bills too. Manager / Staff never get it.
+      const unitCost = session?.role !== 'admin' ? '' : ` || (SELECT jsonb_build_object('unit_cost', CASE WHEN st.state = 'ok' THEN c.cost END,
+             'cost_source', CASE WHEN st.state = 'ok' THEN c.src END, 'item_state', st.state)
+           FROM (SELECT 1) one
+           LEFT JOIN public.products cp ON cp.id = i.product_id AND cp.branch_id = i.branch_id
+           LEFT JOIN public.product_variants cv ON cv.id = i.variant_id AND cv.branch_id = i.branch_id
+           CROSS JOIN LATERAL (SELECT CASE
+               WHEN i.is_manual OR lower(btrim(COALESCE(cp.category, i.category, ''))) = 'unregistered' OR cp.category_id = 4 THEN 'unregistered'
+               WHEN i.product_id IS NULL OR cp.id IS NULL THEN 'deleted' ELSE 'ok' END AS state) st
+           LEFT JOIN LATERAL (SELECT COALESCE(sum(x.purchase_price * sold.q) / NULLIF(sum(sold.q), 0), avg(x.purchase_price)) AS c
+                                FROM public.product_variants x
+                                LEFT JOIN LATERAL (SELECT sum(oi.quantity) AS q FROM public.order_items oi WHERE oi.variant_id = x.id AND oi.branch_id = x.branch_id) sold ON true
+                               WHERE i.variant_id IS NULL AND cp.has_variants AND x.product_id = cp.id AND x.branch_id = cp.branch_id AND x.purchase_price > 0) avgc ON true
+           CROSS JOIN LATERAL (SELECT CASE WHEN NULLIF(cv.purchase_price, 0) IS NOT NULL THEN cv.purchase_price
+                                           WHEN NULLIF(cp.purchase_price, 0) IS NOT NULL THEN cp.purchase_price
+                                           ELSE round(avgc.c, 2) END AS cost,
+                                      CASE WHEN NULLIF(cv.purchase_price, 0) IS NOT NULL THEN 'variant'
+                                           WHEN NULLIF(cp.purchase_price, 0) IS NOT NULL THEN 'product'
+                                           WHEN avgc.c IS NOT NULL THEN 'sizes_avg' END AS src) c)`
       const items = query.include_items
         ? `, COALESCE((SELECT json_agg(to_jsonb(i) || jsonb_build_object('returned_quantity', COALESCE((SELECT SUM(r.quantity) FROM public.order_return_items r WHERE r.order_item_id = i.id AND r.branch_id = i.branch_id), 0))${unitCost} ORDER BY i.id) FROM public.order_items i WHERE i.order_id = o.id AND i.branch_id = o.branch_id), '[]'::json) AS order_items`
         : ''

@@ -79,7 +79,7 @@ import { useNavigationStore } from '../store/navigationStore'
 import { useHardwareBarcodeScanner } from '../hooks/useHardwareBarcodeScanner'
 import { BarcodeRedirectDialog } from '../components/pos/BarcodeRedirectDialog'
 import { exportAnalyticsToCSV, exportAnalyticsToPDF } from '../services/analyticsExport'
-import { ADD_PURCHASE_PRICE, formatMargin, missingCostNote, productProfit, profitTotals } from '../lib/productProfit'
+import { ADD_PURCHASE_PRICE, CURRENT_COST_NOTE, NO_COST, STATE_BADGE, analyticsLines, formatMargin, missingCostNote, noCostNote, productRows, profitTotals, type AnalyticsLine, type ItemState } from '../lib/productProfit'
 import { BRAND_EN, BRAND_LOGO, BRAND_ICON } from '../lib/brand'
 import { branchName, branchShortLabel, posAccent, useBranchLogo } from '../lib/branchTheme'
 import { getPeriodRange, toLocalDateKey } from '../lib/dateRanges'
@@ -114,9 +114,16 @@ type DashboardOrder = {
   /** what was typed for "Other" on this bill's returns (0017) */
   refund_other_labels?: string | null
 }
-type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null; unit_cost?: number | null }
+type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null; unit_cost?: number | null
+  /** the shared analytics line (src/lib/productProfit.ts): net units, revenue after the bill's discounts, cost, state */
+  line?: AnalyticsLine }
 /** Analytics > Products: "Add purchase price" (muted) where a product has no purchase price, for Total Cost, Net Profit and Margin. */
-const MissingCost = () => <span className="text-[11px] font-semibold text-[#9CA3AF]" title="Set a purchase price in Stock & Inventory to see cost, profit and margin" data-testid="product-missing-cost">{ADD_PURCHASE_PRICE}</span>
+const MissingCost = ({ state = 'ok' }: { state?: ItemState }) => state === 'ok'
+  ? <span className="text-[11px] font-semibold text-[#9CA3AF]" title="Set a purchase price in Stock & Inventory to see cost, profit and margin" data-testid="product-missing-cost">{ADD_PURCHASE_PRICE}</span>
+  : <span className="text-[11px] font-semibold text-[#9CA3AF]" title="An unregistered or deleted item has no cost; it is left out of profit and margin totals" data-testid="product-no-cost">{NO_COST}</span>
+/** "Unregistered item" / "Deleted product" next to the name (existing badge style). */
+const ItemStateBadge = ({ state }: { state: ItemState }) => state === 'ok' ? null
+  : <span className="ml-1.5 inline-block rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-800 align-middle" data-testid="product-state-badge">{STATE_BADGE[state]}</span>
 /** Margin badge in the existing badge style: green when positive, red when zero or negative, "-" without revenue. */
 function MarginBadge({ margin }: { margin: number | null }) {
   if (margin === null) return <span className="text-[#9CA3AF]">-</span>
@@ -546,21 +553,23 @@ export default function Dashboard() {
       setCoupons(couponRes.coupons as DashboardCoupon[])
       setExpenses(expList || [])
 
-      const oi = oRes.orders.flatMap(r => (Array.isArray(r.order_items) ? (r.order_items as unknown[]) : []))
-      setOrderItems(oi.map(r => {
-        const row = r as Record<string, unknown>
-        const bought = toNumber(row.quantity, 0)
-        const left = Math.max(0, bought - toNumber(row.returned_quantity, 0))   // returned units are not sold units
-        return {
-          order_id: String(row.order_id || ''),
-          product_name: String(row.product_name || 'Product'),
-          category: String(row.category || ''),
-          quantity: left,
-          line_total: bought > 0 ? Math.round(toNumber(row.line_total, 0) * left / bought * 100) / 100 : 0,
-          is_manual: Boolean(row.is_manual),
-          // the line's current purchase price (size, else product), sent to Admin / Manager only; null = not set
-          unit_cost: row.unit_cost === null || row.unit_cost === undefined ? null : toNumber(row.unit_cost, 0),
-        }
+      setOrderItems(oRes.orders.flatMap((order) => {
+        const raw = Array.isArray(order.order_items) ? (order.order_items as unknown[]) : []
+        const lines = analyticsLines({ ...(order as Record<string, unknown>), id: String(order.id), order_items: raw })
+        return raw.map((r, k) => {
+          const row = r as Record<string, unknown>
+          const bought = toNumber(row.quantity, 0)
+          const left = Math.max(0, bought - toNumber(row.returned_quantity, 0))   // returned units are not sold units
+          return {
+            order_id: String(row.order_id || ''),
+            product_name: String(row.product_name || 'Product'),
+            category: String(row.category || ''),
+            quantity: left,
+            line_total: bought > 0 ? Math.round(toNumber(row.line_total, 0) * left / bought * 100) / 100 : 0,
+            is_manual: Boolean(row.is_manual),
+            line: lines[k],
+          }
+        })
       }))
 
       await productsPromise
@@ -738,48 +747,27 @@ export default function Dashboard() {
           is_manual: (row as Record<string,unknown>).is_manual === true || (row as Record<string,unknown>).source === 'manual',
         })))
 
-    // product-wise profit: cost = purchase price x units sold, over the lines whose product has a purchase price
-    const productMap    = new Map<string, { name: string; variant: string; qty: number; revenue: number; billCount: number; cost: number; costedQty: number }>()
-    const productOrders = new Map<string, Set<string>>()
+    // Products tab: ONE shared calculation (src/lib/productProfit.ts) - rows per product + size, cost / profit / margin,
+    // totals; categories use the same line revenue (after the bill's discounts, net of returns on the original sale date)
+    const analyticsLinesAll: AnalyticsLine[] = orderItems.length > 0
+      ? completedItems.map((i) => (i as DashboardOrderItem).line).filter((l): l is AnalyticsLine => !!l)
+      : billableCompleted.flatMap((o) => analyticsLines({ ...(o as unknown as Record<string, unknown>), id: o.id, order_items: parseOrderItems(o.items) }))
     const categoryMap   = new Map<string, { name: string; qty: number; revenue: number }>()
     const prodCatLookup = new Map(products.map(p => [String(p.name || '').trim().toLowerCase(), p.category || 'Uncategorized']))
 
     let totalProductsSold = 0
     let totalManualRevenue = 0
-
-    completedItems.forEach(({ product_name, category, quantity, line_total, order_id, is_manual, ...rest }) => {
-      const unitCost = (rest as { unit_cost?: number | null }).unit_cost
-      const qty = toNumber(quantity, 0)
-      const rev = toNumber(line_total, 0)
-      totalProductsSold += qty
-
-      const rawKey  = String(product_name || 'Product').trim() || 'Product'
-      const dashIdx = rawKey.indexOf(' - ')
-      const mainName   = dashIdx > 0 ? rawKey.slice(0, dashIdx) : rawKey
-      const variantName = dashIdx > 0 ? rawKey.slice(dashIdx + 3) : ''
-
-      const pc = productMap.get(rawKey) || { name: mainName, variant: variantName, qty: 0, revenue: 0, billCount: 0, cost: 0, costedQty: 0 }
-      pc.qty += qty; pc.revenue += rev
-      // per line: this line's size's purchase price (else the product's), on the units left after returns
-      if (unitCost !== null && unitCost !== undefined) { pc.cost += unitCost * qty; pc.costedQty += qty }
-      productMap.set(rawKey, pc)
-
-      if (!productOrders.has(rawKey)) productOrders.set(rawKey, new Set())
-      productOrders.get(rawKey)!.add(order_id)
-
-      const catName = category || prodCatLookup.get(mainName.toLowerCase()) || 'Uncategorized'
-      const cc = categoryMap.get(catName) || { name: catName, qty: 0, revenue: 0 }
-      cc.qty += qty; cc.revenue += rev; categoryMap.set(catName, cc)
-
-      if (is_manual) totalManualRevenue += rev
+    completedItems.forEach(({ quantity, line_total, is_manual }) => {
+      totalProductsSold += toNumber(quantity, 0)
+      if (is_manual) totalManualRevenue += toNumber(line_total, 0)
     })
-
-    for (const [key, orderSet] of productOrders) {
-      const p = productMap.get(key); if (p) { p.billCount = orderSet.size; productMap.set(key, p) }
+    for (const l of analyticsLinesAll) {
+      const catName = l.category || prodCatLookup.get(l.name.toLowerCase()) || 'Uncategorized'
+      const cc = categoryMap.get(catName) || { name: catName, qty: 0, revenue: 0 }
+      cc.qty += l.qty; cc.revenue = Math.round((cc.revenue + l.revenue) * 100) / 100; categoryMap.set(catName, cc)
     }
 
-    // cost / net profit / margin from the ONE shared calculation (table, cards, totals, CSV and PDF read these)
-    const topProducts   = Array.from(productMap.values()).map((p) => ({ ...p, ...productProfit(p) })).sort((a, b) => b.qty - a.qty)
+    const topProducts   = productRows(analyticsLinesAll)
     const productTotals = profitTotals(topProducts)
     const topCategories = Array.from(categoryMap.values()).sort((a, b) => b.revenue - a.revenue)
     const bestProduct   = topProducts[0]?.name || 'No sales yet'
@@ -3040,7 +3028,7 @@ export default function Dashboard() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="text-[13px] font-black text-[#9BAB9A]">#{i + 1}</p>
-                                <p className="text-[16px] font-bold text-[#111111] break-words">{p.name}</p>
+                                <p className="text-[16px] font-bold text-[#111111] break-words">{p.name}<ItemStateBadge state={p.state} /></p>
                                 <p className="text-[13px] text-[#374151]">{p.variant || 'No variant'}</p>
                               </div>
                               <p className="text-[14px] font-black text-emerald-700">{formatCurrency(p.revenue)}</p>
@@ -3052,15 +3040,15 @@ export default function Dashboard() {
                               </div>
                               <div className="flex flex-col justify-between">
                                 <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Total Cost</p>
-                                <div className="font-bold text-[#111111] mt-1">{p.missing ? <MissingCost /> : formatCurrency(p.cost ?? 0)}</div>
+                                <div className="font-bold text-[#111111] mt-1">{p.missing ? <MissingCost state={p.state} /> : formatCurrency(p.cost ?? 0)}</div>
                               </div>
                               <div className="flex flex-col justify-between">
                                 <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Net Profit</p>
-                                <div className="mt-1">{p.missing ? <MissingCost /> : <span className={`font-bold ${(p.profit ?? 0) > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{formatCurrency(p.profit ?? 0)}</span>}</div>
+                                <div className="mt-1">{p.missing ? <MissingCost state={p.state} /> : <span className={`font-bold ${(p.profit ?? 0) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{formatCurrency(p.profit ?? 0)}</span>}</div>
                               </div>
                               <div className="flex flex-col justify-between">
                                 <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Margin</p>
-                                <div className="mt-1">{p.missing ? <MissingCost /> : <MarginBadge margin={p.margin} />}</div>
+                                <div className="mt-1">{p.missing ? <MissingCost state={p.state} /> : <MarginBadge margin={p.margin} />}</div>
                               </div>
                               <div className="flex flex-col justify-between">
                                 <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Bills</p>
@@ -3092,15 +3080,15 @@ export default function Dashboard() {
                           </thead>
                           <tbody className="divide-y divide-[#E5E7EB]/20">
                             {filteredProds.slice(0, 50).map((p, i) => (
-                              <tr key={`${p.name}-${p.variant || i}`} className="hover:bg-[#F9FAFB]/50">
+                              <tr key={p.key || `${p.name}-${p.variant || i}`} className="hover:bg-[#F9FAFB]/50" data-testid="product-row">
                                 <td className="px-4 py-2 text-[11px] text-[#9BAB9A] font-bold">{i + 1}</td>
-                                <td className="px-4 py-2 font-bold text-[#111111]">{p.name}</td>
+                                <td className="px-4 py-2 font-bold text-[#111111]">{p.name}<ItemStateBadge state={p.state} /></td>
                                 <td className="px-4 py-2 text-[#374151]">{p.variant || '-'}</td>
                                 <td className="px-4 py-2 font-bold">{Math.round(p.qty)}</td>
                                 <td className="px-4 py-2 font-bold text-emerald-700">{formatCurrency(p.revenue)}</td>
-                                <td className="px-4 py-2 font-bold text-[#111111]" data-testid="product-total-cost">{p.missing ? <MissingCost /> : formatCurrency(p.cost ?? 0)}</td>
-                                <td className="px-4 py-2" data-testid="product-net-profit">{p.missing ? <MissingCost /> : <span className={`font-bold ${(p.profit ?? 0) > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{formatCurrency(p.profit ?? 0)}</span>}</td>
-                                <td className="px-4 py-2" data-testid="product-margin">{p.missing ? <MissingCost /> : <MarginBadge margin={p.margin} />}</td>
+                                <td className="px-4 py-2 font-bold text-[#111111]" data-testid="product-total-cost">{p.missing ? <MissingCost state={p.state} /> : formatCurrency(p.cost ?? 0)}</td>
+                                <td className="px-4 py-2" data-testid="product-net-profit">{p.missing ? <MissingCost state={p.state} /> : <span className={`font-bold ${(p.profit ?? 0) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{formatCurrency(p.profit ?? 0)}</span>}</td>
+                                <td className="px-4 py-2" data-testid="product-margin">{p.missing ? <MissingCost state={p.state} /> : <MarginBadge margin={p.margin} />}</td>
                                 <td className="px-4 py-2 text-[#374151]">{p.billCount}</td>
                                 <td className="px-4 py-2 font-bold text-[#111111]">{formatCurrency(p.billCount > 0 ? p.revenue / p.billCount : 0)}</td>
                               </tr>
@@ -3108,23 +3096,32 @@ export default function Dashboard() {
                           </tbody>
                         </table>
                       </div>
-                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3" data-testid="product-profit-totals">
+                      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="product-profit-totals">
+                        <div className="rounded-xl border border-[#E5E7EB]/60 bg-[#FBFAF6] p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-[#9BAB9A]">Total Revenue</p>
+                          <p className="mt-1 text-[15px] font-black text-[#111111]" data-testid="total-revenue">{formatCurrency(analytics.productTotals.revenue)}</p>
+                        </div>
                         <div className="rounded-xl border border-[#E5E7EB]/60 bg-[#FBFAF6] p-3">
                           <p className="text-[10px] font-black uppercase tracking-wider text-[#9BAB9A]">Total Cost</p>
                           <p className="mt-1 text-[15px] font-black text-[#111111]" data-testid="total-cost">{formatCurrency(analytics.productTotals.cost)}</p>
                         </div>
                         <div className="rounded-xl border border-[#E5E7EB]/60 bg-[#FBFAF6] p-3">
-                          <p className="text-[10px] font-black uppercase tracking-wider text-[#9BAB9A]">Net Profit</p>
-                          <p className={`mt-1 text-[15px] font-black ${analytics.productTotals.profit > 0 ? 'text-emerald-700' : 'text-red-600'}`} data-testid="total-profit">{formatCurrency(analytics.productTotals.profit)}</p>
+                          <p className="text-[10px] font-black uppercase tracking-wider text-[#9BAB9A]">Total Net Profit</p>
+                          <p className={`mt-1 text-[15px] font-black ${analytics.productTotals.profit < 0 ? 'text-red-600' : 'text-emerald-700'}`} data-testid="total-profit">{formatCurrency(analytics.productTotals.profit)}</p>
                         </div>
                         <div className="rounded-xl border border-[#E5E7EB]/60 bg-[#FBFAF6] p-3">
-                          <p className="text-[10px] font-black uppercase tracking-wider text-[#9BAB9A]">Margin</p>
+                          <p className="text-[10px] font-black uppercase tracking-wider text-[#9BAB9A]">Overall Margin</p>
                           <div className="mt-1" data-testid="total-margin"><MarginBadge margin={analytics.productTotals.margin} /></div>
                         </div>
                       </div>
+                      <p className="mt-2 text-[11px] font-semibold text-[#6B7280]">Totals cover the products with a cost.</p>
                       {analytics.productTotals.missingCount > 0 && (
-                        <p className="mt-2 text-[11px] font-semibold text-[#6B7280]" data-testid="missing-cost-note">{missingCostNote(analytics.productTotals.missingCount)}</p>
+                        <p className="mt-1 text-[11px] font-semibold text-[#6B7280]" data-testid="missing-cost-note">{missingCostNote(analytics.productTotals.missingCount)}</p>
                       )}
+                      {analytics.productTotals.noCostCount > 0 && (
+                        <p className="mt-1 text-[11px] font-semibold text-[#6B7280]" data-testid="no-cost-note">{noCostNote(analytics.productTotals.noCostCount)}</p>
+                      )}
+                      <p className="mt-1 text-[11px] font-semibold text-[#6B7280]" data-testid="current-cost-note">{CURRENT_COST_NOTE}</p>
                       </>
                     ) : (
                       <p className="text-center text-[13px] text-[#374151] py-6">{productAnalyticsSearch ? 'No products match your search query.' : 'No product sales in selected period'}</p>

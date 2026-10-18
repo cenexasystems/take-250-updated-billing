@@ -79,6 +79,7 @@ import { useNavigationStore } from '../store/navigationStore'
 import { useHardwareBarcodeScanner } from '../hooks/useHardwareBarcodeScanner'
 import { BarcodeRedirectDialog } from '../components/pos/BarcodeRedirectDialog'
 import { exportAnalyticsToCSV, exportAnalyticsToPDF } from '../services/analyticsExport'
+import { ADD_PURCHASE_PRICE, formatMargin, missingCostNote, productProfit, profitTotals } from '../lib/productProfit'
 import { BRAND_EN, BRAND_LOGO, BRAND_ICON } from '../lib/brand'
 import { branchName, branchShortLabel, posAccent, useBranchLogo } from '../lib/branchTheme'
 import { getPeriodRange, toLocalDateKey } from '../lib/dateRanges'
@@ -112,17 +113,12 @@ type DashboardOrder = {
   paid_by_mode?: Record<string, number>; refunds_by_mode?: Record<string, number>
 }
 type DashboardOrderItem = { order_id: string; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null; unit_cost?: number | null }
-/** Product-wise net profit: revenue - purchase price x units sold. No purchase price -> "Add purchase price";
- *  some sales without one -> the profit of the priced part, marked. Bills keep no cost snapshot: the current price is used. */
-function ProductProfit({ p }: { p: { qty: number; revenue: number; cost: number; costedQty: number; costedRevenue: number } }) {
-  if (p.costedQty <= 0) return <span className="text-[11px] font-semibold text-[#9CA3AF]" title="Set a purchase price in Stock & Inventory to see the profit">Add purchase price</span>
-  const profit = Math.round((p.costedRevenue - p.cost) * 100) / 100
-  const partial = p.costedQty < p.qty
-  return (
-    <span className={`font-bold ${profit >= 0 ? 'text-emerald-700' : 'text-red-600'}`} title={partial ? `Only ${Math.round(p.costedQty)} of ${Math.round(p.qty)} sold have a purchase price` : undefined}>
-      {formatCurrency(profit)}{partial ? ' *' : ''}
-    </span>
-  )
+/** Analytics > Products: "Add purchase price" (muted) where a product has no purchase price, for Total Cost, Net Profit and Margin. */
+const MissingCost = () => <span className="text-[11px] font-semibold text-[#9CA3AF]" title="Set a purchase price in Stock & Inventory to see cost, profit and margin" data-testid="product-missing-cost">{ADD_PURCHASE_PRICE}</span>
+/** Margin badge in the existing badge style: green when positive, red when zero or negative, "-" without revenue. */
+function MarginBadge({ margin }: { margin: number | null }) {
+  if (margin === null) return <span className="text-[#9CA3AF]">-</span>
+  return <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-black ${margin > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`} data-testid="product-margin-badge">{formatMargin(margin)}</span>
 }
 
 /** Order History discount cell: one amount for a coupon-only bill (as before); coupon and manual on their own lines
@@ -740,7 +736,7 @@ export default function Dashboard() {
         })))
 
     // product-wise profit: cost = purchase price x units sold, over the lines whose product has a purchase price
-    const productMap    = new Map<string, { name: string; variant: string; qty: number; revenue: number; billCount: number; cost: number; costedQty: number; costedRevenue: number }>()
+    const productMap    = new Map<string, { name: string; variant: string; qty: number; revenue: number; billCount: number; cost: number; costedQty: number }>()
     const productOrders = new Map<string, Set<string>>()
     const categoryMap   = new Map<string, { name: string; qty: number; revenue: number }>()
     const prodCatLookup = new Map(products.map(p => [String(p.name || '').trim().toLowerCase(), p.category || 'Uncategorized']))
@@ -759,9 +755,10 @@ export default function Dashboard() {
       const mainName   = dashIdx > 0 ? rawKey.slice(0, dashIdx) : rawKey
       const variantName = dashIdx > 0 ? rawKey.slice(dashIdx + 3) : ''
 
-      const pc = productMap.get(rawKey) || { name: mainName, variant: variantName, qty: 0, revenue: 0, billCount: 0, cost: 0, costedQty: 0, costedRevenue: 0 }
+      const pc = productMap.get(rawKey) || { name: mainName, variant: variantName, qty: 0, revenue: 0, billCount: 0, cost: 0, costedQty: 0 }
       pc.qty += qty; pc.revenue += rev
-      if (unitCost !== null && unitCost !== undefined) { pc.cost += unitCost * qty; pc.costedQty += qty; pc.costedRevenue += rev }
+      // per line: this line's size's purchase price (else the product's), on the units left after returns
+      if (unitCost !== null && unitCost !== undefined) { pc.cost += unitCost * qty; pc.costedQty += qty }
       productMap.set(rawKey, pc)
 
       if (!productOrders.has(rawKey)) productOrders.set(rawKey, new Set())
@@ -778,7 +775,9 @@ export default function Dashboard() {
       const p = productMap.get(key); if (p) { p.billCount = orderSet.size; productMap.set(key, p) }
     }
 
-    const topProducts   = Array.from(productMap.values()).sort((a, b) => b.qty - a.qty)
+    // cost / net profit / margin from the ONE shared calculation (table, cards, totals, CSV and PDF read these)
+    const topProducts   = Array.from(productMap.values()).map((p) => ({ ...p, ...productProfit(p) })).sort((a, b) => b.qty - a.qty)
+    const productTotals = profitTotals(topProducts)
     const topCategories = Array.from(categoryMap.values()).sort((a, b) => b.revenue - a.revenue)
     const bestProduct   = topProducts[0]?.name || 'No sales yet'
     const bestCategory  = topCategories[0]?.name || 'No sales yet'
@@ -977,6 +976,7 @@ export default function Dashboard() {
       topCategories,
       weeklySales,
       topProducts,
+      productTotals,
       waRequests,
       waPending,
       waContacted,
@@ -3047,12 +3047,16 @@ export default function Dashboard() {
                                 <p className="font-bold text-[#111111] mt-1">{Math.round(p.qty)}</p>
                               </div>
                               <div className="flex flex-col justify-between">
-                                <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Selling Price</p>
-                                <p className="font-bold text-[#111111] mt-1">{formatCurrency(p.qty > 0 ? p.revenue / p.qty : 0)}</p>
+                                <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Total Cost</p>
+                                <div className="font-bold text-[#111111] mt-1">{p.missing ? <MissingCost /> : formatCurrency(p.cost ?? 0)}</div>
                               </div>
                               <div className="flex flex-col justify-between">
                                 <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Net Profit</p>
-                                <ProductProfit p={p} />
+                                <div className="mt-1">{p.missing ? <MissingCost /> : <span className={`font-bold ${(p.profit ?? 0) > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{formatCurrency(p.profit ?? 0)}</span>}</div>
+                              </div>
+                              <div className="flex flex-col justify-between">
+                                <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Margin</p>
+                                <div className="mt-1">{p.missing ? <MissingCost /> : <MarginBadge margin={p.margin} />}</div>
                               </div>
                               <div className="flex flex-col justify-between">
                                 <p className="text-[#9BAB9A] uppercase text-[11px] font-black leading-tight">Bills</p>
@@ -3067,7 +3071,7 @@ export default function Dashboard() {
                         ))}
                       </div>
                       <div className="hidden md:block overflow-x-auto rounded-xl border border-[#E5E7EB]/30">
-                        <table className="w-full min-w-[780px] text-left text-[12px]" data-testid="product-analytics-table">
+                        <table className="w-full min-w-[900px] text-left text-[12px]" data-testid="product-analytics-table">
                           <thead className="bg-[#F9FAFB] text-[10px] uppercase tracking-wider text-[#374151]">
                             <tr>
                               <th className="px-4 py-2.5 font-black">#</th>
@@ -3075,8 +3079,9 @@ export default function Dashboard() {
                               <th className="px-4 py-2.5 font-black">Variant / SKU</th>
                               <th className="px-4 py-2.5 font-black">Qty Sold</th>
                               <th className="px-4 py-2.5 font-black">Revenue</th>
-                              <th className="px-4 py-2.5 font-black" title="Average selling price per piece (revenue ÷ quantity sold)">Selling Price</th>
-                              <th className="px-4 py-2.5 font-black" title="Revenue minus purchase price × quantity sold">Net Profit</th>
+                              <th className="px-4 py-2.5 font-black" title="Purchase price × units sold (net of returns)">Total Cost</th>
+                              <th className="px-4 py-2.5 font-black" title="Revenue − Total Cost">Net Profit</th>
+                              <th className="px-4 py-2.5 font-black" title="Net Profit ÷ Revenue">Margin</th>
                               <th className="px-4 py-2.5 font-black">Bills</th>
                               <th className="px-4 py-2.5 font-black">Avg Revenue/Bill</th>
                             </tr>
@@ -3089,8 +3094,9 @@ export default function Dashboard() {
                                 <td className="px-4 py-2 text-[#374151]">{p.variant || '-'}</td>
                                 <td className="px-4 py-2 font-bold">{Math.round(p.qty)}</td>
                                 <td className="px-4 py-2 font-bold text-emerald-700">{formatCurrency(p.revenue)}</td>
-                                <td className="px-4 py-2 font-bold text-[#111111]" data-testid="product-selling-price">{formatCurrency(p.qty > 0 ? p.revenue / p.qty : 0)}</td>
-                                <td className="px-4 py-2" data-testid="product-net-profit"><ProductProfit p={p} /></td>
+                                <td className="px-4 py-2 font-bold text-[#111111]" data-testid="product-total-cost">{p.missing ? <MissingCost /> : formatCurrency(p.cost ?? 0)}</td>
+                                <td className="px-4 py-2" data-testid="product-net-profit">{p.missing ? <MissingCost /> : <span className={`font-bold ${(p.profit ?? 0) > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{formatCurrency(p.profit ?? 0)}</span>}</td>
+                                <td className="px-4 py-2" data-testid="product-margin">{p.missing ? <MissingCost /> : <MarginBadge margin={p.margin} />}</td>
                                 <td className="px-4 py-2 text-[#374151]">{p.billCount}</td>
                                 <td className="px-4 py-2 font-bold text-[#111111]">{formatCurrency(p.billCount > 0 ? p.revenue / p.billCount : 0)}</td>
                               </tr>
@@ -3098,6 +3104,23 @@ export default function Dashboard() {
                           </tbody>
                         </table>
                       </div>
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3" data-testid="product-profit-totals">
+                        <div className="rounded-xl border border-[#E5E7EB]/60 bg-[#FBFAF6] p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-[#9BAB9A]">Total Cost</p>
+                          <p className="mt-1 text-[15px] font-black text-[#111111]" data-testid="total-cost">{formatCurrency(analytics.productTotals.cost)}</p>
+                        </div>
+                        <div className="rounded-xl border border-[#E5E7EB]/60 bg-[#FBFAF6] p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-[#9BAB9A]">Net Profit</p>
+                          <p className={`mt-1 text-[15px] font-black ${analytics.productTotals.profit > 0 ? 'text-emerald-700' : 'text-red-600'}`} data-testid="total-profit">{formatCurrency(analytics.productTotals.profit)}</p>
+                        </div>
+                        <div className="rounded-xl border border-[#E5E7EB]/60 bg-[#FBFAF6] p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-[#9BAB9A]">Margin</p>
+                          <div className="mt-1" data-testid="total-margin"><MarginBadge margin={analytics.productTotals.margin} /></div>
+                        </div>
+                      </div>
+                      {analytics.productTotals.missingCount > 0 && (
+                        <p className="mt-2 text-[11px] font-semibold text-[#6B7280]" data-testid="missing-cost-note">{missingCostNote(analytics.productTotals.missingCount)}</p>
+                      )}
                       </>
                     ) : (
                       <p className="text-center text-[13px] text-[#374151] py-6">{productAnalyticsSearch ? 'No products match your search query.' : 'No product sales in selected period'}</p>

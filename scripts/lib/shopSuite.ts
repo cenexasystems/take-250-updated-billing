@@ -3,6 +3,7 @@
 import type { Actor, ReturnsCtx } from './returnsSuite'
 import { csvCell } from '../../src/lib/csvCell'
 import { shopInviteText, shopLink, whatsappShareUrl, whatsappToUrl } from '../../src/lib/shopLink'
+import { formatMargin, missingCostNote, productProfit, profitTotals } from '../../src/lib/productProfit'
 
 export type ShopCtx = Omit<ReturnsCtx, 'concurrent'>
 type CallOpts = { cookie?: string; body?: unknown; query?: Record<string, string>; ip?: string }
@@ -220,8 +221,16 @@ export async function shopSuite(c: ShopCtx) {
       return ((r.body?.orders ?? []) as any[]).find((o) => o.id === ordId)?.order_items?.[0]
     }
     const ai = await itemsFor('admin'), mi = await itemsFor(mgr), si = await itemsFor(staff)
-    check(num(ai?.unit_cost) === 200 && num(mi?.unit_cost) === 200, `${L} Admin and Manager get the line's purchase price (unit_cost 200) for profit`, JSON.stringify({ a: ai?.unit_cost, m: mi?.unit_cost }))
-    check(!!si && !('unit_cost' in si), `${L} Staff never receive a purchase price on bill lines`)
+    check(num(ai?.unit_cost) === 200, `${L} Admin gets the line's purchase price (unit_cost 200) for product profit`, JSON.stringify({ a: ai?.unit_cost }))
+    check(!!mi && !('unit_cost' in mi) && !!si && !('unit_cost' in si), `${L} Manager and Staff never receive a purchase price on bill lines (Admin only)`)
+    // a size's own purchase price wins over the product's (cost is per size line)
+    const P3v = (await one(`SELECT id FROM product_variants WHERE product_id = $1 AND branch_id = $2 ORDER BY created_at LIMIT 1`, [P3, b]))?.id
+    if (P3v) {
+      await q(`UPDATE products SET purchase_price = 500 WHERE id = $1`, [P3]); await q(`UPDATE product_variants SET purchase_price = 700 WHERE id = $1`, [P3v])
+      await q(`INSERT INTO order_items (branch_id, order_id, product_id, variant_id, product_name, name, quantity, unit_price, line_total) VALUES ($1, $2, $3, $4, 'Shop Saree', 'Shop Saree', 1, 1000, 1000)`, [b, ordId, P3, P3v])
+      const vi = (((await call('GET', '/api/orders', { cookie: cookies.admin, query: { include_items: '1', limit: '50', branch_id: b } })).body?.orders ?? []) as any[]).find((o) => o.id === ordId)?.order_items?.find((i: any) => i.variant_id === P3v)
+      check(num(vi?.unit_cost) === 700, `${L} a size line costs at the size's purchase price (700), not the product's (500)`, JSON.stringify(vi?.unit_cost))
+    }
     // a product whose purchase price was never entered (stored as 0): no cost, so no made-up profit
     const P0 = await mk(`Shop NoCost ${n}`, {})
     await q(`UPDATE products SET purchase_price = 0 WHERE id = $1`, [P0])
@@ -243,6 +252,16 @@ export async function shopSuite(c: ShopCtx) {
       const inv = whatsappToUrl('9811100077', shopInviteText(links[0], 'Meena'))
       check(inv === `https://wa.me/919811100077?text=${encodeURIComponent('Hi Meena, you can now order from TAKE250 online: https://take250.vercel.app/shop')}` && shopInviteText(links[0]).startsWith('Hi, you can'),
         'shop: "Send to a customer" opens that customer\'s WhatsApp chat with the /shop link typed in', inv)
+      // product cost / net profit / margin: the one shared calculation (table, cards, totals, CSV, PDF)
+      const pp = productProfit({ qty: 3, revenue: 3000, cost: 1800, costedQty: 3 })
+      check(pp.cost === 1800 && pp.profit === 1200 && pp.margin === 40 && formatMargin(pp.margin) === '40.0%' && !pp.missing, 'profit: purchase 600, selling 1000, qty 3 -> cost 1800, profit 1200, margin 40.0%', JSON.stringify(pp))
+      const none = productProfit({ qty: 2, revenue: 900, cost: 0, costedQty: 0 }), part = productProfit({ qty: 3, revenue: 3000, cost: 600, costedQty: 1 })
+      check(none.missing && none.cost === null && none.profit === null && none.margin === null && part.missing, 'profit: no purchase price (or only some units priced) -> no cost, no profit, no margin (never revenue as profit, never 0 as cost)')
+      const eq = productProfit({ qty: 1, revenue: 450, cost: 450, costedQty: 1 })
+      check(!eq.missing && eq.profit === 0 && eq.margin === 0 && formatMargin(eq.margin) === '0.0%' && formatMargin(null) === '-', 'profit: purchase price = selling price -> 0.0%; no revenue -> "-"')
+      const tt = profitTotals([{ revenue: 3000, ...pp }, { revenue: 900, ...none }, { revenue: 450, ...eq }])
+      check(tt.revenue === 3450 && tt.cost === 2250 && tt.profit === 1200 && tt.margin === 34.8 && tt.missingCount === 1 && missingCostNote(2) === '2 products have no purchase price; they are excluded from profit and margin totals.',
+        'profit totals leave out products without a purchase price, and say how many', JSON.stringify(tt))
       const wa = whatsappShareUrl(links[0])
       check(wa === 'https://wa.me/?text=https%3A%2F%2Ftake250.vercel.app%2Fshop' && decodeURIComponent(new URL(wa).searchParams.get('text') || '').endsWith('/shop'),
         'shop: the WhatsApp share link carries the encoded /shop link', wa)

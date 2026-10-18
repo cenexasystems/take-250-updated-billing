@@ -240,8 +240,8 @@ export const salesRoutes = [
       const where = conds.join(' AND ')
       // product-wise profit (Analytics): each line's CURRENT purchase price (the size's, else the product's). Bills keep no
       // cost snapshot, so a purchase price changed later changes past profit too. 0 = never entered (products default to 0)
-      // -> null, so the screen asks for a purchase price instead of showing the whole revenue as profit. Never sent to Staff.
-      const unitCost = session?.role === 'staff' ? '' : ` || jsonb_build_object('unit_cost', COALESCE(
+      // -> null, so the screen asks for a purchase price instead of showing the whole revenue as profit. Admin only.
+      const unitCost = session?.role !== 'admin' ? '' : ` || jsonb_build_object('unit_cost', COALESCE(
           (SELECT NULLIF(v.purchase_price, 0) FROM public.product_variants v WHERE v.id = i.variant_id AND v.branch_id = i.branch_id),
           (SELECT NULLIF(pr.purchase_price, 0) FROM public.products pr WHERE pr.id = i.product_id AND pr.branch_id = i.branch_id)))`
       const items = query.include_items

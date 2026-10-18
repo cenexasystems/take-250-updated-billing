@@ -19,6 +19,7 @@ import { couponSuite } from './lib/couponSuite'
 import { invoiceSuite } from './lib/invoiceSuite'
 import { refundSuite } from './lib/refundSuite'
 import { shopSuite } from './lib/shopSuite'
+import { posPriceSuite } from './lib/posPriceSuite'
 import { BlobAccessError } from '@vercel/blob'
 import { STORAGE_NOT_CONFIGURED, vercelBlobPut } from '../server/lib/blob'
 import { repairSequences, restoreSequences, snapshotSequences } from './lib/devState'
@@ -925,6 +926,9 @@ async function run() {
     // ================================================================== T. ONLINE SHOP + ENQUIRY DASHBOARD (0016): shared suite, all 3 branches
     if (PART === '' || PART === '8') {
       await shopSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o as any), q: (sql, params) => rows(sql, params), check })
+
+      // ---- V. a scanned barcode of a product with sizes adds the size at its own price (all branches)
+      await posPriceSuite({ branches: BRANCHES, only: RETURNS_BRANCH || undefined, cookies, call: (m, p, o) => call(m, p, o as any), q: (sql, params) => rows(sql, params), check })
 
       // ---- U. Store Settings "Low stock alert" switch per branch (0018): default on; off silences only that branch; Admin only
       {

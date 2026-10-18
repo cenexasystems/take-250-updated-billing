@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { scanPayload, type ScanRecord } from '../../lib/cartPrice'
 import { createPortal } from 'react-dom'
 import { Camera, X, AlertCircle, Sparkles, ScanLine, SwitchCamera } from 'lucide-react'
 import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser'
@@ -14,8 +15,11 @@ export interface ScannedItemPayload {
   product_name: string
   name_ta?: string
   variant_name?: string
+  /** the PRODUCT's price and offer price */
   price: number
   offer_price?: number
+  /** the registered size's own price (null for a product barcode); used before any product price (cartUnitPrice) */
+  variant_price?: number | null
   stock: number
   barcode: string
   unit?: string
@@ -148,24 +152,8 @@ export const BarcodeScannerInput: React.FC<BarcodeScannerInputProps> = ({
 
       const prod = record.product
       const varnt = record.variant
-
-      const effectiveStock = varnt ? (Number(varnt.stock) || 0) : 999
-
-      const price = varnt?.price ? Number(varnt.price) : Number(prod.price)
-
-      const payload: ScannedItemPayload = {
-        product_id: record.product_id,
-        variant_id: record.variant_id || null,
-        product_name: prod.name,
-        name_ta: prod.name_ta,
-        variant_name: varnt?.variant_name,
-        price: price,
-        offer_price: prod.offer_price ? Number(prod.offer_price) : undefined,
-        stock: effectiveStock,
-        barcode: clean,
-        image_url: prod.image_url,
-        category: prod.category,
-      }
+      // the registered size with its own price and stock (shared with the camera / external scan in the POS)
+      const payload: ScannedItemPayload = scanPayload(record as ScanRecord, clean)
 
       playBeep(true)
       setLastScannedName(`${prod.name}${varnt?.variant_name ? ` (${varnt.variant_name})` : ''}`)

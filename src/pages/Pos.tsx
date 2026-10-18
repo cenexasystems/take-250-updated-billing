@@ -47,6 +47,7 @@ import { clearCustomerSuggestCache, isRealName } from '../lib/customerSuggest'
 import { useLangStore } from '../store/langStore'
 import { fetchVariantsByProduct, type ProductVariant } from '../services/variantService'
 import { BarcodeScannerInput, type ScannedItemPayload } from '../components/pos/BarcodeScannerInput'
+import { cartUnitPrice, scanPayload, type ScanRecord, type SizePrice } from '../lib/cartPrice'
 import { AddUnregisteredItemModal } from '../components/pos/AddUnregisteredItemModal'
 import { getOrCreateUnregisteredProduct } from '../services/productService'
 
@@ -104,8 +105,9 @@ const toProductId = (v: string | number): string | null => {
   return null
 }
 
-const makePosItem = (p: Product, qty?: number): PosItem => {
-  const basePrice = p.offerPrice || p.price
+// every add path prices the line with cartUnitPrice(): the chosen size's price, else the product's offer price / price
+const makePosItem = (p: Product, qty?: number, size?: SizePrice): PosItem => {
+  const basePrice = cartUnitPrice(p, size)
   const q = Math.max(1, Math.round(qty ?? 1))
   const packLabel = p.predefinedOptions[0]?.label ?? p.unitLabel
   const isUnregistered = p.category === 'Unregistered'
@@ -326,7 +328,7 @@ export default function Pos(props: PosProps = {}) {
       setItems(cur => {
         const ex = cur.find(i => (i.variantId === specificVariant.id || String(i.id) === String(specificVariant.id)))
         if (!ex) {
-          const item = makePosItem(variantProduct, 1)
+          const item = makePosItem(variantProduct, 1, specificVariant)
           item.variantId = specificVariant.id
           item.variantName = specificVariant.variantName
           item.parentProductId = String(product.id)
@@ -390,7 +392,7 @@ export default function Pos(props: PosProps = {}) {
     setItems(cur => {
       const ex = cur.find(i => (i.variantId === selectedVariant.id || String(i.id) === String(selectedVariant.id)))
       if (!ex) {
-        const item = makePosItem(variantProduct, addQty)
+        const item = makePosItem(variantProduct, addQty, selectedVariant)
         item.variantId = selectedVariant.id
         item.variantName = selectedVariant.variantName
         item.parentProductId = String(variantPickerProduct.id)
@@ -440,7 +442,7 @@ export default function Pos(props: PosProps = {}) {
           image: scanned.image_url || '/product-placeholder.svg',
           imageUrl: scanned.image_url || '/product-placeholder.svg',
           barcode: scanned.barcode,
-        }, 1)
+        }, 1, scanned.variant_id ? { price: scanned.variant_price } : null)
         item.variantId = scanned.variant_id || undefined
         item.variantName = scanned.variant_name || undefined
         item.parentProductId = String(scanned.product_id)
@@ -469,24 +471,8 @@ export default function Pos(props: PosProps = {}) {
         setError(`Barcode "${clean}" not recognized in catalog`)
         return
       }
-      const prod = record.product
-      const varnt = record.variant
-      const effectiveStock = varnt ? (Number(varnt.stock) || 0) : 999
-      const price = varnt?.price ? Number(varnt.price) : Number(prod.price)
-
-      const payload: ScannedItemPayload = {
-        product_id: record.product_id,
-        variant_id: record.variant_id || null,
-        product_name: prod.name,
-        name_ta: prod.name_ta,
-        variant_name: varnt?.variant_name,
-        price: price,
-        offer_price: prod.offer_price ? Number(prod.offer_price) : undefined,
-        stock: effectiveStock,
-        barcode: clean,
-        image_url: prod.image_url,
-        category: prod.category,
-      }
+      // the registered size with its own price and stock (same builder as the scanner box)
+      const payload: ScannedItemPayload = scanPayload(record as ScanRecord, clean)
       handleScannedItem(payload)
     } catch (err) {
       console.error('Failed to process incoming barcode:', err)

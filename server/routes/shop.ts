@@ -257,6 +257,16 @@ const adminRoutes = [
       })
     },
   }),
+  // Admin only: remove a request for good (its items and status history go with it, ON DELETE CASCADE)
+  route({
+    method: 'delete', path: '/api/shop-admin/enquiries/:id', perm: 'shop.enquiries',
+    async handler({ db, params }) {
+      if (!/^[0-9a-f-]{36}$/i.test(params.id)) throw notFound()
+      const r = await db.query(`DELETE FROM public.shop_enquiries WHERE id = $1`, [params.id])
+      if (!r.rowCount) throw notFound()
+      return { ok: true }
+    },
+  }),
   route({
     method: 'get', path: '/api/shop-admin/enquiries/:id/history', perm: 'shop.enquiries',
     async handler({ db, params }) {

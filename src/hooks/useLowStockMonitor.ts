@@ -24,6 +24,13 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
   enabledRef.current = enabled
   const branchRef = useRef(branch)
   branchRef.current = branch
+  // true until the first completed check after login / entering a branch: only that check may ring the alarm.
+  // The 15 s re-checks run quietly, so a sale at the counter never sets it off (Inventory raises it on its own).
+  const alertNextRef = useRef(true)
+  const report = (items: LowStockItem[]) => {
+    setLowStockItems(items, { alert: alertNextRef.current })
+    alertNextRef.current = false
+  }
 
   const checkStockLevels = async (force: boolean = false) => {
     if (!enabled || (isCheckingRef.current && !force)) return
@@ -44,7 +51,7 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
       const targets = allTargets.filter((t) => alertSetting(t ?? ownBranch) === true)
       const flagged: LowStockItem[] = []
       if (!targets.length) {
-        if (enabledRef.current && branchRef.current === checkedBranch) setLowStockItems([]) // off: no popup, no sound
+        if (enabledRef.current && branchRef.current === checkedBranch) report([]) // off: no popup, no sound
         return
       }
 
@@ -59,7 +66,7 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
           flagged.push({ id: it.id, name: it.name, ...(it.variant_name ? { variantName: it.variant_name } : {}), stock: Number(it.quantity) || 0, alertThreshold: Number(it.threshold) || 5 })
         }
         if (!enabledRef.current || branchRef.current !== checkedBranch) return
-        setLowStockItems(flagged)
+        report(flagged)
         return
       }
 
@@ -130,13 +137,16 @@ export function useLowStockMonitor(enabled: boolean = true, role?: string | null
 
       // A check that was in flight during logout must not restart the alarm
       if (!enabledRef.current || branchRef.current !== checkedBranch) return
-      setLowStockItems(flagged)
+      report(flagged)
     } catch (err) {
       console.warn('Stock monitor error:', err)
     } finally {
       isCheckingRef.current = false
     }
   }
+
+  // login, logout, or switching into another branch's POS: the next check may ring again
+  useEffect(() => { alertNextRef.current = true }, [enabled, role, branch])
 
   useEffect(() => {
     if (!enabled) {

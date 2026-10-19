@@ -15,7 +15,8 @@ interface AlarmState {
   lowStockItems: LowStockItem[]
   isAlarmActive: boolean
   silencedItemIds: Set<string | number>
-  setLowStockItems: (items: LowStockItem[]) => void
+  /** alert false: refresh the list quietly (never starts the popup / sound; stops it when nothing is low any more) */
+  setLowStockItems: (items: LowStockItem[], opts?: { alert?: boolean }) => void
   silenceAlarm: () => void
   resetSilencedState: () => void
 }
@@ -25,8 +26,19 @@ export const useAlarmStore = create<AlarmState>((set, get) => ({
   isAlarmActive: false,
   silencedItemIds: new Set<string | number>(),
 
-  setLowStockItems: (items) => {
+  setLowStockItems: (items, { alert = true } = {}) => {
     const { silencedItemIds, lowStockItems: previousItems, isAlarmActive: wasAlarmActive } = get()
+
+    // background re-check (e.g. while billing): keep the list fresh, but only login / Inventory may raise the alarm
+    if (!alert) {
+      if (items.length === 0) {
+        if (wasAlarmActive) alarmSound.stopAlert()
+        set({ lowStockItems: items, isAlarmActive: false, silencedItemIds: new Set() })
+      } else {
+        set({ lowStockItems: items })
+      }
+      return
+    }
 
     // Alarm triggers only if there is at least one low-stock item that has not been acknowledged
     const hasUnsilencedLowStock = items.some(

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Download, MessageCircle, Phone, RefreshCw } from 'lucide-react'
+import { Download, MessageCircle, Phone, RefreshCw, Trash2 } from 'lucide-react'
 import { api } from '../../lib/apiClient'
 import { buildCsv, downloadCsvFile } from '../../lib/csv'
 import { formatCurrency } from '../../lib/retail'
@@ -20,7 +20,7 @@ const PERIODS: Array<{ id: Exclude<Period, 'custom'>; label: string }> = [
   { id: 'all', label: 'All Time' }, { id: 'today', label: 'Today' }, { id: 'week', label: 'This Week' }, { id: 'month', label: 'This Month' }, { id: 'year', label: 'This Year' },
 ]
 // column widths: fixed, so rows never jump when a cell's content changes (the table scrolls sideways inside its box)
-const COLS: Array<[string, number]> = [['Request ID', 130], ['Date & Time', 150], ['Branch', 150], ['Customer', 190], ['Address', 220], ['Items', 230], ['Total', 100], ['Delivery', 160], ['Status', 150], ['Notes', 220]]
+const COLS: Array<[string, number]> = [['Request ID', 130], ['Date & Time', 150], ['Branch', 150], ['Customer', 190], ['Address', 220], ['Items', 230], ['Total', 100], ['Delivery', 160], ['Status', 150], ['Notes', 220], ['', 90]]
 const ITEMS_SHOWN = 2
 /** 'YYYY-MM-DD' -> 'dd/mm/yyyy' */
 const dmy = (iso?: string | null) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '')
@@ -82,6 +82,18 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
       setRows((rs) => rs.map((r) => (r.id === e.id ? { ...r, ...res.enquiry } : r)))
       if ('status' in body) void load()
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save') }
+    finally { setSaving(null) }
+  }
+
+  const remove = async (e: Enquiry) => {
+    if (!window.confirm(`Delete request ${e.enquiry_no} from ${e.customer_name}? This cannot be undone.`)) return
+    setSaving(e.id); setError('')
+    try {
+      await api('DELETE', `/api/shop-admin/enquiries/${e.id}`)
+      setRows((rs) => rs.filter((r) => r.id !== e.id))
+      if (focusId === e.id) focus(null)
+      void load() // refresh the New counts
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not delete') }
     finally { setSaving(null) }
   }
 
@@ -233,10 +245,16 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
                         onBlur={() => { if (draft.note !== undefined && draft.note !== e.admin_note) void save(e, { admin_note: draft.note }) }}
                         className="w-full rounded-lg border border-gray-200 px-2 py-1 text-xs" data-testid="enq-admin-note" />
                     </td>
+                    <td className="px-2 py-3">
+                      <button type="button" disabled={saving === e.id} onClick={(ev) => { ev.stopPropagation(); void remove(e) }} aria-label={`Delete ${e.enquiry_no}`}
+                        className="inline-flex h-9 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-[11px] font-black text-red-700 hover:bg-red-100 cursor-pointer disabled:opacity-50" data-testid="enq-delete">
+                        <Trash2 size={12} /> Delete
+                      </button>
+                    </td>
                   </tr>
                 )
               })}
-              {rows.length === 0 && !loading && <tr><td colSpan={10} className="px-4 py-8 text-center text-[#374151]">No requests</td></tr>}
+              {rows.length === 0 && !loading && <tr><td colSpan={COLS.length} className="px-4 py-8 text-center text-[#374151]">No requests</td></tr>}
             </tbody>
           </table>
         </div>

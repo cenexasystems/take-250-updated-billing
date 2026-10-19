@@ -211,20 +211,24 @@ export default function Shop() {
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
             {shown.map((p) => (
               <div key={p.id} className="flex flex-col overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-sm" data-testid="shop-product">
-                <button type="button" onClick={() => setDetail(p)} className="aspect-square w-full bg-[#F3F4F6] cursor-pointer" aria-label={`View ${p.name}`}>
-                  {p.image ? <img src={p.image} alt="" className="h-full w-full object-cover" loading="lazy" /> : <ShoppingBag className="mx-auto h-10 w-10 text-[#D1D5DB]" />}
+                <button type="button" onClick={() => setDetail(p)} className="flex aspect-square w-full items-center justify-center overflow-hidden bg-[#F3F4F6] p-0 cursor-pointer" aria-label={`View ${p.name}`}>
+                  {p.image ? <img src={p.image} alt="" className="block h-full w-full object-cover" loading="lazy" /> : <ShoppingBag className="h-10 w-10 text-[#D1D5DB]" />}
                 </button>
                 <div className="flex flex-1 flex-col p-3">
-                  <p className="line-clamp-2 text-[13px] font-black text-[#111111]">{p.name}</p>
-                  <p className="mt-0.5 text-[14px] font-black" style={{ color: THEME_PALETTE.accentDark }}>{p.variants.length > 1 ? 'from ' : ''}{formatCurrency(p.price)}</p>
+                  {/* name always takes two lines, so price / stock / buttons line up across a row */}
+                  <p className="line-clamp-2 min-h-[2.5em] text-[13px] font-black leading-[1.25] text-[#111111]">{p.name}</p>
+                  <p className="mt-1 text-[14px] font-black" style={{ color: THEME_PALETTE.accentDark }}>{p.variants.length > 1 ? 'from ' : ''}{formatCurrency(p.price)}</p>
                   <span className={`mt-1 w-fit rounded-full px-2 py-0.5 text-[10px] font-black ${p.in_stock ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}`} data-testid="shop-stock">{p.in_stock ? 'In stock' : 'Out of stock'}</span>
-                  {p.variants.length > 0 && (
-                    <select value={size[p.id] ?? ''} onChange={(e) => setSize((s) => ({ ...s, [p.id]: e.target.value }))} className="mt-2 h-9 rounded-lg border border-[#E5E7EB] bg-white px-2 text-[12px] font-bold" aria-label={`Size of ${p.name}`} data-testid="shop-size">
-                      <option value="">Choose size</option>
-                      {p.variants.map((v) => <option key={v.id} value={v.id} disabled={!v.in_stock}>{v.name} · {formatCurrency(v.price)}{v.in_stock ? '' : ' (out of stock)'}</option>)}
-                    </select>
-                  )}
-                  <button type="button" disabled={!p.in_stock} onClick={() => addToCart(p)} className="mt-auto block w-full rounded-xl bg-[#111111] py-2 text-center text-[12px] font-black text-[#D4AF37] disabled:opacity-40 cursor-pointer" style={{ marginTop: 'auto' }} data-testid="shop-add">{p.in_stock ? 'Add to cart' : 'Out of stock'}</button>
+                  {/* size + Add to cart stay together at the bottom of the card, with a fixed gap */}
+                  <div className="mt-auto flex flex-col gap-2 pt-3">
+                    {p.variants.length > 0 && (
+                      <select value={size[p.id] ?? ''} onChange={(e) => setSize((s) => ({ ...s, [p.id]: e.target.value }))} className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-white px-2.5 text-[12px] font-bold" aria-label={`Size of ${p.name}`} data-testid="shop-size">
+                        <option value="">Choose size</option>
+                        {p.variants.map((v) => <option key={v.id} value={v.id} disabled={!v.in_stock}>{v.name} · {formatCurrency(v.price)}{v.in_stock ? '' : ' (out of stock)'}</option>)}
+                      </select>
+                    )}
+                    <button type="button" disabled={!p.in_stock} onClick={() => addToCart(p)} className="h-10 w-full rounded-xl bg-[#111111] text-center text-[12px] font-black text-[#D4AF37] disabled:opacity-40 cursor-pointer" data-testid="shop-add">{p.in_stock ? 'Add to cart' : 'Out of stock'}</button>
+                  </div>
                 </div>
               </div>
             ))}

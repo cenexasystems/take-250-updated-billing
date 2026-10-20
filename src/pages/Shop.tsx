@@ -212,7 +212,8 @@ export default function Shop() {
             {shown.map((p) => (
               <div key={p.id} className="flex flex-col overflow-hidden rounded-2xl border border-[#E5E7EB] bg-white shadow-sm" data-testid="shop-product">
                 <button type="button" onClick={() => setDetail(p)} className="flex aspect-square w-full items-center justify-center overflow-hidden bg-[#F3F4F6] p-0 cursor-pointer" aria-label={`View ${p.name}`}>
-                  {p.image ? <img src={p.image} alt="" className="block h-full w-full object-cover" loading="lazy" /> : <ShoppingBag className="h-10 w-10 text-[#D1D5DB]" />}
+                  {/* contain, not cover: the whole photo shows, centred, and is never cut at the sides */}
+                  {p.image ? <img src={p.image} alt="" className="block h-full w-full object-contain object-center" loading="lazy" /> : <ShoppingBag className="h-10 w-10 text-[#D1D5DB]" />}
                 </button>
                 <div className="flex flex-1 flex-col p-3">
                   {/* name always takes two lines, so price / stock / buttons line up across a row */}
@@ -320,7 +321,7 @@ export default function Shop() {
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/50 sm:items-center" role="dialog" aria-modal="true" aria-label={detail.name} data-testid="shop-detail" onClick={() => setDetail(null)}>
           <div className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white p-5 sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3"><h2 className="text-lg font-black text-[#111111]">{detail.name}</h2><button type="button" onClick={() => setDetail(null)} aria-label="Close" className="cursor-pointer"><X size={20} /></button></div>
-            <div className="mt-3 aspect-square w-full overflow-hidden rounded-2xl bg-[#F3F4F6]">{detail.image && <img src={detail.image} alt="" className="h-full w-full object-cover" />}</div>
+            <div className="mt-3 aspect-square w-full overflow-hidden rounded-2xl bg-[#F3F4F6]">{detail.image && <img src={detail.image} alt="" className="h-full w-full object-contain object-center" />}</div>
             <p className="mt-3 text-xl font-black" style={{ color: THEME_PALETTE.accentDark }}>{formatCurrency(detail.variants.find((v) => v.id === size[detail.id])?.price ?? detail.price)}</p>
             <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-black ${detail.in_stock ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>{detail.in_stock ? 'In stock' : 'Out of stock'}</span>
             {detail.description && <p className="mt-3 whitespace-pre-line text-sm text-[#374151]">{detail.description}</p>}

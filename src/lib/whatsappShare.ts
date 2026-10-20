@@ -8,7 +8,9 @@ import { canonicalPhone } from './phone'
  * decided and started synchronously; the PDF itself may still be made afterwards (`file` can be a function / promise).
  *
  *   a) the browser can share files (Android, iOS / iPadOS Safari, Windows Chrome / Edge with the Windows share sheet):
- *      the share sheet gets ONE file and no title / text / url. Closing the sheet is not an error.
+ *      the share sheet gets ONE file and no title / text / url. Closing the sheet is not an error. If the browser refuses
+ *      the sheet because fetching the bill / making the PDF took too long after the tap, a "Send on WhatsApp" button
+ *      shares the ready PDF on the next tap (no download dead end on a phone).
  *   b) otherwise (desktop browsers without file sharing): the PDF is downloaded, the customer's chat (91XXXXXXXXXX) is
  *      opened in a tab that was opened ON the click (so no popup blocker), with no prefilled text, and a lasting message
  *      explains how to attach the file, with "Download again", "Open WhatsApp app" (whatsapp://) and, where the bill has a
@@ -86,13 +88,27 @@ export async function sendPdfOnWhatsApp(opts: {
   }
 
   if (sharing) {
+    const share = () => (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({ files: [file] })
     try {
       // files ONLY: no title, text or url, so nothing but the PDF reaches WhatsApp
-      await (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({ files: [file] })
+      await share()
       return 'shared'
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return 'cancelled' // the sheet was closed: not an error
-      // e.g. the click's permission ran out while the PDF was being made: fall back to the download below
+      // the tap's permission ran out while the bill was fetched / the PDF was made (iPhone Safari allows very little time).
+      // On a phone a download is a dead end: keep the ready PDF and let ONE more tap open the share sheet (a fresh tap is allowed).
+      if (e instanceof DOMException && e.name === 'NotAllowedError') {
+        const retry = () => {
+          share().then(() => toast.clear()).catch((err) => {
+            if (err instanceof DOMException && err.name === 'AbortError') return
+            downloadPdf(file)
+            toast.show({ kind: 'warn', sticky: true, actions: [{ label: 'Download again', onClick: () => downloadPdf(file) }], text: `Sharing is not available here. ${file.name} was downloaded: send it on WhatsApp yourself.` })
+          })
+        }
+        toast.show({ kind: 'ok', sticky: true, actions: [{ label: 'Send on WhatsApp', onClick: retry }, { label: 'Download', onClick: () => downloadPdf(file) }], text: `${label} PDF is ready. Tap "Send on WhatsApp" and choose WhatsApp.` })
+        return 'downloaded'
+      }
+      // any other failure: fall back to the download below
     }
   }
 

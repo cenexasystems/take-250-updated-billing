@@ -9,7 +9,7 @@ import CenexaFooter from '../components/common/CenexaFooter'
 import { THEME_PALETTE } from '../lib/brand'
 import { uploadInvoicePdf } from '../lib/storage'
 import { isUuid, formatInvoiceNo } from '../lib/retail'
-import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBill } from '../lib/invoiceDoc'
+import { invoiceDocFromAdvance, invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredAdvance, type StoredBill } from '../lib/invoiceDoc'
 import { invoicePdfShareName, pdfNamed, sendInvoiceToChat } from '../lib/whatsappShare'
 
 function buildLookupCandidates(id: string): string[] {
@@ -131,6 +131,8 @@ export default function DigitalInvoice() {
                 created_at: adv.completed_at || adv.created_at,
                 branch: adv.branch_id,
               }
+              // the same builder as the advance receipt: breakdown rows, deposit paid (date, mode) and balance due
+              built = invoiceDocFromAdvance(adv as StoredAdvance)
             }
             break
           } catch (err) {

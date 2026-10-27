@@ -111,7 +111,12 @@ const publicRoutes = [
       const adv = (await db.query(
         `SELECT * FROM public.advance_orders WHERE invoice_number = ANY($1) OR deposit_id = ANY($1) LIMIT 2`, [[ref, stripped]])).rows
       // exactly one bill, or the generic miss (never "one of several")
-      if (adv.length === 1) return { kind: 'advance', order: adv[0], items: [] }
+      if (adv.length === 1) {
+        const dep = (await db.query(
+          `SELECT payment_method, received_at FROM public.advance_order_payments WHERE advance_order_id = $1 AND branch_id = $2 AND payment_type = 'deposit'`,
+          [adv[0].id, adv[0].branch_id])).rows[0]
+        return { kind: 'advance', order: { ...adv[0], deposit_method: dep?.payment_method ?? null, deposit_at: dep?.received_at ?? null }, items: [] }
+      }
       throw notFound(NOT_FOUND)
     },
   }),

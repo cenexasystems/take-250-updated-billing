@@ -302,7 +302,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
     sendInvoiceToChat({
       file: async () => pdfNamed(await invoiceFile(order), invoicePdfShareName(order.invoice_number || order.deposit_id)),
       phone: order.phone, label: 'Invoice', link: invoicePageLink(order.invoice_number || order.deposit_id),
-      invoiceNo: order.invoice_number || order.deposit_id, total: order.total_amount, doc: invoiceDocFromAdvance(order as unknown as StoredAdvance), branch: order.branch || branch,
+      invoiceNo: order.invoice_number || order.deposit_id, total: order.total_amount, doc: () => order.completed_order_id ? finalInvoiceDoc(order) : Promise.resolve(invoiceDocFromAdvance(order as unknown as StoredAdvance)), branch: order.branch || branch,
     })
   }
 

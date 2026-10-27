@@ -113,8 +113,11 @@ export function sendInvoiceToChat(opts: {
   phone?: string | null
   invoiceNo: string
   total?: number | null
-  /** the bill as the invoice shows it: its items and full breakdown go into the message (else only the total) */
-  doc?: InvoiceDoc
+  /**
+   * the bill as the invoice shows it: its items and full breakdown go into the message (else only the total). A function
+   * fetches the STORED bill first (a returned / advance bill), the chat tab is then opened on the click and filled after.
+   */
+  doc?: InvoiceDoc | (() => Promise<InvoiceDoc | null>)
   /** the bill's branch: its place name opens the message */
   branch?: string | null
   /** the bill's public page (invoicePageLink) */
@@ -127,24 +130,44 @@ export function sendInvoiceToChat(opts: {
 }): void {
   const number = whatsAppNumber(opts.phone)
   const kind = opts.kind || 'invoice'
+  const toast = useShareToast.getState()
   const pdfFlow = () => void sendPdfOnWhatsApp({ file: opts.file, phone: opts.phone, label: opts.label || 'Invoice', link: opts.link })
   if (!number) { pdfFlow(); return }
   const no = kind === 'invoice' ? formatInvoiceNo(opts.invoiceNo) : opts.invoiceNo
-  const head = [
+  const urlFor = (doc: InvoiceDoc | null) => chatLinkUrl(number, [
     thanksLine(opts.branch),
     `${kind === 'invoice' ? 'Invoice' : 'Advance receipt'}: ${no}`,
-    ...(opts.doc ? ['', ...invoiceSummaryLines(opts.doc)]
+    ...(doc ? ['', ...invoiceSummaryLines(doc)]
       : opts.total != null && Number.isFinite(Number(opts.total)) ? [`${kind === 'invoice' ? 'Total' : 'Advance paid'}: ₹${Number(opts.total).toFixed(2)}`] : []),
-  ]
-  const url = chatLinkUrl(number, head, `Click here to download ${kind}`, opts.link)
-  const w = window.open(url, '_blank')
-  if (w) { try { w.opener = null } catch { /* cross-origin already */ } }
-  else window.location.href = url // a blocked window (some in-app browsers): go in this tab
-  useShareToast.getState().show({
+  ], `Click here to download ${kind}`, opts.link)
+  const done = (url: string) => toast.show({
     kind: 'ok', sticky: true,
     text: `WhatsApp chat with +91 ${number.slice(2)} opened with ${kind} ${no}. Tap Send in WhatsApp.`,
     actions: [{ label: 'Open chat again', href: url }, { label: 'Send PDF file instead', onClick: pdfFlow }],
   })
+
+  if (typeof opts.doc !== 'function') {
+    const url = urlFor(opts.doc ?? null)
+    const w = window.open(url, '_blank')
+    if (w) { try { w.opener = null } catch { /* cross-origin already */ } }
+    else window.location.href = url // a blocked window (some in-app browsers): go in this tab
+    done(url)
+    return
+  }
+  // the bill is fetched first: open the chat tab NOW (on the click), fill it once the stored bill is here
+  const load = opts.doc
+  const tab = window.open('', '_blank')
+  void (async () => {
+    let doc: InvoiceDoc | null = null
+    try { doc = await load() } catch (e) {
+      try { tab?.close() } catch { /* already closed */ }
+      toast.show({ kind: 'err', text: `Could not load the ${kind}${e instanceof Error && e.message ? `: ${e.message}` : ''}` })
+      return
+    }
+    const url = urlFor(doc)
+    if (tab) { try { tab.opener = null; tab.location.href = url } catch { /* the tab was closed */ } }
+    done(url) // "Open chat again" is there when the tab was blocked
+  })()
 }
 
 /**

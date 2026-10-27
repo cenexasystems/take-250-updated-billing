@@ -1154,7 +1154,7 @@ export default function Dashboard() {
       },
       phone: order.phone, label: 'Invoice', link: invoicePageLink(order.invoice_no || order.id),
       invoiceNo: order.invoice_no || order.id, total: order.total, branch: order.branch,
-      doc: invoiceDocFromBill(order as unknown as StoredBill, (order as unknown as { items?: Array<Record<string, unknown>> }).items ?? []),
+      doc: () => orderInvoiceDoc(order),
     })
   }
 

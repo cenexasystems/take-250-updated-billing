@@ -262,7 +262,7 @@ export default function DigitalInvoice() {
   // WhatsApp = a message with this invoice's link to the customer's chat, from the tap on the WhatsApp button.
   const shareViaWhatsApp = () => {
     const pdfUrl = invoice.pdf_url || invoice.invoice_pdf_url
-    sendInvoiceToChat({ file: () => pdfNamed(invoicePdfFile(doc), invoicePdfShareName(invoice.invoice_no)), phone: invoice.phone, label: 'Invoice', link: window.location.href, invoiceNo: invoice.invoice_no, total: invoice.total, branch: invoice.branch })
+    sendInvoiceToChat({ file: () => pdfNamed(invoicePdfFile(doc), invoicePdfShareName(invoice.invoice_no)), phone: invoice.phone, label: 'Invoice', link: window.location.href, invoiceNo: invoice.invoice_no, total: invoice.total, doc, branch: invoice.branch })
 
     // Proactively upload invoice PDF in background if needed
     if (!pdfUrl) {

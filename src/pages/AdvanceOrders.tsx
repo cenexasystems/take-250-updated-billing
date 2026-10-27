@@ -6,7 +6,7 @@ import { CalendarDays, CheckCircle2, Clock3, Download, Eye, FileText, MessageCir
 import { api } from '../lib/apiClient'
 import { formatCurrency } from '../lib/retail'
 import { invoicePdfFile } from '../lib/invoicePdf'
-import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBill } from '../lib/invoiceDoc'
+import { invoiceDocFromAdvance, invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredAdvance, type StoredBill } from '../lib/invoiceDoc'
 import { printThermalReceipt } from '../lib/thermalPrint'
 import { invoicePageLink, invoicePdfShareName, pdfNamed, sendInvoiceToChat } from '../lib/whatsappShare'
 import { formatPhoneForDisplay } from '../lib/phone'
@@ -296,13 +296,13 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
   const downloadFinal = async (order: AdvanceOrder) => { try { downloadFile(await invoiceFile(order)) } catch (err) { setError(err instanceof Error ? err.message : 'Could not load the invoice') } }
   
   // WhatsApp = a link message to the customer's chat (advance receipt and final invoice), from the tap on the WhatsApp button; nothing is sent automatically
-  const whatsappDepositReceipt = (order: AdvanceOrder) => { sendInvoiceToChat({ file: () => advanceReceiptPdf(order), phone: order.phone, label: 'Advance receipt', kind: 'advance receipt', link: invoicePageLink(order.deposit_id), invoiceNo: order.deposit_id, total: order.deposit_amount, branch: order.branch || branch }) }
+  const whatsappDepositReceipt = (order: AdvanceOrder) => { sendInvoiceToChat({ file: () => advanceReceiptPdf(order), phone: order.phone, label: 'Advance receipt', kind: 'advance receipt', link: invoicePageLink(order.deposit_id), invoiceNo: order.deposit_id, total: order.deposit_amount, doc: invoiceDocFromAdvance(order as unknown as StoredAdvance), branch: order.branch || branch }) }
   const whatsappInvoice = async (order: AdvanceOrder) => {
     // synchronously from the click: the helper opens what needs the click first, then the final bill is fetched
     sendInvoiceToChat({
       file: async () => pdfNamed(await invoiceFile(order), invoicePdfShareName(order.invoice_number || order.deposit_id)),
       phone: order.phone, label: 'Invoice', link: invoicePageLink(order.invoice_number || order.deposit_id),
-      invoiceNo: order.invoice_number || order.deposit_id, total: order.total_amount, branch: order.branch || branch,
+      invoiceNo: order.invoice_number || order.deposit_id, total: order.total_amount, doc: invoiceDocFromAdvance(order as unknown as StoredAdvance), branch: order.branch || branch,
     })
   }
 
@@ -331,7 +331,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
         items={d.items.map((it, k) => ({ key: String(k), label: `${it.name} × ${it.quantity}`, amount: it.line_total }))}
         doc={d}
         onPrint={() => printThermalReceipt(d)}
-        onWhatsApp={() => sendInvoiceToChat({ file: () => pdfNamed(invoicePdfFile(d), invoicePdfShareName(d.invoiceNo)), phone: d.phone, label: 'Invoice', link: invoicePageLink(d.invoiceNo), invoiceNo: d.invoiceNo, total: d.total, branch: d.branch || branch })}
+        onWhatsApp={() => sendInvoiceToChat({ file: () => pdfNamed(invoicePdfFile(d), invoicePdfShareName(d.invoiceNo)), phone: d.phone, label: 'Invoice', link: invoicePageLink(d.invoiceNo), invoiceNo: d.invoiceNo, total: d.total, doc: d, branch: d.branch || branch })}
         onDownload={() => downloadFile(invoicePdfFile(d))}
         onNewSale={() => navigate('/pos')}
         onClose={() => setDone(null)}

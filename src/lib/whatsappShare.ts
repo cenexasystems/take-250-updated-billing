@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { formatInvoiceNo } from './retail'
+import type { InvoiceDoc } from './invoiceDoc'
 import { canonicalPhone } from './phone'
 import { getBranchProfile } from './branchProfile'
 import { orderFromHereText, shopLink } from './shopLink'
@@ -74,6 +75,30 @@ const orderLine = () => orderFromHereText(shopLink(window.location.origin))
 const thanksLine = (branch?: string | null) =>
   // the branch's own place name (Karanthai / Kinathukadavu / Pollachi): two branches share the Store Settings shop name
   `Thank you for shopping at ${branch ? branchLabel(branch as PosBranch) : getBranchProfile(branch).name}!`
+const rupees = (v: number) => `₹${(Number(v) || 0).toFixed(2)}`
+const MAX_ITEM_LINES = 15
+
+/**
+ * The bill as plain lines for the chat, from the SAME InvoiceDoc every invoice output draws: the items, then Subtotal,
+ * each discount (coupon / manual with its percentage), taxable amount, CGST / SGST with the rate and amount, delivery,
+ * TOTAL, and for an advance order the deposits and the balance. Nothing is calculated here.
+ */
+export function invoiceSummaryLines(doc: InvoiceDoc): string[] {
+  const lines: string[] = []
+  const items = doc.items.slice(0, MAX_ITEM_LINES)
+  items.forEach((it, i) => lines.push(`${i + 1}. ${it.name} x ${it.quantity}: ${rupees(it.line_total)}`))
+  if (doc.items.length > items.length) lines.push(`+ ${doc.items.length - items.length} more item(s)`)
+  if (lines.length) lines.push('')
+  doc.rows.forEach((r) => lines.push(`${r.label}: ${r.kind === 'discount' ? '-' : ''}${rupees(r.amount)}`))
+  lines.push(`TOTAL: ${rupees(doc.total)}`)
+  if (doc.returns) lines.push(`${doc.returns.badge}`, `Returned: ${rupees(doc.returns.returned)}`, `Net amount: ${rupees(doc.returns.net)}`)
+  if (doc.advance) {
+    doc.advance.deposits.forEach((d) => lines.push(`${d.label}: ${rupees(d.amount)}`))
+    if (doc.advance.balance) lines.push(`${doc.advance.balance.label}: ${rupees(doc.advance.balance.amount)}`)
+  }
+  return lines
+}
+
 const chatLinkUrl = (number: string, head: string[], linkLabel: string, link: string) =>
   `${waChatUrl(number)}?text=${encodeURIComponent([...head, '', `${linkLabel}: ${link}`, '', orderLine()].join('\n'))}`
 
@@ -88,6 +113,8 @@ export function sendInvoiceToChat(opts: {
   phone?: string | null
   invoiceNo: string
   total?: number | null
+  /** the bill as the invoice shows it: its items and full breakdown go into the message (else only the total) */
+  doc?: InvoiceDoc
   /** the bill's branch: its place name opens the message */
   branch?: string | null
   /** the bill's public page (invoicePageLink) */
@@ -106,7 +133,8 @@ export function sendInvoiceToChat(opts: {
   const head = [
     thanksLine(opts.branch),
     `${kind === 'invoice' ? 'Invoice' : 'Advance receipt'}: ${no}`,
-    ...(opts.total != null && Number.isFinite(Number(opts.total)) ? [`${kind === 'invoice' ? 'Total' : 'Advance paid'}: ₹${Number(opts.total).toFixed(2)}`] : []),
+    ...(opts.doc ? ['', ...invoiceSummaryLines(opts.doc)]
+      : opts.total != null && Number.isFinite(Number(opts.total)) ? [`${kind === 'invoice' ? 'Total' : 'Advance paid'}: ₹${Number(opts.total).toFixed(2)}`] : []),
   ]
   const url = chatLinkUrl(number, head, `Click here to download ${kind}`, opts.link)
   const w = window.open(url, '_blank')

@@ -3,7 +3,7 @@ import { MessageCircle, X } from 'lucide-react'
 import { api } from '../../lib/apiClient'
 import { couponPdfFile } from '../../lib/couponPdf'
 import { canonicalPhone } from '../../lib/phone'
-import { sendStoredPdfLinkToChat } from '../../lib/whatsappShare'
+import { sendPdfOnWhatsApp, sendStoredPdfLinkToChat } from '../../lib/whatsappShare'
 import Toggle from '../common/Toggle'
 import CustomerLookupStatus, { clearCustomerLookupCache, useCustomerLookup } from '../pos/CustomerLookupStatus'
 import type { PosBranch } from '../../store/store'
@@ -25,7 +25,7 @@ export default function SendCouponModal({ coupon, branch, onClose, onSent }: { c
   const lookup = useCustomerLookup(phone, branch)
   const canonical = canonicalPhone(phone)
 
-  const send = async () => {
+  const send = async (mode: 'link' | 'pdf' = 'link') => {
     setError(''); setDone('')
     if (!canonical) { setError('Enter a full 10-digit mobile number'); return }
     setBusy(true)
@@ -35,11 +35,13 @@ export default function SendCouponModal({ coupon, branch, onClose, onSent }: { c
         branch, code: coupon.code, percentage: Number(coupon.percentage), expiryDate: coupon.expiry_date,
         usageLimit: coupon.usage_limit, perCustomerLimit: coupon.per_customer_limit ?? null, minOrderValue: Number(coupon.min_order_value || 0), customerName, phone: canonical,
       })
-      // coupons have no public page: the PDF is stored and the customer gets its link
-      const shared = await sendStoredPdfLinkToChat({
-        file, phone: canonical, branch, label: 'coupon', storeName: `coupon-${coupon.code}`,
-        head: [`Here is your coupon from ${branchLabel(branch as PosBranch)}!`, `Coupon code: ${coupon.code} (${Number(coupon.percentage)}% off)`],
-      })
+      // link: coupons have no public page, so the PDF is stored and the customer gets its link; pdf: the share sheet / download
+      const shared = mode === 'pdf'
+        ? await sendPdfOnWhatsApp({ file, phone: canonical, label: 'Coupon' })
+        : await sendStoredPdfLinkToChat({
+          file, phone: canonical, branch, label: 'coupon', storeName: `coupon-${coupon.code}`,
+          head: [`Here is your coupon from ${branchLabel(branch as PosBranch)}!`, `Coupon code: ${coupon.code} (${Number(coupon.percentage)}% off)`],
+        })
       if (shared === 'cancelled') { setError('Sharing was cancelled. Nothing was recorded.'); return }
       if (shared === 'failed') { setError('The coupon PDF could not be prepared. Nothing was recorded.'); return }
       await api('POST', `/api/coupons/${coupon.id}/sends`, { body: { phone: canonical, customer_name: customerName, customer_specific: specific }, branchId: branch })
@@ -60,7 +62,7 @@ export default function SendCouponModal({ coupon, branch, onClose, onSent }: { c
           <h3 className="text-base font-black text-[#111111]">Send coupon · <span className="font-mono uppercase tracking-wider text-[#7A1220]">{coupon.code}</span></h3>
           <button type="button" onClick={onClose} aria-label="Close" className="h-9 w-9 shrink-0 rounded-xl border border-[#E5E7EB] text-[#111111] cursor-pointer"><X size={16} className="mx-auto" /></button>
         </div>
-        <p className="mt-1 text-xs font-semibold text-[#6B7280]">The coupon goes as a download link in the customer's WhatsApp chat. It is recorded once the chat has been opened.</p>
+        <p className="mt-1 text-xs font-semibold text-[#6B7280]">The coupon goes as a download link in the customer's WhatsApp chat, or as a PDF with "Generate & share PDF". It is recorded once the chat or share sheet has been used.</p>
 
         <div className="mt-4 space-y-4">
           <div className="space-y-1.5">
@@ -98,11 +100,15 @@ export default function SendCouponModal({ coupon, branch, onClose, onSent }: { c
         {error && <p className="mt-3 text-sm font-bold text-red-600" role="alert">{error}</p>}
         {done && <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700" data-testid="send-coupon-done">{done}</div>}
 
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
           <button type="button" onClick={onClose} className="h-11 flex-1 rounded-xl border border-[#E5E7EB] text-sm font-black text-[#111111] cursor-pointer">{done ? 'Done' : 'Cancel'}</button>
-          <button type="button" onClick={() => void send()} disabled={busy || !canonical}
+          <button type="button" onClick={() => void send('link')} disabled={busy || !canonical}
             className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#25D366] text-sm font-black text-white cursor-pointer disabled:cursor-not-allowed disabled:opacity-50">
-            <MessageCircle size={15} /> {busy ? 'Preparing…' : 'Generate & share PDF'}
+            <MessageCircle size={15} /> {busy ? 'Preparing…' : 'Send link on WhatsApp'}
+          </button>
+          <button type="button" onClick={() => void send('pdf')} disabled={busy || !canonical}
+            className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-[#25D366] text-sm font-black text-[#128C4A] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50">
+            <MessageCircle size={15} /> Generate &amp; share PDF
           </button>
         </div>
       </div>

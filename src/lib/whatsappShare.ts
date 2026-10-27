@@ -104,8 +104,11 @@ export function invoiceSummaryLines(doc: InvoiceDoc): string[] {
   return lines
 }
 
-const chatLinkUrl = (number: string, head: string[], linkLabel: string, link: string) =>
-  `${waChatUrl(number)}?text=${encodeURIComponent([...head, '', `${linkLabel}: ${link}`, '', orderLine()].join('\n'))}`
+/** link absent: the message carries only the lines (an advance order still waiting for its balance gets no invoice link) */
+const chatLinkUrl = (number: string, head: string[], linkLabel: string, link: string | null) =>
+  `${waChatUrl(number)}?text=${encodeURIComponent([...head, '', ...(link ? [`${linkLabel}: ${link}`, ''] : []), orderLine()].join('\n'))}`
+/** an advance order that still has a balance due: it is not a final invoice, so its message never carries an invoice link */
+const awaitingBalance = (doc: InvoiceDoc | null | undefined) => doc?.advance?.balance?.label === 'Balance due'
 
 /**
  * A document to the customer's OWN chat as a LINK: opens wa.me/91XXXXXXXXXX (straight into that number's chat, no contact
@@ -125,8 +128,8 @@ export function sendInvoiceToChat(opts: {
   doc?: InvoiceDoc | (() => Promise<InvoiceDoc | null>)
   /** the bill's branch: its place name opens the message */
   branch?: string | null
-  /** the bill's public page (invoicePageLink) */
-  link: string
+  /** the bill's public page (invoicePageLink); left out (null) it is a calculations-only message. A bill with a balance due never carries it. */
+  link?: string | null
   /** the PDF, for "Send PDF file instead" */
   file: File | Promise<File> | (() => File | Promise<File>)
   label?: string
@@ -137,18 +140,27 @@ export function sendInvoiceToChat(opts: {
   const kind = opts.kind || 'invoice'
   const toast = useShareToast.getState()
   const pdfFlow = () => void sendPdfOnWhatsApp({ file: opts.file, phone: opts.phone, label: opts.label || 'Invoice', link: opts.link })
-  if (!number) { pdfFlow(); return }
+  const noNumber = (doc: InvoiceDoc | null) => {
+    if (!opts.link || awaitingBalance(doc)) toast.show({ kind: 'warn', text: 'No valid mobile number on this bill, so no chat was opened.' })
+    else pdfFlow()
+  }
+  if (!number) {
+    if (typeof opts.doc === 'function') void opts.doc().then(noNumber, () => noNumber(null))
+    else noNumber(opts.doc ?? null)
+    return
+  }
   const no = kind === 'invoice' ? formatInvoiceNo(opts.invoiceNo) : opts.invoiceNo
   const urlFor = (doc: InvoiceDoc | null) => chatLinkUrl(number, [
     thanksLine(opts.branch),
-    `${kind === 'invoice' ? 'Invoice' : 'Advance receipt'}: ${no}`,
+    `${kind === 'invoice' && !awaitingBalance(doc) ? 'Invoice' : 'Advance receipt'}: ${no}`,
     ...(doc ? ['', ...invoiceSummaryLines(doc)]
       : opts.total != null && Number.isFinite(Number(opts.total)) ? [`${kind === 'invoice' ? 'Total' : 'Advance paid'}: ₹${Number(opts.total).toFixed(2)}`] : []),
-  ], `Click here to download ${kind}`, opts.link)
-  const done = (url: string) => toast.show({
+  ], `Click here to download ${kind}`, opts.link && !awaitingBalance(doc) ? opts.link : null)
+  const done = (url: string, doc: InvoiceDoc | null) => toast.show({
     kind: 'ok', sticky: true,
     text: `WhatsApp chat with +91 ${number.slice(2)} opened with ${kind} ${no}. Tap Send in WhatsApp.`,
-    actions: [{ label: 'Open chat again', href: url }, { label: 'Send PDF file instead', onClick: pdfFlow }],
+    // no PDF fallback on a message that must not carry the invoice
+    actions: [{ label: 'Open chat again', href: url }, ...(opts.link && !awaitingBalance(doc) ? [{ label: 'Send PDF file instead', onClick: pdfFlow }] : [])],
   })
 
   if (typeof opts.doc !== 'function') {
@@ -156,7 +168,7 @@ export function sendInvoiceToChat(opts: {
     const w = window.open(url, '_blank')
     if (w) { try { w.opener = null } catch { /* cross-origin already */ } }
     else window.location.href = url // a blocked window (some in-app browsers): go in this tab
-    done(url)
+    done(url, opts.doc ?? null)
     return
   }
   // the bill is fetched first: open the chat tab NOW (on the click), fill it once the stored bill is here
@@ -171,7 +183,7 @@ export function sendInvoiceToChat(opts: {
     }
     const url = urlFor(doc)
     if (tab) { try { tab.opener = null; tab.location.href = url } catch { /* the tab was closed */ } }
-    done(url) // "Open chat again" is there when the tab was blocked
+    done(url, doc) // "Open chat again" is there when the tab was blocked
   })()
 }
 

@@ -133,6 +133,9 @@ export default function DigitalInvoice() {
               }
               // the same builder as the advance receipt: breakdown rows, deposit paid (date, mode) and balance due
               built = invoiceDocFromAdvance(adv as StoredAdvance)
+              // the page keeps the number this bill was opened with (the invoice number), not the DEP- deposit id
+              built.invoiceNo = String(adv.invoice_number || adv.deposit_id || '')
+              built.payment = { split: false, label: adv.final_payment_method ? built.payment.label : 'Advance Payment', parts: [] }
             }
             break
           } catch (err) {

@@ -91,6 +91,11 @@ export function invoiceSummaryLines(doc: InvoiceDoc): string[] {
   if (lines.length) lines.push('')
   doc.rows.forEach((r) => lines.push(`${r.label}: ${r.kind === 'discount' ? '-' : ''}${rupees(r.amount)}`))
   lines.push(`TOTAL: ${rupees(doc.total)}`)
+  // how it was paid (an advance bill lists its deposit and balance payments below instead)
+  if (!doc.advance) {
+    if (doc.payment.split) { lines.push('Payment (Split):'); doc.payment.parts.forEach((p) => lines.push(`  ${p.label}: ${rupees(p.amount)}`)) }
+    else lines.push(`Payment: ${doc.payment.label}`)
+  }
   if (doc.returns) lines.push(`${doc.returns.badge}`, `Returned: ${rupees(doc.returns.returned)}`, `Net amount: ${rupees(doc.returns.net)}`)
   if (doc.advance) {
     doc.advance.deposits.forEach((d) => lines.push(`${d.label}: ${rupees(d.amount)}`))

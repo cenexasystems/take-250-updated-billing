@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { formatInvoiceNo } from './retail'
 import { canonicalPhone } from './phone'
 import { getBranchProfile } from './branchProfile'
-import { shopLink } from './shopLink'
+import { orderFromHereText, shopLink } from './shopLink'
 import { uploadInvoicePdf } from './storage'
 import { branchLabel } from './branchTheme'
 import type { PosBranch } from '../store/store'
@@ -70,7 +70,7 @@ const copy = async (text: string) => {
 }
 
 /** "Click here to order from here: <the shop of this deployment>" closes every message sent to a customer */
-const orderLine = () => `Click here to order from here: ${shopLink(window.location.origin)}`
+const orderLine = () => orderFromHereText(shopLink(window.location.origin))
 const thanksLine = (branch?: string | null) =>
   // the branch's own place name (Karanthai / Kinathukadavu / Pollachi): two branches share the Store Settings shop name
   `Thank you for shopping at ${branch ? branchLabel(branch as PosBranch) : getBranchProfile(branch).name}!`

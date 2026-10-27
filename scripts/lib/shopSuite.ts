@@ -265,7 +265,7 @@ export async function shopSuite(c: ShopCtx) {
       check(links.every((l) => l.endsWith('/shop') && !l.includes('//shop') && !/[?#]/.test(l)) && links[0] === 'https://take250.vercel.app/shop' && links[1] === 'https://take250-git-feature-x-team.vercel.app/shop' && links[3] === 'https://take250.in/shop',
         'shop: the copied link is <origin>/shop on production, preview and local addresses', links.join(' '))
       const inv = whatsappToUrl('9811100077', shopInviteText(links[0], 'Meena'))
-      check(inv === `https://wa.me/919811100077?text=${encodeURIComponent('Hi Meena, you can now order from TAKE250 online: https://take250.vercel.app/shop')}` && shopInviteText(links[0]).startsWith('Hi, you can'),
+      check(inv === `https://wa.me/919811100077?text=${encodeURIComponent('Hi Meena! Click here to order from here: https://take250.vercel.app/shop')}` && shopInviteText(links[0]).startsWith('Hi! Click here to order from here'),
         'shop: "Send to a customer" opens that customer\'s WhatsApp chat with the /shop link typed in', inv)
       // product cost / net profit / margin: the one shared calculation (table, cards, totals, CSV, PDF)
       const pp = productProfit({ qty: 3, revenue: 3000, cost: 1800, costedQty: 3 })
@@ -278,7 +278,7 @@ export async function shopSuite(c: ShopCtx) {
       check(tt.revenue === 3450 && tt.cost === 2250 && tt.profit === 1200 && tt.margin === 34.8 && tt.missingCount === 1 && missingCostNote(2) === '2 products have no purchase price; they are excluded from profit and margin totals.',
         'profit totals leave out products without a purchase price, and say how many', JSON.stringify(tt))
       const wa = whatsappShareUrl(links[0])
-      check(wa === 'https://wa.me/?text=https%3A%2F%2Ftake250.vercel.app%2Fshop' && decodeURIComponent(new URL(wa).searchParams.get('text') || '').endsWith('/shop'),
+      check(wa === `https://wa.me/?text=${encodeURIComponent('Click here to order from here: https://take250.vercel.app/shop')}` && decodeURIComponent(new URL(wa).searchParams.get('text') || '').endsWith('/shop'),
         'shop: the WhatsApp share link carries the encoded /shop link', wa)
       await q(`SAVEPOINT shop_new_branch`)
       let counter: any = null

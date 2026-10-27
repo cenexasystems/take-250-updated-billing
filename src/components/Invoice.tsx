@@ -188,7 +188,11 @@ export const Invoice: React.FC<InvoiceProps> = ({ doc, userId }) => {
                 ))}
                 {doc.advance.balance && (
                   <>
-                    <div style={row}><span style={{ fontSize: 12, color: '#666' }}>{doc.advance.balance.label}</span><span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(doc.advance.balance.amount)}</span></div>
+                    {doc.advance.balance.label === 'Balance due' ? (
+                      <div style={{ ...row, marginTop: 4 }} data-testid="invoice-balance-due"><span style={{ fontSize: 14, fontWeight: 900, color: THEME_PALETTE.accentDark }}>Balance due</span><span style={{ fontSize: 15, fontWeight: 900, color: THEME_PALETTE.accentDark, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(doc.advance.balance.amount)}</span></div>
+                    ) : (
+                      <div style={row}><span style={{ fontSize: 12, color: '#666' }}>{doc.advance.balance.label}</span><span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(doc.advance.balance.amount)}</span></div>
+                    )}
                     {doc.advance.balance.parts.map((p, i) => (
                       <div key={i} style={{ ...row, paddingLeft: 12 }}><span style={{ fontSize: 10, color: '#666' }}>{p.label}</span><span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{formatCurrency(p.amount)}</span></div>
                     ))}

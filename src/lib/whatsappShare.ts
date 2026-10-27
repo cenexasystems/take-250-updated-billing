@@ -3,6 +3,7 @@ import { formatInvoiceNo } from './retail'
 import { canonicalPhone } from './phone'
 import { getBranchProfile } from './branchProfile'
 import { shopLink } from './shopLink'
+import { uploadInvoicePdf } from './storage'
 import { branchLabel } from './branchTheme'
 import type { PosBranch } from '../store/store'
 
@@ -68,49 +69,103 @@ const copy = async (text: string) => {
   catch { useShareToast.getState().show({ kind: 'err', text: 'Could not copy the link. Copy it from the invoice page instead.' }) }
 }
 
+/** "Click here to order from here: <the shop of this deployment>" closes every message sent to a customer */
+const orderLine = () => `Click here to order from here: ${shopLink(window.location.origin)}`
+const thanksLine = (branch?: string | null) =>
+  // the branch's own place name (Karanthai / Kinathukadavu / Pollachi): two branches share the Store Settings shop name
+  `Thank you for shopping at ${branch ? branchLabel(branch as PosBranch) : getBranchProfile(branch).name}!`
+const chatLinkUrl = (number: string, head: string[], linkLabel: string, link: string) =>
+  `${waChatUrl(number)}?text=${encodeURIComponent([...head, '', `${linkLabel}: ${link}`, '', orderLine()].join('\n'))}`
+
 /**
- * A bill to the customer's OWN chat: opens wa.me/91XXXXXXXXXX (straight into that number's chat, no contact search) with a
- * ready message carrying the invoice link, so one tap on Send delivers it. A web page cannot attach a file to a chosen chat
- * (only the share sheet takes files, and it always asks for the contact), so the PDF file stays one tap away
- * ("Send PDF file instead"). No valid mobile number on the bill: the PDF flow above, unchanged.
- * Call it straight from the click (the chat window is opened synchronously).
+ * A document to the customer's OWN chat as a LINK: opens wa.me/91XXXXXXXXXX (straight into that number's chat, no contact
+ * search) with a ready message "Click here to download <document>: <link>" and "Click here to order from here: <shop link>",
+ * so one tap on Send delivers it. A web page cannot attach a file to a chosen chat (only the share sheet takes files, and
+ * it always asks for the contact), so the PDF file stays one tap away ("Send PDF file instead").
+ * No valid mobile number: the PDF flow, unchanged. Call it straight from the click (the chat window is opened synchronously).
  */
 export function sendInvoiceToChat(opts: {
   phone?: string | null
   invoiceNo: string
   total?: number | null
-  /** the bill's branch: its Store Settings name opens the message */
+  /** the bill's branch: its place name opens the message */
   branch?: string | null
   /** the bill's public page (invoicePageLink) */
   link: string
   /** the PDF, for "Send PDF file instead" */
   file: File | Promise<File> | (() => File | Promise<File>)
   label?: string
+  /** what the page is: an invoice (default) or an advance receipt */
+  kind?: 'invoice' | 'advance receipt'
 }): void {
   const number = whatsAppNumber(opts.phone)
+  const kind = opts.kind || 'invoice'
   const pdfFlow = () => void sendPdfOnWhatsApp({ file: opts.file, phone: opts.phone, label: opts.label || 'Invoice', link: opts.link })
   if (!number) { pdfFlow(); return }
-  const no = formatInvoiceNo(opts.invoiceNo)
-  const lines = [
-    // the branch's own place name (Karanthai / Kinathukadavu / Pollachi): two branches share the Store Settings shop name
-    `Thank you for shopping at ${opts.branch ? branchLabel(opts.branch as PosBranch) : getBranchProfile(opts.branch).name}!`,
-    `Invoice: ${no}`,
-    ...(opts.total != null && Number.isFinite(Number(opts.total)) ? [`Total: ₹${Number(opts.total).toFixed(2)}`] : []),
-    '',
-    `Click here to download invoice: ${opts.link}`,
-    '',
-    // the online shop of this deployment (the Vercel link), built from the address the app is open on
-    `Click here to order from here: ${shopLink(window.location.origin)}`,
+  const no = kind === 'invoice' ? formatInvoiceNo(opts.invoiceNo) : opts.invoiceNo
+  const head = [
+    thanksLine(opts.branch),
+    `${kind === 'invoice' ? 'Invoice' : 'Advance receipt'}: ${no}`,
+    ...(opts.total != null && Number.isFinite(Number(opts.total)) ? [`${kind === 'invoice' ? 'Total' : 'Advance paid'}: ₹${Number(opts.total).toFixed(2)}`] : []),
   ]
-  const url = `${waChatUrl(number)}?text=${encodeURIComponent(lines.join('\n'))}`
+  const url = chatLinkUrl(number, head, `Click here to download ${kind}`, opts.link)
   const w = window.open(url, '_blank')
   if (w) { try { w.opener = null } catch { /* cross-origin already */ } }
   else window.location.href = url // a blocked window (some in-app browsers): go in this tab
   useShareToast.getState().show({
     kind: 'ok', sticky: true,
-    text: `WhatsApp chat with +91 ${number.slice(2)} opened with invoice ${no}. Tap Send in WhatsApp.`,
+    text: `WhatsApp chat with +91 ${number.slice(2)} opened with ${kind} ${no}. Tap Send in WhatsApp.`,
     actions: [{ label: 'Open chat again', href: url }, { label: 'Send PDF file instead', onClick: pdfFlow }],
   })
+}
+
+/**
+ * A document with no public page of its own (coupon, return receipt): its PDF is stored (the branch's invoices folder in
+ * Vercel Blob, under an unguessable name) and the customer gets the link to it, as "Click here to download <label>: <link>".
+ * Call it straight from the click: the chat tab is opened first, then the PDF is made and stored.
+ * Resolves 'shared' once the chat is opened, 'failed' when the PDF or the link could not be made. With no valid mobile
+ * number it falls back to the PDF flow.
+ */
+export async function sendStoredPdfLinkToChat(opts: {
+  phone?: string | null
+  branch?: string | null
+  file: File | Promise<File> | (() => File | Promise<File>)
+  /** what the file is, lower case: "coupon", "return receipt" */
+  label: string
+  /** the lines above the link (no thank-you line is added) */
+  head: string[]
+  /** the stored file's name without extension */
+  storeName: string
+}): Promise<WhatsAppShareResult> {
+  const number = whatsAppNumber(opts.phone)
+  const toast = useShareToast.getState()
+  const title = opts.label.charAt(0).toUpperCase() + opts.label.slice(1)
+  if (!number) return sendPdfOnWhatsApp({ file: opts.file, phone: opts.phone, label: title })
+  const tab = window.open('', '_blank') // on the click, before anything is awaited (a window opened later is blocked)
+  const closeTab = () => { try { tab?.close() } catch { /* already closed */ } }
+  let file: File
+  try { file = await (typeof opts.file === 'function' ? opts.file() : opts.file) } catch (e) {
+    closeTab()
+    toast.show({ kind: 'err', text: `Could not prepare the ${opts.label} PDF${e instanceof Error && e.message ? `: ${e.message}` : ''}` })
+    return 'failed'
+  }
+  let link: string
+  try { link = await uploadInvoicePdf(file, opts.storeName, opts.branch ?? undefined) } catch (e) {
+    closeTab()
+    toast.show({
+      kind: 'err', sticky: true, actions: [{ label: 'Send PDF file instead', onClick: () => void sendPdfOnWhatsApp({ file, phone: opts.phone, label: title }) }],
+      text: `Could not make the ${opts.label} link${e instanceof Error && e.message ? `: ${e.message}` : ''}`,
+    })
+    return 'failed'
+  }
+  const url = chatLinkUrl(number, opts.head, `Click here to download ${opts.label}`, link)
+  if (tab) { try { tab.opener = null; tab.location.href = url } catch { /* the tab was closed */ } }
+  toast.show({
+    kind: 'ok', sticky: true,
+    text: `WhatsApp chat with +91 ${number.slice(2)} opened with the ${opts.label} link. Tap Send in WhatsApp.`,
+    actions: [{ label: 'Open chat', href: url }, { label: 'Send PDF file instead', onClick: () => void sendPdfOnWhatsApp({ file, phone: opts.phone, label: title }) }],
+  })
+  return 'shared'
 }
 
 export async function sendPdfOnWhatsApp(opts: {

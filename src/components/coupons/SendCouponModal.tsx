@@ -3,16 +3,17 @@ import { MessageCircle, X } from 'lucide-react'
 import { api } from '../../lib/apiClient'
 import { couponPdfFile } from '../../lib/couponPdf'
 import { canonicalPhone } from '../../lib/phone'
-import { sendPdfOnWhatsApp } from '../../lib/whatsappShare'
+import { sendStoredPdfLinkToChat } from '../../lib/whatsappShare'
 import Toggle from '../common/Toggle'
 import CustomerLookupStatus, { clearCustomerLookupCache, useCustomerLookup } from '../pos/CustomerLookupStatus'
 import type { PosBranch } from '../../store/store'
+import { branchLabel } from '../../lib/branchTheme'
 
 export type SendableCoupon = { id: number; code: string; percentage: number; expiry_date: string | null; usage_limit: number | null; per_customer_limit?: number | null; min_order_value: number }
 
 /**
- * Admin: send one coupon of the selected branch to a customer as a PDF FILE (no text, title or link), with the same share
- * helper and desktop fallback as the invoice. The send is recorded only after the share / download succeeded.
+ * Admin: send one coupon of the selected branch to a customer as a download link in their WhatsApp chat (the PDF is stored,
+ * "Send PDF file instead" stays one tap away). The send is recorded only after the chat was opened.
  */
 export default function SendCouponModal({ coupon, branch, onClose, onSent }: { coupon: SendableCoupon; branch: PosBranch; onClose: () => void; onSent?: () => void }) {
   const [phone, setPhone] = useState('')
@@ -34,8 +35,11 @@ export default function SendCouponModal({ coupon, branch, onClose, onSent }: { c
         branch, code: coupon.code, percentage: Number(coupon.percentage), expiryDate: coupon.expiry_date,
         usageLimit: coupon.usage_limit, perCustomerLimit: coupon.per_customer_limit ?? null, minOrderValue: Number(coupon.min_order_value || 0), customerName, phone: canonical,
       })
-      // coupons have no public page: no "Copy invoice link"
-      const shared = await sendPdfOnWhatsApp({ file, phone: canonical, label: 'Coupon' })
+      // coupons have no public page: the PDF is stored and the customer gets its link
+      const shared = await sendStoredPdfLinkToChat({
+        file, phone: canonical, branch, label: 'coupon', storeName: `coupon-${coupon.code}`,
+        head: [`Here is your coupon from ${branchLabel(branch as PosBranch)}!`, `Coupon code: ${coupon.code} (${Number(coupon.percentage)}% off)`],
+      })
       if (shared === 'cancelled') { setError('Sharing was cancelled. Nothing was recorded.'); return }
       if (shared === 'failed') { setError('The coupon PDF could not be prepared. Nothing was recorded.'); return }
       await api('POST', `/api/coupons/${coupon.id}/sends`, { body: { phone: canonical, customer_name: customerName, customer_specific: specific }, branchId: branch })
@@ -56,7 +60,7 @@ export default function SendCouponModal({ coupon, branch, onClose, onSent }: { c
           <h3 className="text-base font-black text-[#111111]">Send coupon · <span className="font-mono uppercase tracking-wider text-[#7A1220]">{coupon.code}</span></h3>
           <button type="button" onClick={onClose} aria-label="Close" className="h-9 w-9 shrink-0 rounded-xl border border-[#E5E7EB] text-[#111111] cursor-pointer"><X size={16} className="mx-auto" /></button>
         </div>
-        <p className="mt-1 text-xs font-semibold text-[#6B7280]">The coupon goes as a PDF file only. It is recorded once the PDF has been shared or downloaded.</p>
+        <p className="mt-1 text-xs font-semibold text-[#6B7280]">The coupon goes as a download link in the customer's WhatsApp chat. It is recorded once the chat has been opened.</p>
 
         <div className="mt-4 space-y-4">
           <div className="space-y-1.5">

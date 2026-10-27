@@ -4,7 +4,7 @@ import { api } from '../../lib/apiClient'
 import { formatCurrency, formatInvoiceNo } from '../../lib/retail'
 import { printReturnReceipt } from '../../lib/thermalPrint'
 import { returnReceiptPdf } from '../../lib/returnReceiptPdf'
-import { sendPdfOnWhatsApp } from '../../lib/whatsappShare'
+import { sendStoredPdfLinkToChat } from '../../lib/whatsappShare'
 import { OTHER_MODE_MAX, REFUND_MODE_CHOICES, cleanModeLabel, refundModeText, type PayMode, type RefundMode } from '../../lib/refundModes'
 import type { PosBranch } from '../../store/store'
 
@@ -121,8 +121,13 @@ export default function ReturnModal({ orderId, branch, onClose, onReturned }: Pr
     returnNo: r.return_no, originalInvoiceNo: r.invoice_no, date: r.created_at, branch, reason: r.reason, note: r.note, refundMode: r.refund_mode, refundModeLabel: r.refund_mode_label, refunds: r.refunds,
     items: r.items.map((i) => ({ name: i.name, qty: i.quantity, refund: Number(i.refund_amount), restocked: i.restocked })), refundTotal: Number(r.refund_amount),
   })
-  // the return receipt as a PDF on WhatsApp (the shared helper; returns have no public page, so no link)
-  const whatsapp = (r: ReturnRecord) => { void sendPdfOnWhatsApp({ file: () => returnReceiptPdf(receiptData(r)), phone: info?.order.phone, label: 'Return receipt' }) }
+  // the return receipt on WhatsApp as a download link (returns have no public page: the PDF is stored and its link is sent)
+  const whatsapp = (r: ReturnRecord) => {
+    void sendStoredPdfLinkToChat({
+      file: () => returnReceiptPdf(receiptData(r)), phone: info?.order.phone, branch, label: 'return receipt', storeName: r.return_no,
+      head: [`Return receipt ${r.return_no} (invoice ${r.invoice_no})`, `Total refund: ₹${Number(r.refund_amount).toFixed(2)}`],
+    })
+  }
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Return items">

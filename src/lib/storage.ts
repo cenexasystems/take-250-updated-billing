@@ -25,9 +25,9 @@ export const uploadProductImage = async (file: File, branchId?: string) => {
   return upload('product-images', file, safeName, type, branchId)
 }
 
-export const uploadInvoicePdf = async (file: File, invoiceNo: string): Promise<string> => {
+export const uploadInvoicePdf = async (file: File, invoiceNo: string, branchId?: string): Promise<string> => {
   const safeInvoiceNo = invoiceNo.toLowerCase().replace(/[^a-z0-9.\-_]/g, '-').replace(/-+/g, '-')
-  return upload('invoices', file, `${safeInvoiceNo}.pdf`, 'application/pdf')
+  return upload('invoices', file, `${safeInvoiceNo}.pdf`, 'application/pdf', branchId)
 }
 
 /** Store Settings logo. `branch` is the branch being edited (only an admin can pick one; others always use their own). */

@@ -8,7 +8,7 @@ import { formatCurrency } from '../lib/retail'
 import { invoicePdfFile } from '../lib/invoicePdf'
 import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBill } from '../lib/invoiceDoc'
 import { printThermalReceipt } from '../lib/thermalPrint'
-import { invoicePageLink, invoicePdfShareName, pdfNamed, sendInvoiceToChat, sendPdfOnWhatsApp } from '../lib/whatsappShare'
+import { invoicePageLink, invoicePdfShareName, pdfNamed, sendInvoiceToChat } from '../lib/whatsappShare'
 import { formatPhoneForDisplay } from '../lib/phone'
 import { advanceReceiptLines, advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/advanceReceipt'
 import { useAdminAuthStore, useProductStore, resolveBranch } from '../store/store'
@@ -295,8 +295,8 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
   const printFinal = async (order: AdvanceOrder) => { try { printThermalReceipt(await finalInvoiceDoc(order)) } catch (err) { setError(err instanceof Error ? err.message : 'Could not load the invoice') } }
   const downloadFinal = async (order: AdvanceOrder) => { try { downloadFile(await invoiceFile(order)) } catch (err) { setError(err instanceof Error ? err.message : 'Could not load the invoice') } }
   
-  // WhatsApp = the advance receipt PDF; the final invoice goes as a link message, from the tap on the WhatsApp button; nothing is sent automatically
-  const whatsappDepositReceipt = (order: AdvanceOrder) => { void sendPdfOnWhatsApp({ file: () => advanceReceiptPdf(order), phone: order.phone, label: 'Advance receipt', link: invoicePageLink(order.deposit_id) }) }
+  // WhatsApp = a link message to the customer's chat (advance receipt and final invoice), from the tap on the WhatsApp button; nothing is sent automatically
+  const whatsappDepositReceipt = (order: AdvanceOrder) => { sendInvoiceToChat({ file: () => advanceReceiptPdf(order), phone: order.phone, label: 'Advance receipt', kind: 'advance receipt', link: invoicePageLink(order.deposit_id), invoiceNo: order.deposit_id, total: order.deposit_amount, branch: order.branch || branch }) }
   const whatsappInvoice = async (order: AdvanceOrder) => {
     // synchronously from the click: the helper opens what needs the click first, then the final bill is fetched
     sendInvoiceToChat({

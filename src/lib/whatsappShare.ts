@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 import { formatInvoiceNo } from './retail'
 import { canonicalPhone } from './phone'
+import { getBranchProfile } from './branchProfile'
+import { shopLink } from './shopLink'
+import { branchLabel } from './branchTheme'
+import type { PosBranch } from '../store/store'
 
 /**
  * ONE way to send a PDF (invoice, advance receipt, final invoice, return receipt, coupon) to a customer on WhatsApp.
@@ -62,6 +66,51 @@ export function downloadPdf(file: File) {
 const copy = async (text: string) => {
   try { await navigator.clipboard.writeText(text); useShareToast.getState().show({ kind: 'ok', text: 'Invoice link copied.' }) }
   catch { useShareToast.getState().show({ kind: 'err', text: 'Could not copy the link. Copy it from the invoice page instead.' }) }
+}
+
+/**
+ * A bill to the customer's OWN chat: opens wa.me/91XXXXXXXXXX (straight into that number's chat, no contact search) with a
+ * ready message carrying the invoice link, so one tap on Send delivers it. A web page cannot attach a file to a chosen chat
+ * (only the share sheet takes files, and it always asks for the contact), so the PDF file stays one tap away
+ * ("Send PDF file instead"). No valid mobile number on the bill: the PDF flow above, unchanged.
+ * Call it straight from the click (the chat window is opened synchronously).
+ */
+export function sendInvoiceToChat(opts: {
+  phone?: string | null
+  invoiceNo: string
+  total?: number | null
+  /** the bill's branch: its Store Settings name opens the message */
+  branch?: string | null
+  /** the bill's public page (invoicePageLink) */
+  link: string
+  /** the PDF, for "Send PDF file instead" */
+  file: File | Promise<File> | (() => File | Promise<File>)
+  label?: string
+}): void {
+  const number = whatsAppNumber(opts.phone)
+  const pdfFlow = () => void sendPdfOnWhatsApp({ file: opts.file, phone: opts.phone, label: opts.label || 'Invoice', link: opts.link })
+  if (!number) { pdfFlow(); return }
+  const no = formatInvoiceNo(opts.invoiceNo)
+  const lines = [
+    // the branch's own place name (Karanthai / Kinathukadavu / Pollachi): two branches share the Store Settings shop name
+    `Thank you for shopping at ${opts.branch ? branchLabel(opts.branch as PosBranch) : getBranchProfile(opts.branch).name}!`,
+    `Invoice: ${no}`,
+    ...(opts.total != null && Number.isFinite(Number(opts.total)) ? [`Total: ₹${Number(opts.total).toFixed(2)}`] : []),
+    '',
+    `Click here to download invoice: ${opts.link}`,
+    '',
+    // the online shop of this deployment (the Vercel link), built from the address the app is open on
+    `Click here to order from here: ${shopLink(window.location.origin)}`,
+  ]
+  const url = `${waChatUrl(number)}?text=${encodeURIComponent(lines.join('\n'))}`
+  const w = window.open(url, '_blank')
+  if (w) { try { w.opener = null } catch { /* cross-origin already */ } }
+  else window.location.href = url // a blocked window (some in-app browsers): go in this tab
+  useShareToast.getState().show({
+    kind: 'ok', sticky: true,
+    text: `WhatsApp chat with +91 ${number.slice(2)} opened with invoice ${no}. Tap Send in WhatsApp.`,
+    actions: [{ label: 'Open chat again', href: url }, { label: 'Send PDF file instead', onClick: pdfFlow }],
+  })
 }
 
 export async function sendPdfOnWhatsApp(opts: {

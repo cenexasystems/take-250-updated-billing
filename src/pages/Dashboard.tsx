@@ -56,7 +56,7 @@ import { formatCurrency, normalizeOrderMode, normalizeUnitType, toNumber, type U
 import { normalizeStructuredOrderItem, formatInvoiceNo, formatPaymentMode, paymentParts } from '../lib/retail'
 import { Invoice } from '../components/Invoice'
 import { printThermalReceipt } from '../lib/thermalPrint'
-import { invoicePageLink, invoicePdfShareName, pdfNamed, sendPdfOnWhatsApp } from '../lib/whatsappShare'
+import { invoicePageLink, invoicePdfShareName, pdfNamed, sendInvoiceToChat } from '../lib/whatsappShare'
 import { invoicePdfFile } from '../lib/invoicePdf'
 import { refundModeText } from '../lib/refundModes'
 import { invoiceDocFromBill, type InvoiceDoc, type InvoiceExtras, type StoredBill } from '../lib/invoiceDoc'
@@ -1142,17 +1142,18 @@ export default function Dashboard() {
     printThermalReceipt(doc)
   }
 
-  // WhatsApp = the invoice PDF only (no text, no link). From the tap on "Send PDF"; the same generator and layout as Download.
+  // WhatsApp = a message with the invoice link to the customer's chat. From the tap on "Send PDF"; the same generator and layout as Download.
   // Called synchronously from the click: the helper opens what needs the click first, then the PDF is made (a returned or
   // advance bill fetches its details first).
   const sendOrderPdfOnWhatsApp = (order: DashboardOrder) => {
-    void sendPdfOnWhatsApp({
+    sendInvoiceToChat({
       file: async () => {
         const doc = await orderInvoiceDoc(order)
         if (!doc) throw new Error('This order has no invoice details available.')
         return pdfNamed(invoicePdfFile(doc), invoicePdfShareName(order.invoice_no || order.id))
       },
       phone: order.phone, label: 'Invoice', link: invoicePageLink(order.invoice_no || order.id),
+      invoiceNo: order.invoice_no || order.id, total: order.total, branch: order.branch,
     })
   }
 

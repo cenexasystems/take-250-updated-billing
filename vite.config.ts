@@ -21,9 +21,9 @@ export default defineConfig({
         'robots.txt',
       ],
       manifest: {
-        name: 'YG ENTERPRISES Retail POS',
-        short_name: 'YG',
-        description: 'YG ENTERPRISES retail billing, barcode inventory, catalog, order, receipt, and invoice administration.',
+        name: 'TAKE250 Retail POS',
+        short_name: 'Take 250',
+        description: 'TAKE250 retail billing, barcode inventory, catalog, order, receipt, and invoice administration.',
         theme_color: '#0A0A0A',
         background_color: '#0A0A0A',
         display: 'standalone',

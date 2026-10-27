@@ -92,6 +92,8 @@ export interface StoreSettings {
   themeColor: string
   websiteUrl?: string
   gstEnabled: boolean
+  /** 0020: the branch's default GST rate for a bill (5 unless changed in Store Settings) */
+  gstPercent: number
   /** 0018: the branch's low-stock popup + sound (default on) */
   lowStockAlertEnabled: boolean
 }
@@ -322,7 +324,8 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
           instagramId: data.instagram_id || '',
           logoUrl: data.logo_url || null,
           themeColor: data.theme_color || '#0A0A0A',
-          gstEnabled: data.gst_enabled,
+          gstEnabled: data.gst_enabled === true,
+          gstPercent: Number.isFinite(Number(data.gst_percent)) ? Number(data.gst_percent) : 5,
           lowStockAlertEnabled: data.low_stock_alert_enabled !== false,
         }
         set((state) => ({
@@ -344,7 +347,8 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
       instagramId: '',
       logoUrl: null,
       themeColor: '#0A0A0A',
-      gstEnabled: false,
+      gstEnabled: true,
+      gstPercent: 5,
       lowStockAlertEnabled: true,
     }
     set((state) => ({

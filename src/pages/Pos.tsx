@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { api, ApiClientError } from '../lib/apiClient'
 import { updateItemPrice } from '../services/productService'
-import { useProductStore, useVariantStore, useAdminAuthStore, resolveBranch, type Product } from '../store/store'
+import { useProductStore, useVariantStore, useAdminAuthStore, useSettingsStore, resolveBranch, type Product } from '../store/store'
 import { branchShortLabel } from '../lib/branchTheme'
 import { useNavigationStore } from '../store/navigationStore'
 import { barcodeService } from '../services/barcodeService'
@@ -39,7 +39,7 @@ import {
   formatQuantityDisplay,
   formatInvoiceNo,
 } from '../lib/retail'
-import { invoicePageLink, invoicePdfShareName, pdfNamed, sendPdfOnWhatsApp } from '../lib/whatsappShare'
+import { invoicePageLink, invoicePdfShareName, pdfNamed, sendInvoiceToChat, sendPdfOnWhatsApp } from '../lib/whatsappShare'
 import { formatPhoneForDisplay, normalizePhone } from '../lib/phone'
 import CustomerLookupStatus, { clearCustomerLookupCache, useCustomerLookup } from '../components/pos/CustomerLookupStatus'
 import CustomerSuggestions from '../components/pos/CustomerSuggestions'
@@ -214,9 +214,17 @@ export default function Pos(props: PosProps = {}) {
   const [availableVariants, setAvailableVariants] = useState<ProductVariant[]>([])
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null)
   const [variantPickerQty, setVariantPickerQty] = useState(1)
-  const [billGstEnabled, setBillGstEnabled] = useState(false)
-  const [gstInput, setGstInput] = useState('')
+  // GST starts every bill from THIS branch's Store Settings (on at 5% unless the Admin changed it); the cashier can still adjust it
+  const branchGstEnabled = useSettingsStore((s) => s.settingsByBranch[branch]?.gstEnabled ?? true)
+  const branchGstPercent = useSettingsStore((s) => s.settingsByBranch[branch]?.gstPercent ?? 5)
+  const [billGstEnabled, setBillGstEnabled] = useState(branchGstEnabled)
+  const [gstInput, setGstInput] = useState(branchGstEnabled ? String(branchGstPercent) : '')
   const [gstType, setGstType] = useState<'percent' | 'flat'>('percent')
+  useEffect(() => {
+    setBillGstEnabled(branchGstEnabled)
+    setGstInput(branchGstEnabled ? String(branchGstPercent) : '')
+    setGstType('percent')
+  }, [branch, branchGstEnabled, branchGstPercent])
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [addUnregisteredOpen, setAddUnregisteredOpen] = useState(false)
   const [depositOpen, setDepositOpen] = useState(false)
@@ -664,8 +672,8 @@ export default function Pos(props: PosProps = {}) {
     setRemarks('')
     setReferenceNumber('')
     setBillingDate('')
-    setBillGstEnabled(false)
-    setGstInput('')
+    setBillGstEnabled(branchGstEnabled)
+    setGstInput(branchGstEnabled ? String(branchGstPercent) : '')
     setGstType('percent')
     setOrdermode('offline')
     setMobilePanelView('catalogue')
@@ -979,11 +987,12 @@ export default function Pos(props: PosProps = {}) {
     base_quantity: item.baseQuantity, base_price: Number(item.basePrice) || 0, line_total: item.lineTotal,
   })))
 
-  // WhatsApp = the invoice PDF only (no text, no link). Called from the tap on "WhatsApp Invoice", never automatically.
+  // WhatsApp = a message with the invoice link to the customer's chat. Called from the tap on "WhatsApp Invoice", never automatically.
   const sendPosWhatsApp = (inv: InvoiceSnap) => {
-    void sendPdfOnWhatsApp({
+    sendInvoiceToChat({
       file: () => pdfNamed(invoicePdfFile(invoicePdfDataOf(inv)), invoicePdfShareName(inv.invoiceNo)),
       phone: inv.phone || customer.phone || '', label: 'Invoice', link: invoicePageLink(inv.invoiceNo),
+      invoiceNo: inv.invoiceNo, total: inv.total, branch,
     })
   }
 
@@ -1584,7 +1593,7 @@ export default function Pos(props: PosProps = {}) {
                     type="number" onWheel={(e) => (e.target as HTMLInputElement).blur()}
                     value={gstInput}
                     onChange={e => setGstInput(e.target.value)}
-                    placeholder={gstType === 'percent' ? "e.g. 6" : "0"}
+                    placeholder={gstType === 'percent' ? "e.g. 5" : "0"}
                     className="w-full h-9 px-3 bg-white border border-gray-200 rounded-xl text-[12px] font-black text-[#111111] text-right focus:outline-none focus:border-[#D4AF37]"
                   />
                 </div>

@@ -13,6 +13,8 @@ const settingsFields = {
   logo_url: z.string().max(2000).nullable(), theme_color: z.string().regex(/^#[0-9a-fA-F]{6}$/), website_url: z.string().max(300),
   // 0018: the branch's low-stock popup + sound on / off (Admin only: settings.write)
   low_stock_alert_enabled: z.boolean(),
+  // 0020: the branch's default GST rate for a bill (the switch is gst_enabled)
+  gst_percent: z.number().finite().min(0).max(100),
 }
 
 export const adminRoutes = [

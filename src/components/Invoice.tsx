@@ -210,6 +210,24 @@ export const Invoice: React.FC<InvoiceProps> = ({ doc, userId }) => {
         </div>
       </div>
 
+      {/* ── REFERENCE / REMARKS ──────────────────────────────────── */}
+      {(doc.referenceNumber || doc.remarks) && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed #d0d0d0', fontSize: 11, color: '#6B7280', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {doc.referenceNumber && (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <span style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, minWidth: 80 }}>Ref No</span>
+              <span>{doc.referenceNumber}</span>
+            </div>
+          )}
+          {doc.remarks && (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <span style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, minWidth: 80 }}>Remarks</span>
+              <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{doc.remarks}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── FOOTER ───────────────────────────────────────────────── */}
       <div
         className="invoice-footer mt-auto"

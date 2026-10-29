@@ -100,16 +100,15 @@ export async function createAdvanceOrder(input: {
       customer_name: input.customerName, phone: input.phone, address: input.address, product_name: input.productName,
       category: input.category, description: input.description, total_amount: input.totalAmount,
       deposit_amount: input.depositAmount, expected_delivery_date: input.expectedDeliveryDate, remarks: input.remarks,
+      reference_number: input.referenceNumber.trim(),
       payment_method: input.paymentMethod, products: input.products || [],
-      ...(input.referenceNumber.trim() ? { reference_number: input.referenceNumber.trim() } : {}),
       ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
       ...(input.cart ? { cart: input.cart } : {}),
     },
     branchId: input.branch,
   })
-  const created = normalizeOrder(res.order)
-  if (input.referenceNumber.trim()) created.reference_number = input.referenceNumber.trim()
-  return created
+  // DB now stores and returns reference_number directly; no client-side patch needed.
+  return normalizeOrder(res.order)
 }
 
 export async function updateAdvanceStatus(orderId: string, status: AdvanceStatus, remarks = ''): Promise<AdvanceOrder> {

@@ -184,7 +184,7 @@ export default function AdvanceOrders({ onOrderCompleted, onOrderDeleted }: Adva
 
   const filtered = useMemo(() => periodOrders.filter(order => {
     const query = search.trim().toLowerCase()
-    const searchable = [order.deposit_id, order.customer_name, order.phone, order.product_name, STATUS_LABELS[order.status]].join(' ').toLowerCase()
+    const searchable = [order.deposit_id, order.customer_name, order.phone, order.product_name, STATUS_LABELS[order.status], order.reference_number, order.remarks].join(' ').toLowerCase()
     if (query && !searchable.includes(query)) return false
     if (statusFilter === 'pending' && !['pending_deposit', 'waiting_final_payment'].includes(order.status)) return false
     if (statusFilter === 'ready' && order.status !== 'ready_for_delivery') return false

@@ -53,6 +53,8 @@ export function advanceReceiptPdf(order: AdvanceOrder) {
   const rows = [
     ['Customer', order.customer_name], ['Phone', formatPhoneForDisplay(order.phone)], ['Address', order.address || '-'], ['Product', order.product_name],
     ['Category', order.category || '-'], ['Expected delivery', formatDateDMY(order.expected_delivery_date)],
+    ...(order.reference_number ? [['Reference No', order.reference_number]] : []),
+    ...(order.remarks ? [['Remarks', order.remarks]] : []),
   ]
   let y = 66
   rows.forEach(([label, value]) => { doc.setFont('helvetica', 'bold'); doc.setTextColor('#6b7280'); doc.text(label.toUpperCase(), 16, y); doc.setFont('helvetica', 'normal'); doc.setTextColor('#111827'); doc.text(String(value), 64, y, { maxWidth: 126 }); y += 10 })
@@ -161,6 +163,8 @@ ${order.address ? `<div class="r"><span class="label">Address</span><span>${esc(
 ${order.category ? `<div class="r"><span class="label">Category</span><span>${esc(order.category)}</span></div>` : ''}
 <div class="r"><span class="label">Delivery</span><span>${esc(formatDateDMY(order.expected_delivery_date))}</span></div>
 <div class="r"><span class="label">Payment</span><span>${esc(depositPayment)}</span></div>
+${order.reference_number ? `<div class="r"><span class="label">Ref No</span><span>${esc(order.reference_number)}</span></div>` : ''}
+${order.remarks ? `<div class="r"><span class="label">Remarks</span><span>${esc(order.remarks)}</span></div>` : ''}
 <div class="line"></div>
 ${thermalMoney(order)}
 <div class="line"></div>

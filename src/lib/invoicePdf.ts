@@ -210,6 +210,19 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
     extra('Net amount', money(data.returns.net), { size: 11, color: THEME_PALETTE.primary, bold: true })
   }
 
+  // reference number and remarks (stored on the advance order / bill)
+  if (data.referenceNumber) {
+    roomFor(7)
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(muted)
+    doc.text(`Ref No: ${data.referenceNumber}`, left, y); y += 7
+  }
+  if (data.remarks) {
+    const remarkLines = doc.splitTextToSize(`Remarks: ${data.remarks}`, right - left - 6) as string[]
+    roomFor(7 * remarkLines.length)
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(muted)
+    doc.text(remarkLines, left, y); y += remarkLines.length * 5
+  }
+
   y = 275
   doc.setDrawColor('#D4AF37')
   doc.setLineWidth(0.5)

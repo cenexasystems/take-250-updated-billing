@@ -96,6 +96,8 @@ export function printThermalReceipt(data: ThermalReceiptData) {
           ${data.returns ? `<div class="font-bold mt-1">${data.returns.badge}</div><div style="font-size: 9px;">${data.returns.records.join(' / ')}</div>` : ''}
           ${data.customerName ? `<div>Name: ${data.customerName}</div>` : ''}
           ${data.phone ? `<div>Tel: ${formatPhoneForDisplay(data.phone)}</div>` : ''}
+          ${data.referenceNumber ? `<div>Ref No: ${data.referenceNumber}</div>` : ''}
+          ${data.remarks ? `<div style="font-size:10px;">Remarks: ${data.remarks}</div>` : ''}
         </div>
 
         <table class="border-bottom" style="width: 100%; table-layout: fixed; border-collapse: collapse;">

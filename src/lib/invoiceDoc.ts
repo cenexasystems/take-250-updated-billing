@@ -39,6 +39,8 @@ export type StoredBill = {
   payment_method?: string | null
   split_details?: unknown
   returned_amount?: number | string | null
+  remarks?: string | null
+  reference_number?: string | null
 }
 
 /** Returns and advance payments of a bill, as the API sends them (GET /api/orders/:id, public invoice). */
@@ -75,6 +77,9 @@ export type InvoiceDoc = {
   advance: { reference?: string; deposits: Array<{ label: string; amount: number }>; balance: { label: string; amount: number; parts: Array<{ label: string; amount: number }> } | null } | null
   /** partially / fully returned bill */
   returns: { badge: string; returned: number; net: number; records: string[] } | null
+  /** optional free-text reference and notes stored on the advance order / bill */
+  referenceNumber: string
+  remarks: string
 }
 
 const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : 0 }
@@ -136,6 +141,8 @@ export type StoredAdvance = {
   /** the deposit payment's mode and time (advance_order_payments, payment_type 'deposit') */
   deposit_method?: string | null
   deposit_at?: string | null
+  remarks?: string | null
+  reference_number?: string | null
 }
 
 /** true for an order made from the POS cart after 0013 (it carries its own breakdown); older orders only have a total */
@@ -166,6 +173,8 @@ export function invoiceDocFromAdvance(a: StoredAdvance): InvoiceDoc {
     deposits: [{ label: depositLabel(a.deposit_at || a.created_at, a.deposit_method), amount: n(a.deposit_amount) }],
     balance: { label: 'Balance due', amount: remaining, parts: [] },
   }
+  doc.referenceNumber = String(a.reference_number || '').trim()
+  doc.remarks = String(a.remarks || '').trim()
   return doc
 }
 
@@ -254,6 +263,8 @@ export function invoiceDocFromBill(bill: StoredBill, rawItems: Array<Record<stri
     payment,
     advance,
     returns,
+    referenceNumber: String(bill.reference_number || '').trim(),
+    remarks: String(bill.remarks || '').trim(),
   }
 }
 

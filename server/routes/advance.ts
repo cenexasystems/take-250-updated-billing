@@ -39,7 +39,7 @@ export const advanceRoutes = [
       product_name: z.string().trim().min(1).max(500), category: z.string().max(200).default(''), description: z.string().max(2000).default(''),
       total_amount: z.number().finite().gt(0), deposit_amount: z.number().finite().gt(0), expected_delivery_date: day,
       remarks: z.string().max(1000).default(''), payment_method: z.enum(['cash', 'upi', 'card']),
-      products: z.array(z.object({}).passthrough()).max(200).default([]), reference_number: z.string().trim().max(100).optional(),
+      products: z.array(z.object({}).passthrough()).max(200).default([]), reference_number: z.string().trim().max(100).default(''),
       // one random key per form from the browser: a repeated request (double tap, slow-network retry) returns the first
       // advance order instead of creating another (see advance_orders_branch_idempotency_key)
       idempotency_key: z.string().trim().min(8).max(100).optional(),
@@ -59,6 +59,11 @@ export const advanceRoutes = [
       const r2 = (v: number) => Math.round(v * 100) / 100
       const total = cart ? r2(Math.max(0, r2(cart.subtotal) - r2(cart.coupon_discount) - r2(cart.manual_discount)) + r2(cart.total_gst) + r2(cart.delivery_charge)) : body.total_amount
       if (cart && Math.abs(total - body.total_amount) > 0.01) throw new ApiError(400, `The bill breakdown (₹${total.toFixed(2)}) does not match the order total (₹${body.total_amount.toFixed(2)})`)
+      // Strip control characters (but keep standard whitespace/newlines) then clamp length
+      const sanitiseRef = (v: string) => v.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim().slice(0, 100)
+      const sanitiseRem = (v: string) => v.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, 1000)
+      const ref = sanitiseRef(body.reference_number || '')
+      const rem = sanitiseRem(body.remarks || '')
       // NOTE: `SELECT * FROM fn()`, never `SELECT (fn()).*`: Postgres expands the second form into one call of fn() PER COLUMN,
       // which made a single tap insert 25 identical advance orders (one per column of the table).
       const key = body.idempotency_key
@@ -71,11 +76,10 @@ export const advanceRoutes = [
           // per-customer limit, customer-specific phone); completing the order checks the customer rules again
           if (cart?.coupon_code) await t.query(`SELECT public.assert_coupon_redeemable($1, $2, $3, true)`, [branch, cart.coupon_code, body.phone])
           const r = await t.query(
-            `SELECT * FROM public.create_advance_order($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)`,
+            // 15th param = p_reference_number (new in 0021 migration)
+            `SELECT * FROM public.create_advance_order($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15)`,
             [body.customer_name, body.phone, body.address, body.product_name, body.category, body.description, total, body.deposit_amount,
-             body.expected_delivery_date, body.remarks, body.payment_method, session!.role, JSON.stringify(body.products), branch])
-          // reference_number is accepted but not stored: the original database had no such column on advance orders
-          // (its update call failed silently), so an exact copy keeps ignoring it.
+             body.expected_delivery_date, rem, body.payment_method, session!.role, JSON.stringify(body.products), branch, ref || null])
           if (key) await t.query(`UPDATE public.advance_orders SET idempotency_key = $1 WHERE id = $2 AND branch_id = $3`, [key, r.rows[0].id, branch])
           if (cart) {
             const saved = await t.query(

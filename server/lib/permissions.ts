@@ -71,9 +71,9 @@ export const PERMISSIONS = {
   'advance.read':          { roles: AMS, scope: 'branch' as Scope },
   'advance.write':         { roles: AMS, scope: 'branch' as Scope },
   'advance.delete':        { roles: A, scope: 'branch' as Scope },
-  // expenses (row 23)
-  'expenses.read':         { roles: AM, scope: 'branch' as Scope },
-  'expenses.write':        { roles: AM, scope: 'branch' as Scope },
+  // expenses (row 23): Admin only (removed from Manager 2026)
+  'expenses.read':         { roles: A, scope: 'branch' as Scope },
+  'expenses.write':        { roles: A, scope: 'branch' as Scope },
   // analytics dashboard data (row 22): admin only
   'analytics.read':        { roles: A, scope: 'branch' as Scope },
   // cross-branch views (row 29): admin only

@@ -203,7 +203,8 @@ async function run() {
       check(!canOpenTab('manager', 'staff_memberships') && !canOpenTab('manager', 'business_overview'), 'manager has no passcode tab and no cross-branch tab')
       check(UI_ROLES.every((r) => REMOVED_TABS.every((t) => !canOpenTab(r, t) || t === 'branch_hub')), 'tabs the original removed are open to nobody (branch_hub only for staff)')
       check(canOpenTab('staff', 'branch_hub') && !canOpenTab('manager', 'branch_hub') && !canOpenTab('admin', 'branch_hub'), 'branch hub follows the original: staff only')
-      check(same(NAV_ORDER.manager, NAV_ORDER.admin.filter((t) => !['pos_analytics', 'store_settings', 'online_enquiries'].includes(t))), 'manager sidebar = admin sidebar minus Analytics Dashboard, Store Settings and Online Enquiries')
+      check(same(NAV_ORDER.manager, NAV_ORDER.admin.filter((t) => !['pos_analytics', 'store_settings', 'online_enquiries', 'expenses'].includes(t))), 'manager sidebar = admin sidebar minus Analytics Dashboard, Store Settings, Online Enquiries and Expenses')
+      check(canOpenTab('admin', 'expenses') && !canOpenTab('manager', 'expenses') && !canOpenTab('staff', 'expenses'), 'Expenses Ledger tab: admin only')
       check(canOpenTab('manager', 'online_shop') && !canOpenTab('staff', 'online_shop'), 'Online Shop tab: admin and manager, not staff')
       check(canOpenTab('admin', 'online_enquiries') && !canOpenTab('manager', 'online_enquiries') && !canOpenTab('staff', 'online_enquiries'), 'Online Enquiries tab: admin only')
       check(canOpenTab('manager', 'coupons') && !canOpenTab('staff', 'coupons') && canOpenTab('admin', 'coupons'), 'Coupons tab: admin and manager, not staff')
@@ -470,14 +471,19 @@ async function run() {
       check((await call('DELETE', `/api/advance-orders/${id}`, { cookie: cookies.staff1 })).status === 403, 'staff1 cannot delete its own advance order either (403)')
       check((await call('DELETE', `/api/advance-orders/${id}`, { cookie: cookies.admin, query: { branch_id: 'pos2' } })).status === 404, 'admin on branch 2 cannot delete a branch 1 advance order (404)')
 
-      // expenses: staff never, manager own branch, admin any
-      const ex = await call('POST', '/api/expenses', { cookie: cookies.manager2, body: { expense_date: '2030-01-01', category_id: null, category_name: 'Rent', amount: 50 } })
-      check(ex.status === 201 && ex.body.expense.branch_id === 'pos2' && ex.body.expense.recorded_by_name === 'Manager', 'manager2 records an expense in branch 2 (recorder name from token)')
-      check((await call('GET', '/api/expenses', { cookie: cookies.manager1 })).body.expenses.every((e: any) => e.branch_id === 'pos1'), 'manager1 expense list is branch 1 only')
-      check((await call('DELETE', `/api/expenses/${ex.body.expense.id}`, { cookie: cookies.manager1 })).status === 404, 'manager1 cannot delete a branch 2 expense')
-      check((await call('GET', '/api/expenses/metrics', { cookie: cookies.manager2 })).body.metrics !== undefined, 'manager keeps the expense summary metrics (Expenses screen)')
-      check((await call('GET', '/api/expenses', { cookie: cookies.staff1 })).status === 403, 'staff cannot read expenses')
-      check((await call('POST', '/api/expenses', { cookie: cookies.manager2, body: { expense_date: '2030-01-01', category_id: null, category_name: 'x', amount: -1 } })).status === 400, 'negative expense rejected (zod)')
+      // expenses: Admin only (any branch, through the selector); Manager and Staff refused
+      const ex = await call('POST', '/api/expenses', { cookie: cookies.admin, query: { branch_id: 'pos2' }, body: { expense_date: '2030-01-01', category_id: null, category_name: 'Rent', amount: 50 } })
+      check(ex.status === 201 && ex.body.expense.branch_id === 'pos2', 'admin records an expense in branch 2', JSON.stringify(ex.body).slice(0, 160))
+      for (const who of ['manager1', 'manager2', 'staff1'] as const) {
+        const codes = [
+          (await call('GET', '/api/expenses', { cookie: cookies[who] })).status,
+          (await call('GET', '/api/expenses/metrics', { cookie: cookies[who] })).status,
+          (await call('POST', '/api/expenses', { cookie: cookies[who], body: { expense_date: '2030-01-01', category_id: null, category_name: 'Rent', amount: 50 } })).status,
+          (await call('DELETE', `/api/expenses/${ex.body.expense?.id}`, { cookie: cookies[who] })).status,
+        ]
+        check(codes.every((s) => s === 403), `${who} gets 403 on expenses (list, metrics, record, delete)`, JSON.stringify(codes))
+      }
+      check((await call('POST', '/api/expenses', { cookie: cookies.admin, query: { branch_id: 'pos2' }, body: { expense_date: '2030-01-01', category_id: null, category_name: 'x', amount: -1 } })).status === 400, 'negative expense rejected (zod)')
 
       // settings
       const before1 = await one(`SELECT theme_color FROM store_settings WHERE branch_id = 'pos1'`)
@@ -1083,7 +1089,7 @@ async function run() {
         check(adv.status === 201, `${mgr}: still creates an advance order`)
         check((await call('POST', `/api/advance-orders/${adv.body.order.id}/status`, { cookie: cookies[mgr], body: { status: 'ready_for_delivery' } })).status === 200, `${mgr}: still updates it`)
         check((await call('GET', '/api/orders', { cookie: cookies[mgr] })).status === 200, `${mgr}: order history view`)
-        check((await call('GET', '/api/inventory/movements', { cookie: cookies[mgr] })).status !== 403 && (await call('GET', '/api/expenses', { cookie: cookies[mgr] })).status === 200, `${mgr}: inventory and expenses unchanged`)
+        check((await call('GET', '/api/inventory/movements', { cookie: cookies[mgr] })).status !== 403 && (await call('GET', '/api/expenses', { cookie: cookies[mgr] })).status === 403, `${mgr}: inventory unchanged, expenses refused (Admin only)`)
         check((await call('GET', '/api/analytics/orders', { cookie: cookies[mgr] })).status === 403, `${mgr}: analytics still excluded`)
         const dl = await call('DELETE', `/api/advance-orders/${adv.body.order.id}`, { cookie: cookies.admin, query: { branch_id: b } })
         check(dl.status === 200, `admin deletes that advance order on ${b}`, `status ${dl.status}`)

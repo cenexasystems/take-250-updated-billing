@@ -35,7 +35,7 @@ Legend: Y = allowed, N = 403, "own" = locked to the branch in the JWT (never fro
 | 20b | Order **return** (Return button on a completed bill: items back to stock or damaged, refund, RET- receipt; `POST /api/orders/:id/return`, `/return/preview`, `GET /api/orders/:id/returns`) | Y any | Y own | Y own | new (2026): replaces the cancel action. Staff may return but nothing else in Order History |
 | 21 | Advance orders: create, list, update status, timeline, complete (`complete_advance_order_v2`). **Delete: Admin only** | Y any | Y own (no delete, 2026 change) | Y own (no delete, 2026 change) | `advance_orders` in `staffAllowedTabs`; `AdvanceOrders.tsx` has no role gate |
 | 22 | **Analytics Dashboard** (`pos_analytics` tab, `/pos-analytics`, `BillingAnalytics`, `analyticsExport`, their data endpoints incl. the order delete inside BillingAnalytics) | Y any | **N** | N | `pos_analytics` admin nav + `/pos-analytics` `AdminOnlyGuard`; `BillingAnalytics` `isAdmin`. Manager exclusion per your rule |
-| 23 | Expenses (categories, entries, summary metrics) | Y any | Y own | N | `/expenses` under `AdminOnlyGuard`; `expenses` only in admin nav |
+| 23 | Expenses (categories, entries, summary metrics) | Y any | **N** (removed 2026) | N | `/expenses` under `AdminOnlyGuard`; `expenses` only in admin nav |
 | 24 | Store settings read (own branch) | Y any | Y own | Y own | needed by theme/invoice for everyone |
 | 25 | Store settings **write** + logo/branding upload | Y any | **N** (2026 change) | N | `store_settings` admin nav only; `StoreSettingsView` target selector `role === 'admin'` |
 | 26 | Attendance + staff roster | N (hidden) | N | N | `attendance` in `ADMIN_REMOVED_TABS` and not in staff list; screens unreachable. Kept in DB, **no endpoint** unless you say otherwise |
@@ -53,7 +53,7 @@ Legend: Y = allowed, N = 403, "own" = locked to the branch in the JWT (never fro
 ## Flags / ambiguities (need your decision)
 
 1. **Hard-coded `<removed>`** (`Dashboard.tsx:950`): "staff deletes an order after typing the admin password". The Delete button is only rendered for admin, so staff can never reach it. I propose **no staff delete endpoint** and removing the dependency on that string. Confirm.
-2. **Expenses summary** for Manager: I treat the Expenses ledger (and its summary cards) as NOT "Analytics Dashboard", so Manager gets it. Say if you want it excluded.
+2. **Expenses** for Manager: removed (2026). The Expenses ledger, its categories and summary cards are Admin only; `/api/expenses*` answers 403 to Manager and Staff.
 3. **Inventory analytics view / stock-ledger CSV** (row 9): same reasoning, it is not in your Analytics list, so Manager and Staff keep it exactly as in the original.
 4. **Manager and Store Settings / WhatsApp Center**: Admin-equivalent, own branch only. Manager cannot see the Admin's branch selector (it is a fixed badge, like Staff).
 5. **Rows 14, 26, 31** are hidden in the original even for Admin. I will build no endpoints for them (attendance DB tables stay). Say if attendance should get endpoints anyway for a later phase.
@@ -81,11 +81,11 @@ Manager row, final (everything else is unchanged):
 
 | Area | Manager |
 |---|---|
-| Sidebar | Store Dashboard & POS, Stock & Inventory, Expenses Ledger, Advance & Custom Orders, Order History, Coupons, Online Shop. **No Store Settings, no Online Enquiries** (deep links redirect to billing) |
+| Sidebar | Store Dashboard & POS, Stock & Inventory, Advance & Custom Orders, Order History, Coupons, Online Shop. **No Expenses Ledger, no Store Settings, no Online Enquiries** (deep links redirect to billing) |
 | Coupons manage (list, create, edit, delete, activate, send) | **Y, own branch only** (the token's branch; another branch's coupon is never reached). Applying a code at billing keeps `GET /api/coupons/lookup` and `/api/coupons/available` (Manager and Staff, own branch) |
 | Store settings write, logo / branding upload | **403** (Admin only). `GET /api/settings` (own branch, display data) stays for bills, PDFs, thermal receipts, sidebar logo and theme |
 | Advance order delete, Order delete (incl. the delete on WhatsApp Center online requests) | **403** (Admin only) |
-| Still Manager | advance orders view / create / update / complete, order history view / print / status / cancel, inventory, expenses, WhatsApp Center, product image upload |
+| Still Manager | advance orders view / create / update / complete, order history view / print / status / cancel, inventory, WhatsApp Center, product image upload |
 
 ## Order Returns replace Cancellation (2026)
 

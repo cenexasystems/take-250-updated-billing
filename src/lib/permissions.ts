@@ -27,7 +27,7 @@ export const TAB_ACCESS: Record<TabKey, Role[]> = {
   advance_orders: ['admin', 'manager', 'staff'],
   history: ['admin', 'manager', 'staff'],
   branch_hub: ['staff'],
-  expenses: ['admin', 'manager'],
+  expenses: ['admin'], // Expenses Ledger: Admin only (removed from Manager 2026)
   coupons: ['admin', 'manager'], // Manager: own branch only (the server uses the token's branch)
   // the online shop (0016): the online catalogue is Admin and Manager (own branch); the enquiry dashboard is Admin only
   online_shop: ['admin', 'manager'], // Manager: own branch's catalogue only (the server uses the token's branch)
@@ -49,7 +49,7 @@ export const TAB_ACCESS: Record<TabKey, Role[]> = {
 /** Sidebar order (the original's), per portal. Manager = admin's list minus the Analytics Dashboard. */
 export const NAV_ORDER: Record<Role, TabKey[]> = {
   admin: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'pos_analytics', 'coupons', 'online_shop', 'online_enquiries', 'store_settings'],
-  manager: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'coupons', 'online_shop'],
+  manager: ['billing', 'inventory', 'advance_orders', 'history', 'coupons', 'online_shop'],
   staff: ['branch_hub', 'billing', 'advance_orders', 'history'],
 }
 export const GLOBAL_NAV: TabKey[] = ['business_overview', 'online_enquiries', 'staff_memberships']
@@ -73,7 +73,7 @@ export const FEATURE_ACCESS: Record<Feature, Role[]> = {
   'enquiries.view': ['admin'], // enquiry dashboard: list, status, notes, delivery
   'enquiries.delete': ['admin'], // removing a request for good
   'customers.lookup': ['admin', 'manager', 'staff'], // POS status line under the phone field + that customer's coupon status
-  'expenses.use': ['admin', 'manager'],
+  'expenses.use': ['admin'],
   'branch.switch': ['admin'],
   'passcodes.manage': ['admin'],
   'analytics.view': ['admin'],

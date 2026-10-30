@@ -48,7 +48,7 @@ import SendCouponModal from '../components/coupons/SendCouponModal'
 import OnlineCatalogue from '../components/shop/OnlineCatalogue'
 import OnlineEnquiries from '../components/shop/OnlineEnquiries'
 import { useShopAlertStore } from '../store/shopAlertStore'
-import { can, canOpenTab, hasAdminPowers, roleLabel, type TabKey as PermTabKey } from '../lib/permissions'
+import { can, canOpenTab, roleLabel, type TabKey as PermTabKey } from '../lib/permissions'
 import { useAlarmStore } from '../store/alarmStore'
 import { alarmSound } from '../lib/alarmAudio'
 import { uploadProductImage } from '../lib/storage'
@@ -538,13 +538,12 @@ export default function Dashboard() {
     setLoading(true)
     try {
       const productsPromise = fetchProducts(branch, true)
-      // coupons and expenses belong to the admin / manager portals; staff never request them
-      const powers = hasAdminPowers(useAdminAuthStore.getState().role)
+      // coupons (admin / manager) and expenses (admin only): only requested by the roles that may open them
       const [cRes, oRes, couponRes, expList] = await Promise.all([
         api<{ categories: unknown[] }>('GET', '/api/categories', { branchId: branch }),
         api<{ orders: Array<Record<string, unknown>> }>('GET', '/api/orders', { query: { include_items: 1, limit: 1000 }, branchId: branch }),
         canOpenTab(useAdminAuthStore.getState().role, 'coupons') ? api<{ coupons: unknown[] }>('GET', '/api/coupons', { branchId: branch }) : Promise.resolve({ coupons: [] as unknown[] }),
-        powers ? expenseService.getExpenses(branch) : Promise.resolve([] as ExpenseRecord[]),
+        canOpenTab(useAdminAuthStore.getState().role, 'expenses') ? expenseService.getExpenses(branch) : Promise.resolve([] as ExpenseRecord[]),
       ])
       const mappedOrders = oRes.orders.map(r => toDashboardOrder({ ...r, branch: r.branch_id }))
       setCats(cRes.categories as Category[])
@@ -4755,7 +4754,7 @@ export default function Dashboard() {
         {tab === 'online_enquiries' && canOpenTab(role, 'online_enquiries') && <OnlineEnquiries branch={isGlobalView ? null : (role === 'admin' ? branch : lockedBranch ?? branch)} canDelete={can(role, 'enquiries.delete')} isAdmin={role === 'admin'} />}
 
         {/* ── EXPENSES TAB ── */}
-        {tab === 'expenses' && (
+        {tab === 'expenses' && canOpenTab(role, 'expenses') && (
           <ExpensesView />
         )}
         </div>

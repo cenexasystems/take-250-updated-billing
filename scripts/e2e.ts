@@ -340,7 +340,7 @@ async function main() {
       const mg = await loginAs('manager', i)
       const mp = mg.page
       const nav2 = (await navLabels(mp)).join(' | ')
-      check(/Expenses/.test(nav2) && /Order History/.test(nav2) && /Stock/.test(nav2) && /Coupons/.test(nav2) && !/Store Settings|Analytics/.test(nav2), 'manager sees Expenses, Stock, Order History, Coupons and NOT Store Settings / Analytics', nav2)
+      check(/Order History/.test(nav2) && /Stock/.test(nav2) && /Coupons/.test(nav2) && !/Expenses|Store Settings|Analytics/.test(nav2), 'manager sees Stock, Order History, Coupons and NOT Expenses / Store Settings / Analytics', nav2)
       check(!/Analytics/.test(nav2), 'manager has NO Analytics Dashboard in the menu', nav2)
       check(!/Staff & Memberships|Business Overview/.test(nav2), 'manager has no passcode / cross-branch entries')
       check((await mp.locator('aside select').count()) === 0, 'manager has no branch switcher (fixed branch badge)')
@@ -353,20 +353,12 @@ async function main() {
       }
       const mApi = await Promise.all(['/api/analytics/orders', '/api/admin/passcodes', '/api/global/overview'].map(async (p) => (await mp.request.get(`${origin}${p}`)).status()))
       check(mApi.every((s) => s === 403), 'the API answers 403 to the manager for analytics / passcodes / global', mApi.join(','))
-      // expenses through the screen
-      await go(mp, '/dashboard?tab=expenses')
-      await mp.getByRole('button', { name: /record expense/i }).click()
-      await sleep(500)
-      await mp.locator('input[placeholder="0.00"]').fill('250')
-      await mp.locator('textarea').last().fill(`E2E expense ${i + 1}`)
-      await mp.getByRole('button', { name: /save expense/i }).click()
-      await sleep(2500)
-      await silence(mp)
-      const exp = (await apiGet(mp, '/api/expenses')).expenses as any[]
-      check(exp.some((e) => e.description === `E2E expense ${i + 1}` && e.branch_id === b && Number(e.amount) === 250), `expense recorded in ${b} through the screen`)
-      check((await bodyText(mp)).includes(`E2E expense ${i + 1}`), 'the expense shows in the ledger')
-      check(!exp.some((e) => /E2E expense/.test(e.description) && e.description !== `E2E expense ${i + 1}`), "the ledger holds none of the other branches' expenses")
-      await shot(mp, `manager-${b}-expenses`)
+      // expenses: Admin only, so the manager is sent back and the API refuses
+      for (const blocked of ['/expenses', '/dashboard?tab=expenses']) {
+        await go(mp, blocked)
+        check(!/Expenses Ledger|Record Expense/i.test(await bodyText(mp)) && !/\/expenses/.test(new URL(mp.url()).pathname), `manager is blocked from ${blocked}`, mp.url())
+      }
+      check((await mp.request.get(`${origin}/api/expenses`)).status() === 403, 'the API answers 403 to the manager for expenses')
       // return a bill from Order History (replaces the old cancel): the item goes back in stock, the bill becomes Partially Returned / Returned
       await go(mp, '/dashboard?tab=history')
       const stockBeforeReturn = await stockOf(mp, me.name)

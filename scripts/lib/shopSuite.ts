@@ -173,11 +173,12 @@ export async function shopSuite(c: ShopCtx) {
       check((await call('PATCH', `/api/shop-admin/enquiries/${idOther}`, { cookie: cookies[mgr], body: { status: 'contacted' } })).status === 404, `${L} ${mgr} cannot change ${other}'s request (404)`)
       check(((await call('GET', `/api/shop-admin/enquiries/${idOther}/history`, { cookie: cookies[mgr] })).body.history as any[]).length === 0, `${L} ${mgr} sees no history of ${other}'s request`)
       check((await call('DELETE', `/api/shop-admin/enquiries/${id1}`, { cookie: cookies[mgr] })).status === 403, `${L} ${mgr} cannot delete a request (403)`)
-      const cat = [
-        (await call('GET', '/api/shop-admin/catalogue', { cookie: cookies[mgr] })).status,
-        (await call('PATCH', `/api/shop-admin/catalogue/${P1}`, { cookie: cookies[mgr], body: { show_online: false } })).status,
-      ]
-      check(cat.every((x) => x === 403), `${L} ${mgr} gets 403 on the online catalogue`, JSON.stringify(cat))
+      // online catalogue: own branch only
+      const mc = await call('GET', '/api/shop-admin/catalogue', { cookie: cookies[mgr] })
+      const mids = ((mc.body.products ?? []) as any[]).map((p) => p.id)
+      check(mc.status === 200 && mids.includes(P1) && !mids.includes(O1), `${L} ${mgr} sees only ${b}'s online catalogue`, JSON.stringify(mids))
+      check((await call('PATCH', `/api/shop-admin/catalogue/${O1}`, { cookie: cookies[mgr], body: { show_online: false } })).status === 404, `${L} ${mgr} cannot change ${other}'s product (404)`)
+      check((await call('GET', '/api/shop-admin/catalogue', { cookie: cookies[mgr], query: { branch_id: other } })).status === 400, `${L} ${mgr} sending a branch selector is refused`)
       await call('DELETE', `/api/shop-admin/enquiries/${idOther}`, { cookie: cookies.admin })
     }
     const st = await call('PATCH', `/api/shop-admin/enquiries/${id1}`, { cookie: cookies.admin, body: { status: 'contacted', delivery_charge: 60, admin_note: 'Will deliver Friday' } })

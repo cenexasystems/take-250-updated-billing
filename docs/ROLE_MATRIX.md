@@ -81,7 +81,7 @@ Manager row, final (everything else is unchanged):
 
 | Area | Manager |
 |---|---|
-| Sidebar | Store Dashboard & POS, Stock & Inventory, Expenses Ledger, Advance & Custom Orders, Order History, Coupons, Online Enquiries. **No Store Settings** (deep links redirect to billing) |
+| Sidebar | Store Dashboard & POS, Stock & Inventory, Expenses Ledger, Advance & Custom Orders, Order History, Coupons, Online Shop, Online Enquiries. **No Store Settings** (deep links redirect to billing) |
 | Coupons manage (list, create, edit, delete, activate, send) | **Y, own branch only** (the token's branch; another branch's coupon is never reached). Applying a code at billing keeps `GET /api/coupons/lookup` and `/api/coupons/available` (Manager and Staff, own branch) |
 | Store settings write, logo / branding upload | **403** (Admin only). `GET /api/settings` (own branch, display data) stays for bills, PDFs, thermal receipts, sidebar logo and theme |
 | Advance order delete, Order delete (incl. the delete on WhatsApp Center online requests) | **403** (Admin only) |
@@ -116,7 +116,7 @@ Manager row, final (everything else is unchanged):
 |---|---|---|---|---|
 | `/shop` page: choose a branch, browse its "show online" products, cart, send a request | - | - | - | **Y** (any active branch) |
 | `GET /api/shop/branches`, `GET /api/shop/catalogue/:shop`, `POST /api/shop/enquiries` (`shop.public`, allow-listed) | Y | Y | Y | **Y**: rate limited per IP (reads 300 / 10 min, requests 5 / 15 min), honeypot, idempotency key |
-| Online catalogue of a branch: show online, online price, description, sort, image (`shop.catalogue`, `/api/shop-admin/catalogue*`) | **Y** (branch in the switcher) | **N** (403) | **N** (403) | N |
+| Online catalogue of a branch: show online, online price, description, sort, image (`shop.catalogue`, `/api/shop-admin/catalogue*`, `/api/shop-admin/customers`) | **Y** (branch in the switcher) | **Y** (own branch only) | **N** (403) | N |
 | Enquiry dashboard: list, status, delivery charge / date, note, history, CSV (`shop.enquiries`, `/api/shop-admin/enquiries*`) | **Y** (all branches or one) | **Y** (own branch only; another branch's request is 404, `in_branch` ignored) | **N** (403) | N |
 | Delete an enquiry (`shop.enquiries.delete`, `DELETE /api/shop-admin/enquiries/:id`) | **Y** | **N** (403) | **N** (403) | N |
 | New-request popup + sound + sidebar badge | **Y** (every branch, while an Admin tab is open) | **Y** (own branch only, while a Manager tab is open) | N | N |

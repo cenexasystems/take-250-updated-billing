@@ -90,8 +90,8 @@ export const PERMISSIONS = {
   // online shop (0016). PUBLIC, allow-listed: the shop's branches, a branch's "show online" catalogue, sending a request
   // (rate limited per IP, honeypot, idempotency key). The customer names the branch; the server checks it is active.
   'shop.public':           { roles: 'public' as Allowed, scope: 'none' as Scope },
-  // Admin only: the online catalogue of the branch in the switcher
-  'shop.catalogue':        { roles: A, scope: 'branch' as Scope },
+  // the online catalogue + shop link / customers: Admin (branch in the switcher) and Manager (own branch, from the token)
+  'shop.catalogue':        { roles: AM, scope: 'branch' as Scope },
   // enquiry dashboard: Admin sees every branch (or one), Manager only the token's branch. Scope 'none' so no branch selector
   // is accepted; the handlers lock a Manager to session.branch themselves (enquiryBranchLock in routes/shop.ts).
   'shop.enquiries':        { roles: AM, scope: 'none' as Scope },

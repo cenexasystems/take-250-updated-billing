@@ -340,7 +340,7 @@ async function main() {
       const mg = await loginAs('manager', i)
       const mp = mg.page
       const nav2 = (await navLabels(mp)).join(' | ')
-      check(/Expenses/.test(nav2) && /Order History/.test(nav2) && /Stock/.test(nav2) && !/Coupons|Store Settings|Analytics/.test(nav2), 'manager sees Expenses, Stock, Order History and NOT Coupons / Store Settings / Analytics', nav2)
+      check(/Expenses/.test(nav2) && /Order History/.test(nav2) && /Stock/.test(nav2) && /Coupons/.test(nav2) && !/Store Settings|Analytics/.test(nav2), 'manager sees Expenses, Stock, Order History, Coupons and NOT Store Settings / Analytics', nav2)
       check(!/Analytics/.test(nav2), 'manager has NO Analytics Dashboard in the menu', nav2)
       check(!/Staff & Memberships|Business Overview/.test(nav2), 'manager has no passcode / cross-branch entries')
       check((await mp.locator('aside select').count()) === 0, 'manager has no branch switcher (fixed branch badge)')

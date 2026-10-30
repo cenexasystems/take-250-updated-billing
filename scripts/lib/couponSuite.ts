@@ -84,8 +84,8 @@ export async function couponSuite(c: CouponCtx) {
     const admOther = await call('POST', '/api/customers/lookup', { cookie: cookies.admin, query: { branch_id: other }, body: { phone: X } })
     check(admOther.status === 200 && admOther.body.exists_in_this_branch === false, `${L} admin with another branch selected sees that branch's view only`, JSON.stringify(admOther.body))
 
-    // ================= 4. sending: Admin only, selected branch only, nothing for others
-    for (const who of [mgr, staff] as Actor[]) {
+    // ================= 4. sending: Admin (selected branch) and Manager (own branch); Staff refused
+    for (const who of [staff] as Actor[]) {
       const r = await send(id.sentg, X, false, who, null)
       check(r.status === 403, `${L} ${who} gets 403 on send`, String(r.status))
     }
@@ -226,8 +226,8 @@ export async function couponSuite(c: CouponCtx) {
     check(advB.status === 201 && (await sell(B2, `PCL${n}`)).status === 201, `${L} fixture: deposit order with the coupon, then the customer uses it at the POS`, `${advB.status} ${advB.body.error ?? ''}`)
     const advDone = await call('POST', `/api/advance-orders/${advB.body.order?.id}/complete`, { cookie: cookies[staff], body: { payment_method: 'cash', final_amount: 800 } })
     check(advDone.status === 400 && /maximum number of times/.test(advDone.body.error) && num(pcl) > 0, `${L} advance-order completion is refused once the customer is at the limit (checked again at completion)`, `${advDone.status} ${advDone.body.error ?? ''}`)
-    // only the Admin can set it
-    for (const who of [mgr, staff] as Actor[]) {
+    // Admin and Manager can set it; Staff cannot
+    for (const who of [staff] as Actor[]) {
       check((await call('PATCH', `/api/coupons/${pc1}`, { cookie: cookies[who], body: { per_customer_limit: 5 } })).status === 403, `${L} ${who} cannot edit the per-customer limit (403)`)
       check((await call('POST', '/api/coupons', { cookie: cookies[who], body: { code: `PCX${n}${who}`, percentage: 5, per_customer_limit: 1 } })).status === 403, `${L} ${who} cannot create a coupon with it (403)`)
     }

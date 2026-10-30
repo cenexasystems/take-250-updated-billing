@@ -28,7 +28,7 @@ export const TAB_ACCESS: Record<TabKey, Role[]> = {
   history: ['admin', 'manager', 'staff'],
   branch_hub: ['staff'],
   expenses: ['admin', 'manager'],
-  coupons: ['admin'],
+  coupons: ['admin', 'manager'], // Manager: own branch only (the server uses the token's branch)
   // the online shop (0016): the branch's online catalogue is Admin only; the enquiry dashboard is Admin (every branch)
   // and Manager (own branch only, enforced by the server)
   online_shop: ['admin'],
@@ -50,7 +50,7 @@ export const TAB_ACCESS: Record<TabKey, Role[]> = {
 /** Sidebar order (the original's), per portal. Manager = admin's list minus the Analytics Dashboard. */
 export const NAV_ORDER: Record<Role, TabKey[]> = {
   admin: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'pos_analytics', 'coupons', 'online_shop', 'online_enquiries', 'store_settings'],
-  manager: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'online_enquiries'],
+  manager: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'coupons', 'online_enquiries'],
   staff: ['branch_hub', 'billing', 'advance_orders', 'history'],
 }
 export const GLOBAL_NAV: TabKey[] = ['business_overview', 'online_enquiries', 'staff_memberships']
@@ -68,8 +68,8 @@ export const FEATURE_ACCESS: Record<Feature, Role[]> = {
   'orders.delete': ['admin'],
   'orders.return': ['admin', 'manager', 'staff'],
   'settings.write': ['admin'],
-  'coupons.manage': ['admin'],
-  'coupons.send': ['admin'], // Send button on each coupon (PDF to a customer)
+  'coupons.manage': ['admin', 'manager'],
+  'coupons.send': ['admin', 'manager'], // Send button on each coupon (PDF to a customer)
   'shop.manage': ['admin'], // online catalogue (0016)
   'enquiries.view': ['admin', 'manager'], // enquiry dashboard: list, status, notes, delivery (Manager: own branch only)
   'enquiries.delete': ['admin'], // removing a request for good

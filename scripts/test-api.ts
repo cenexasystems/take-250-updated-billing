@@ -203,9 +203,10 @@ async function run() {
       check(!canOpenTab('manager', 'staff_memberships') && !canOpenTab('manager', 'business_overview'), 'manager has no passcode tab and no cross-branch tab')
       check(UI_ROLES.every((r) => REMOVED_TABS.every((t) => !canOpenTab(r, t) || t === 'branch_hub')), 'tabs the original removed are open to nobody (branch_hub only for staff)')
       check(canOpenTab('staff', 'branch_hub') && !canOpenTab('manager', 'branch_hub') && !canOpenTab('admin', 'branch_hub'), 'branch hub follows the original: staff only')
-      check(same(NAV_ORDER.manager, NAV_ORDER.admin.filter((t) => !['pos_analytics', 'coupons', 'store_settings', 'online_shop'].includes(t))), 'manager sidebar = admin sidebar minus Analytics Dashboard, Coupons, Store Settings and the online catalogue (Online Enquiries kept)')
+      check(same(NAV_ORDER.manager, NAV_ORDER.admin.filter((t) => !['pos_analytics', 'store_settings', 'online_shop'].includes(t))), 'manager sidebar = admin sidebar minus Analytics Dashboard, Store Settings and the online catalogue (Coupons and Online Enquiries kept)')
       check(canOpenTab('manager', 'online_enquiries') && !canOpenTab('staff', 'online_enquiries'), 'Online Enquiries tab: admin and manager, not staff')
-      check(!canOpenTab('manager', 'coupons') && !canOpenTab('staff', 'coupons') && canOpenTab('admin', 'coupons') && !canOpenTab('manager', 'store_settings') && !canOpenTab('staff', 'store_settings') && canOpenTab('admin', 'store_settings'), 'Coupons and Store Settings tabs: admin only')
+      check(canOpenTab('manager', 'coupons') && !canOpenTab('staff', 'coupons') && canOpenTab('admin', 'coupons'), 'Coupons tab: admin and manager, not staff')
+      check(!canOpenTab('manager', 'store_settings') && !canOpenTab('staff', 'store_settings') && canOpenTab('admin', 'store_settings'), 'Store Settings tab: admin only')
       check(same(NAV_ORDER.staff, ['branch_hub', 'billing', 'advance_orders', 'history']), 'staff sidebar: Store Hub, POS, Advance Orders, Order History (no Stock & Inventory)')
       check(!canOpenTab('staff', 'inventory') && canOpenTab('manager', 'inventory') && canOpenTab('admin', 'inventory'), 'Stock & Inventory tab: admin and manager only')
       check(UI_ROLES.every((r) => NAV_ORDER[r].every((t) => canOpenTab(r, t))), 'every sidebar entry is openable by its own role')
@@ -1019,17 +1020,37 @@ async function run() {
       check(logged.some((l) => /42P01/.test(l) && /shop_enquiries/.test(l)) && !logged.some((l) => /9876500088/.test(l)), 'the missing-table error is logged with its cause, without the searched phone number', logged.join(' | ').slice(0, 300))
     }
 
-    // ================================================================== O. MANAGER: no Coupons management, Store Settings writes, branding upload or delete (Admin only)
+    // ================================================================== O. MANAGER: no Store Settings writes, branding upload or delete (Admin only);
+    // coupon management is Admin + Manager (own branch), Staff refused
     if (sec2) {
       const FAKE = '00000000-0000-4000-8000-000000000000'
       const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
       for (const b of BRANCHES) {
         const n = b.slice(-1); const mgr = `manager${n}` as Actor; const staff = `staff${n}` as Actor
+        {
+          const sc = [
+            (await call('GET', '/api/coupons', { cookie: cookies[staff] })).status,
+            (await call('POST', '/api/coupons', { cookie: cookies[staff], body: { code: `STF${n}X`, percentage: 5 } })).status,
+            (await call('PATCH', `/api/coupons/${FAKE}`, { cookie: cookies[staff], body: { is_active: false } })).status,
+            (await call('DELETE', `/api/coupons/${FAKE}`, { cookie: cookies[staff] })).status,
+          ]
+          check(sc.every((x) => x === 403), `${staff} (${b}) gets 403 on coupon management`, JSON.stringify(sc))
+          const code = `MGR${n}${Date.now() % 100000}`
+          const mk = await call('POST', '/api/coupons', { cookie: cookies[mgr], body: { code, percentage: 5 } })
+          const mine = await one(`SELECT id, branch_id FROM coupons WHERE code = $1`, [code])
+          check(mk.status === 201 && mine?.branch_id === b, `${mgr} creates a coupon in its own branch ${b}`, `${mk.status} ${mine?.branch_id}`)
+          const ls = await call('GET', '/api/coupons', { cookie: cookies[mgr] })
+          check(ls.status === 200 && (ls.body.coupons as any[]).every((c) => c.branch_id === undefined || c.branch_id === b) && (ls.body.coupons as any[]).some((c) => c.code === code), `${mgr} lists only ${b}'s coupons`)
+          const otherB = BRANCHES.find((o) => o !== b)!
+          await client.query(`INSERT INTO coupons (code, percentage, branch_id) VALUES ($1, 7, $2) ON CONFLICT DO NOTHING`, [`OTH${n}X`, otherB])
+          const oth = await one(`SELECT id FROM coupons WHERE code = $1 AND branch_id = $2`, [`OTH${n}X`, otherB])
+          await call('PATCH', `/api/coupons/${oth.id}`, { cookie: cookies[mgr], body: { is_active: false } })
+          await call('DELETE', `/api/coupons/${oth.id}`, { cookie: cookies[mgr] })
+          const still = await one(`SELECT is_active FROM coupons WHERE id = $1`, [oth.id])
+          check(!!still && still.is_active === true, `${mgr} cannot edit or delete ${otherB}'s coupon`, JSON.stringify(still))
+          check((await call('DELETE', `/api/coupons/${mine.id}`, { cookie: cookies[mgr] })).status === 200, `${mgr} deletes its own coupon`)
+        }
         const adminOnly: Array<[string, string, string, unknown?, boolean?]> = [
-          ['GET', '/api/coupons', 'coupon management list'],
-          ['POST', '/api/coupons', 'create a coupon', { code: `MGR${n}X`, percentage: 5 }],
-          ['PATCH', `/api/coupons/${FAKE}`, 'edit / activate a coupon', { is_active: false }],
-          ['DELETE', `/api/coupons/${FAKE}`, 'delete a coupon'],
           ['PUT', '/api/settings', 'store settings write (profile, theme, contact, address)', { theme_color: '#112233' }],
           ['POST', '/api/uploads/branding', 'branding / logo upload', undefined, true],
           ['DELETE', `/api/advance-orders/${FAKE}`, 'delete an advance order'],

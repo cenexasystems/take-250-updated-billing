@@ -24,8 +24,8 @@ Legend: Y = allowed, N = 403, "own" = locked to the branch in the JWT (never fro
 | 14 | Barcode Hub tab | N (hidden) | N | N | `barcode_hub` in `ADMIN_REMOVED_TABS`, not in `staffAllowedTabs`. **No endpoint** beyond rows 10-13 |
 | 15 | POS sale (`complete_pos_sale_with_inventory`), invoice number | Y any | Y own | Y own | `/pos` `PosGuard`; billing tab |
 | 16 | Coupon **validate/apply** at POS | Y any | Y own | Y own | applying a coupon in Pos is ungated |
-| 17 | Coupons **manage** (create/edit/delete, Coupons tab) | Y any | **N** (2026 change) | N | `coupons` in admin nav only |
-| 17b | Coupon **send** (Send button on each coupon: PDF to a customer, records `coupon_sends`; `POST /api/coupons/:id/sends`) | Y own selected branch | **N** | **N** | new (2026): `coupons.send` |
+| 17 | Coupons **manage** (create/edit/delete, Coupons tab) | Y any | **Y own** (2026, restored) | N | `coupons` in admin and manager nav |
+| 17b | Coupon **send** (Send button on each coupon: PDF to a customer, records `coupon_sends`; `POST /api/coupons/:id/sends`) | Y own selected branch | **Y own** | **N** | new (2026): `coupons.send` |
 | 17c | **Customer lookup** at POS (status line under the phone field + that customer's sent coupons of THIS branch with status; `POST /api/customers/lookup`) | Y own selected branch | Y own | Y own | new (2026): `customers.lookup`, rate limited per user and IP |
 | 17d | **Phone suggestions** at POS (from the 4th digit, max 8 matching numbers of THIS branch with names; a full existing number fills the name; `POST /api/customers/suggest`) | Y own selected branch | Y own | Y own | new (2026): same permission as the lookup (`customers.lookup`), rate limited per user and IP |
 | 18 | Order history: list / view / print / share | Y any | Y own | Y own | `history` in `staffAllowedTabs` |
@@ -75,14 +75,14 @@ Staff row, final:
 | Low-stock alert | popup + sound, fed by `GET /api/inventory/low-stock-alerts` (name, variant, quantity, threshold of the token's branch only) |
 
 
-## Manager change (2026): no Coupons, Store Settings or delete
+## Manager change (2026): no Store Settings or delete (Coupons restored, own branch)
 
 Manager row, final (everything else is unchanged):
 
 | Area | Manager |
 |---|---|
-| Sidebar | Store Dashboard & POS, Stock & Inventory, Expenses Ledger, Advance & Custom Orders, Order History. **No Coupons, no Store Settings** (deep links redirect to billing) |
-| Coupons manage (list, create, edit, delete, activate) | **403** (Admin only). Applying a code at billing keeps `GET /api/coupons/lookup` and `/api/coupons/available` (Manager and Staff, own branch) |
+| Sidebar | Store Dashboard & POS, Stock & Inventory, Expenses Ledger, Advance & Custom Orders, Order History, Coupons, Online Enquiries. **No Store Settings** (deep links redirect to billing) |
+| Coupons manage (list, create, edit, delete, activate, send) | **Y, own branch only** (the token's branch; another branch's coupon is never reached). Applying a code at billing keeps `GET /api/coupons/lookup` and `/api/coupons/available` (Manager and Staff, own branch) |
 | Store settings write, logo / branding upload | **403** (Admin only). `GET /api/settings` (own branch, display data) stays for bills, PDFs, thermal receipts, sidebar logo and theme |
 | Advance order delete, Order delete (incl. the delete on WhatsApp Center online requests) | **403** (Admin only) |
 | Still Manager | advance orders view / create / update / complete, order history view / print / status / cancel, inventory, expenses, WhatsApp Center, product image upload |
@@ -105,10 +105,10 @@ Manager row, final (everything else is unchanged):
 - **Return refund mode (0017)**: a new return is refunded to ONE mode - Cash, GPay / QR (stored `qr`), Card or Other; "original" (split back to the bill's modes) is rejected by the API and by `process_order_return`. Other needs a typed label (1-40 characters, control characters removed), stored in `order_returns.refund_mode_label` and shown in the Returns list / CSV, return receipt and Order History. Old returns stored as "original" keep their split. Same roles as before (`orders.return`, `returns.list`).
 - **Low stock alert switch (0018)**: `store_settings.low_stock_alert_enabled` (default true) per branch, read by Admin / Manager / Staff through `GET /api/settings`, written only by the Admin (`settings.write`; Manager and Staff 403). When off: `GET /api/inventory/low-stock-alerts` returns an empty list, the screens make no low-stock alert requests for that branch, the popup / sound and the Store Hub banner are hidden. Stock list highlighting and reports are unchanged.
 - **Online enquiry delivery date (0019)**: `shop_enquiries.delivery_date` (nullable date), set / cleared through `PATCH /api/shop-admin/enquiries/:id` by the Admin, or by the Manager for their own branch's requests (Staff 403); must be a real date, not before the request date and at most one year ahead (India time). Shown as dd/mm/yyyy with a Today / Overdue badge while the request is open, in the notes area and in the CSV.
-- **Sending coupons: Admin only** (`POST /api/coupons/:id/sends`, 403 for Manager and Staff), for the branch selected in the switcher. The PDF is made in the browser and shared as a file only; the send is recorded only after the share / download succeeded.
+- **Sending coupons: Admin and Manager** (`POST /api/coupons/:id/sends`, 403 for Staff): Admin for the branch selected in the switcher, Manager for their own branch. The PDF is made in the browser and shared as a file only; the send is recorded only after the share / download succeeded.
 - **Customer-specific coupons:** only when Admin turns the toggle on in the send modal. Such a coupon is redeemable only on bills whose phone matches one of its customer-specific sends, once per phone; enforced in SQL (`assert_coupon_redeemable`, called by `complete_pos_sale_with_inventory` and the `orders` insert trigger). Coupons never sent, or sent with the toggle off, behave exactly as before.
 - **Coupons stay branch-owned:** another branch's coupon is never visible or valid here (the sale function rejects an unknown code).
-- Manager and Staff keep `GET /api/coupons/lookup` and `/api/coupons/available` for billing; coupon management stays Admin only.
+- Manager and Staff keep `GET /api/coupons/lookup` and `/api/coupons/available` for billing; coupon management is Admin and Manager (own branch), never Staff.
 
 ## Online shop and enquiry dashboard (2026, migration 0016)
 

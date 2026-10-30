@@ -2,7 +2,7 @@
 // (TEST database, inside its rolled-back transaction) and by the in-memory-Postgres harness. Every check runs per branch.
 import type { Actor, ReturnsCtx } from './returnsSuite'
 import { csvCell } from '../../src/lib/csvCell'
-import { shopInviteText, shopLink, whatsappShareUrl, whatsappToUrl } from '../../src/lib/shopLink'
+import { branchFromShopSlug, shopInviteText, shopLink, whatsappShareUrl, whatsappToUrl } from '../../src/lib/shopLink'
 import { formatMargin, missingCostNote, productProfit, profitTotals } from '../../src/lib/productProfit'
 
 export type ShopCtx = Omit<ReturnsCtx, 'concurrent'>
@@ -286,9 +286,14 @@ export async function shopSuite(c: ShopCtx) {
         'shop: CSV cells starting with = + - @ are neutralised')
       // the customer link (copy / WhatsApp / QR) is built from the open address and always ends with /shop
       const origins = ['https://take250.vercel.app', 'https://take250-git-feature-x-team.vercel.app/', 'http://localhost:5173', 'https://take250.in/dashboard?tab=online_shop#x']
-      const links = origins.map(shopLink)
+      const links = origins.map((o) => shopLink(o))
       check(links.every((l) => l.endsWith('/shop') && !l.includes('//shop') && !/[?#]/.test(l)) && links[0] === 'https://take250.vercel.app/shop' && links[1] === 'https://take250-git-feature-x-team.vercel.app/shop' && links[3] === 'https://take250.in/shop',
         'shop: the copied link is <origin>/shop on production, preview and local addresses', links.join(' '))
+      // one link per branch: /shop/<place>, and the page reads the branch back from it
+      const own = ['pos1', 'pos2', 'pos3'].map((b) => shopLink('https://take250.in/dashboard?tab=online_shop', b))
+      check(own.join(' ') === 'https://take250.in/shop/karanthai https://take250.in/shop/kinathukadavu https://take250.in/shop/pollachi'
+        && branchFromShopSlug('karanthai') === 'pos1' && branchFromShopSlug('Pollachi') === 'pos3' && branchFromShopSlug('pos2') === 'pos2' && branchFromShopSlug('nowhere') === null && branchFromShopSlug(undefined) === null,
+        'shop: each branch has its own link /shop/<place> that opens that branch', own.join(' '))
       const inv = whatsappToUrl('9811100077', shopInviteText(links[0], 'Meena'))
       check(inv === `https://wa.me/919811100077?text=${encodeURIComponent('Hi Meena! Click here to order from here: https://take250.vercel.app/shop')}` && shopInviteText(links[0]).startsWith('Hi! Click here to order from here'),
         'shop: "Send to a customer" opens that customer\'s WhatsApp chat with the /shop link typed in', inv)

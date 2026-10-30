@@ -3,6 +3,8 @@ import { ArrowLeft, Check, Download, Minus, Plus, Search, ShoppingBag, Trash2, X
 import { THEME_PALETTE } from '../lib/brand'
 import { formatCurrency } from '../lib/retail'
 import { canonicalPhone } from '../lib/phone'
+import { useParams } from 'react-router-dom'
+import { branchFromShopSlug } from '../lib/shopLink'
 
 /**
  * The public online shop (/shop): no sign-in. A customer picks a branch, browses its "show online" products, and sends a
@@ -59,8 +61,12 @@ function confirmationPng(c: Confirmation): Promise<Blob | null> {
 }
 
 export default function Shop() {
+  // /shop/<place> is one branch's own link: that shop opens straight away and the customer cannot switch to another
+  const { slug } = useParams<{ slug?: string }>()
+  const fixedBranch = branchFromShopSlug(slug)
   const [branches, setBranches] = useState<ShopBranch[]>([])
-  const [branchId, setBranchId] = useState<string | null>(() => read<string | null>(BRANCH_KEY, null))
+  const [branchId, setBranchId] = useState<string | null>(() => fixedBranch ?? read<string | null>(BRANCH_KEY, null))
+  useEffect(() => { if (fixedBranch) { setBranchId(fixedBranch); setView('shop'); setChoosing(false) } }, [fixedBranch])
   const [products, setProducts] = useState<Product[]>([])
   const [cart, setCart] = useState<CartLine[]>([])
   const [view, setView] = useState<'shop' | 'cart' | 'checkout' | 'done'>('shop')
@@ -153,7 +159,7 @@ export default function Shop() {
         </button>
         {branch && (
           <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={() => setChoosing(true)} className="rounded-full border border-white/20 px-3 py-1.5 text-[11px] font-black text-white/90 cursor-pointer" data-testid="shop-change-branch">Change shop</button>
+            {!fixedBranch && <button type="button" onClick={() => setChoosing(true)} className="rounded-full border border-white/20 px-3 py-1.5 text-[11px] font-black text-white/90 cursor-pointer" data-testid="shop-change-branch">Change shop</button>}
             <button type="button" onClick={() => setView('cart')} className="relative rounded-full bg-[#D4AF37] p-2.5 text-[#111111] cursor-pointer" aria-label={`Cart, ${count} item(s)`} data-testid="shop-cart-button">
               <ShoppingBag size={18} />
               {count > 0 && <span className="absolute -right-1 -top-1 min-w-[20px] rounded-full bg-white px-1 text-center text-[11px] font-black text-[#111111]" data-testid="shop-cart-count">{count}</span>}

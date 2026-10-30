@@ -13,7 +13,8 @@ const QR_PX = 640 // drawn large, shown small: the downloaded PNG stays sharp wh
 
 /** Top of the Admin "Online Shop" screen: the customer link, copy / WhatsApp share, and a QR code to download. */
 export default function ShopLinkCard({ branch }: { branch?: PosBranch }) {
-  const link = useMemo(() => shopLink(window.location.origin), [])
+  // this branch's own link (/shop/<place>): customers land straight in this branch's shop
+  const link = useMemo(() => shopLink(window.location.origin, branch), [branch])
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [copied, setCopied] = useState(false)
   // send the link to one customer of this branch: recent (last 30 days) or everyone who has bought / asked here
@@ -84,7 +85,7 @@ export default function ShopLinkCard({ branch }: { branch?: PosBranch }) {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'take250-shop-qr.png'
+      a.download = `take250-shop-qr-${branch ?? 'all'}.png`
       a.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 1000)
     }, 'image/png')

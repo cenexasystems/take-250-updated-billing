@@ -243,6 +243,15 @@ function AppShell() {
               </Suspense>
             }
           />
+          {/* one branch's own shop link: /shop/karanthai, /shop/kinathukadavu, /shop/pollachi */}
+          <Route
+            path="/shop/:slug"
+            element={
+              <Suspense fallback={<LoadingSpinner />}>
+                <Shop />
+              </Suspense>
+            }
+          />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>

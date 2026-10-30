@@ -71,7 +71,8 @@ const copy = async (text: string) => {
 }
 
 /** "Click here to order from here: <the shop of this deployment>" closes every message sent to a customer */
-const orderLine = () => orderFromHereText(shopLink(window.location.origin))
+// the bill's own branch shop link (/shop/<place>), so the customer lands in the shop they bought from
+const orderLine = (branch?: string | null) => orderFromHereText(shopLink(window.location.origin, branch))
 const thanksLine = (branch?: string | null) =>
   // the branch's own place name (Karanthai / Kinathukadavu / Pollachi): two branches share the Store Settings shop name
   `Thank you for shopping at ${branch ? branchLabel(branch as PosBranch) : getBranchProfile(branch).name}!`
@@ -105,8 +106,8 @@ export function invoiceSummaryLines(doc: InvoiceDoc): string[] {
 }
 
 /** link absent: the message carries only the lines (an advance order still waiting for its balance gets no invoice link) */
-const chatLinkUrl = (number: string, head: string[], linkLabel: string, link: string | null) =>
-  `${waChatUrl(number)}?text=${encodeURIComponent([...head, '', ...(link ? [`${linkLabel}: ${link}`, ''] : []), orderLine()].join('\n'))}`
+const chatLinkUrl = (number: string, head: string[], linkLabel: string, link: string | null, branch?: string | null) =>
+  `${waChatUrl(number)}?text=${encodeURIComponent([...head, '', ...(link ? [`${linkLabel}: ${link}`, ''] : []), orderLine(branch)].join('\n'))}`
 /** an advance order that still has a balance due: it is not a final invoice, so its message never carries an invoice link */
 const awaitingBalance = (doc: InvoiceDoc | null | undefined) => doc?.advance?.balance?.label === 'Balance due'
 
@@ -155,7 +156,7 @@ export function sendInvoiceToChat(opts: {
     `${kind === 'invoice' && !awaitingBalance(doc) ? 'Invoice' : 'Advance receipt'}: ${no}`,
     ...(doc ? ['', ...invoiceSummaryLines(doc)]
       : opts.total != null && Number.isFinite(Number(opts.total)) ? [`${kind === 'invoice' ? 'Total' : 'Advance paid'}: ₹${Number(opts.total).toFixed(2)}`] : []),
-  ], `Click here to download ${kind}`, opts.link && !awaitingBalance(doc) ? opts.link : null)
+  ], `Click here to download ${kind}`, opts.link && !awaitingBalance(doc) ? opts.link : null, opts.branch)
   const done = (url: string, doc: InvoiceDoc | null) => toast.show({
     kind: 'ok', sticky: true,
     text: `WhatsApp chat with +91 ${number.slice(2)} opened with ${kind} ${no}. Tap Send in WhatsApp.`,
@@ -226,7 +227,7 @@ export async function sendStoredPdfLinkToChat(opts: {
     })
     return 'failed'
   }
-  const url = chatLinkUrl(number, opts.head, `Click here to download ${opts.label}`, link)
+  const url = chatLinkUrl(number, opts.head, `Click here to download ${opts.label}`, link, opts.branch)
   if (tab) { try { tab.opener = null; tab.location.href = url } catch { /* the tab was closed */ } }
   toast.show({
     kind: 'ok', sticky: true,

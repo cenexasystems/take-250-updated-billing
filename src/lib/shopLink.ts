@@ -1,5 +1,8 @@
-/** Each branch's own shop address: /shop/<slug> opens that branch's products straight away (no shop picker). */
-export const SHOP_SLUG: Record<string, string> = { pos1: 'karanthai', pos2: 'kinathukadavu', pos3: 'pollachi' }
+/**
+ * Branches with their own shop address: /shop/<slug> opens that branch's products straight away (no shop picker).
+ * Only Karanthai has one; the other branches share the plain /shop link (the customer picks the shop).
+ */
+export const SHOP_SLUG: Record<string, string> = { pos1: 'karanthai' }
 
 /** The branch id of a /shop/<slug> address (the place name, or the branch id itself), or null when it is not a branch. */
 export function branchFromShopSlug(slug: string | null | undefined): string | null {
@@ -12,7 +15,7 @@ export function branchFromShopSlug(slug: string | null | undefined): string | nu
 /**
  * The customer link of the online shop, always built from the address the Admin has open (preview or production),
  * never typed by hand. Whatever page or path the origin string carries, the result is `<origin>/shop`, or
- * `<origin>/shop/<slug>` for one branch.
+ * `<origin>/shop/<slug>` for a branch that has its own address.
  */
 export function shopLink(origin: string, branch?: string | null): string {
   let base: string
@@ -21,7 +24,7 @@ export function shopLink(origin: string, branch?: string | null): string {
   } catch {
     base = origin.replace(/[?#].*$/, '').replace(/\/+$/, '')
   }
-  const slug = branch ? SHOP_SLUG[branch] ?? branch : ''
+  const slug = branch ? SHOP_SLUG[branch] ?? '' : ''
   return slug ? `${base}/shop/${slug}` : `${base}/shop`
 }
 

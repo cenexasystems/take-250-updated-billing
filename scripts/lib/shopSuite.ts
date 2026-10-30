@@ -289,11 +289,11 @@ export async function shopSuite(c: ShopCtx) {
       const links = origins.map((o) => shopLink(o))
       check(links.every((l) => l.endsWith('/shop') && !l.includes('//shop') && !/[?#]/.test(l)) && links[0] === 'https://take250.vercel.app/shop' && links[1] === 'https://take250-git-feature-x-team.vercel.app/shop' && links[3] === 'https://take250.in/shop',
         'shop: the copied link is <origin>/shop on production, preview and local addresses', links.join(' '))
-      // one link per branch: /shop/<place>, and the page reads the branch back from it
+      // Karanthai has its own link /shop/karanthai; the other branches keep the plain /shop link
       const own = ['pos1', 'pos2', 'pos3'].map((b) => shopLink('https://take250.in/dashboard?tab=online_shop', b))
-      check(own.join(' ') === 'https://take250.in/shop/karanthai https://take250.in/shop/kinathukadavu https://take250.in/shop/pollachi'
-        && branchFromShopSlug('karanthai') === 'pos1' && branchFromShopSlug('Pollachi') === 'pos3' && branchFromShopSlug('pos2') === 'pos2' && branchFromShopSlug('nowhere') === null && branchFromShopSlug(undefined) === null,
-        'shop: each branch has its own link /shop/<place> that opens that branch', own.join(' '))
+      check(own.join(' ') === 'https://take250.in/shop/karanthai https://take250.in/shop https://take250.in/shop'
+        && branchFromShopSlug('karanthai') === 'pos1' && branchFromShopSlug('Karanthai') === 'pos1' && branchFromShopSlug('pollachi') === null && branchFromShopSlug('pos2') === null && branchFromShopSlug('nowhere') === null && branchFromShopSlug(undefined) === null,
+        'shop: Karanthai has its own link /shop/karanthai; Kinathukadavu and Pollachi use /shop', own.join(' '))
       const inv = whatsappToUrl('9811100077', shopInviteText(links[0], 'Meena'))
       check(inv === `https://wa.me/919811100077?text=${encodeURIComponent('Hi Meena! Click here to order from here: https://take250.vercel.app/shop')}` && shopInviteText(links[0]).startsWith('Hi! Click here to order from here'),
         'shop: "Send to a customer" opens that customer\'s WhatsApp chat with the /shop link typed in', inv)

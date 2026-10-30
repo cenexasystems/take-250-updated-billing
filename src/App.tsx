@@ -243,7 +243,7 @@ function AppShell() {
               </Suspense>
             }
           />
-          {/* one branch's own shop link: /shop/karanthai, /shop/kinathukadavu, /shop/pollachi */}
+          {/* a branch's own shop link: /shop/karanthai (other addresses fall back to the shop picker) */}
           <Route
             path="/shop/:slug"
             element={

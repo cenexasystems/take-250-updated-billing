@@ -92,9 +92,9 @@ export const PERMISSIONS = {
   'shop.public':           { roles: 'public' as Allowed, scope: 'none' as Scope },
   // the online catalogue + shop link / customers: Admin (branch in the switcher) and Manager (own branch, from the token)
   'shop.catalogue':        { roles: AM, scope: 'branch' as Scope },
-  // enquiry dashboard: Admin sees every branch (or one), Manager only the token's branch. Scope 'none' so no branch selector
-  // is accepted; the handlers lock a Manager to session.branch themselves (enquiryBranchLock in routes/shop.ts).
-  'shop.enquiries':        { roles: AM, scope: 'none' as Scope },
+  // enquiry dashboard: Admin only (every branch, or one). Scope 'none' so no branch selector is accepted; the handlers
+  // would lock any non-admin role to session.branch (enquiryBranchLock in routes/shop.ts), but only the Admin is allowed.
+  'shop.enquiries':        { roles: A, scope: 'none' as Scope },
   'shop.enquiries.delete': { roles: A, scope: 'none' as Scope },
   // public invoice lookup (row 35): rate limited, no auth
   'public.invoice':        { roles: 'public' as Allowed, scope: 'none' as Scope },

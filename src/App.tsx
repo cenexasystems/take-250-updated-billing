@@ -112,8 +112,10 @@ function AppShell() {
   // the public shop never shows staff overlays (alarm, polling), even in a browser that is signed in
   const isShopRoute = location.pathname === '/shop' || location.pathname.startsWith('/shop/')
   const hasStaffOrAdminAccess = Boolean(isLoggedIn && (role === 'admin' || role === 'manager' || role === 'staff') && !isLoginRoute && !isShopRoute)
-  // Admin only: new online-shop requests of any branch (popup + sound + sidebar badge), only while an Admin tab is open
-  useEnquiryPolling(hasStaffOrAdminAccess && role === 'admin')
+  // new online-shop requests (popup + sound + sidebar badge) while the tab is open: Admin hears every branch,
+  // a Manager only their own (the server scopes the poll)
+  const hearsEnquiries = hasStaffOrAdminAccess && (role === 'admin' || role === 'manager')
+  useEnquiryPolling(hearsEnquiries)
   // Alarm only for the branch being worked in (all branches in the admin's global view)
   useLowStockMonitor(hasStaffOrAdminAccess, role, activeBranch && activeBranch !== 'all' ? activeBranch : null)
 
@@ -248,7 +250,7 @@ function AppShell() {
 
       {/* Global Low Stock Sound & Visual Alarm for Admin and Staff Panels */}
       {hasStaffOrAdminAccess && <LowStockAlarmModal />}
-      {hasStaffOrAdminAccess && role === 'admin' && <EnquiryAlert />}
+      {hearsEnquiries && <EnquiryAlert />}
       <ShareToast />
     </div>
   )

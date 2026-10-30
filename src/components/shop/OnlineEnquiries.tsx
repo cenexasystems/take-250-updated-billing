@@ -27,10 +27,11 @@ const dmy = (iso?: string | null) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 
 const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 /**
- * Admin: online-shop requests in the app's table style. Inside a branch (`branch` set) only that branch's requests; the
- * Global Admin view (`branch` null) shows all branches with a branch filter. Customer text is shown as text (React escapes it).
+ * Online-shop requests in the app's table style. Inside a branch (`branch` set) only that branch's requests; the
+ * Global Admin view (`branch` null) shows all branches with a branch filter. A Manager always sees only their own branch
+ * (the server enforces it) and cannot delete. Customer text is shown as text (React escapes it).
  */
-export default function OnlineEnquiries({ branch = null }: { branch?: string | null }) {
+export default function OnlineEnquiries({ branch = null, canDelete = true, isAdmin = true }: { branch?: string | null; canDelete?: boolean; isAdmin?: boolean }) {
   const branches = useBranchStore((s) => s.branches)
   const focusId = useShopAlertStore((s) => s.focusId)
   const focus = useShopAlertStore((s) => s.focus)
@@ -158,7 +159,7 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
             </button>
           ))}
         </div>
-        <p className="text-[11px] font-bold text-[#374151]">{rows.length} request(s){branch ? ' for this branch · open Global Admin to see every branch' : ''}</p>
+        <p className="text-[11px] font-bold text-[#374151]">{rows.length} request(s){branch ? (isAdmin ? ' for this branch · open Global Admin to see every branch' : ' for this branch') : ''}</p>
         {error && <p className="text-xs font-bold text-red-600" role="alert">{error}</p>}
 
         <div className="overflow-x-auto rounded-xl border border-[#E5E7EB]/60 bg-[#FBFAF6]">
@@ -246,10 +247,12 @@ export default function OnlineEnquiries({ branch = null }: { branch?: string | n
                         className="w-full rounded-lg border border-gray-200 px-2 py-1 text-xs" data-testid="enq-admin-note" />
                     </td>
                     <td className="px-2 py-3">
-                      <button type="button" disabled={saving === e.id} onClick={(ev) => { ev.stopPropagation(); void remove(e) }} aria-label={`Delete ${e.enquiry_no}`}
-                        className="inline-flex h-9 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-[11px] font-black text-red-700 hover:bg-red-100 cursor-pointer disabled:opacity-50" data-testid="enq-delete">
-                        <Trash2 size={12} /> Delete
-                      </button>
+                      {canDelete && (
+                        <button type="button" disabled={saving === e.id} onClick={(ev) => { ev.stopPropagation(); void remove(e) }} aria-label={`Delete ${e.enquiry_no}`}
+                          className="inline-flex h-9 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-[11px] font-black text-red-700 hover:bg-red-100 cursor-pointer disabled:opacity-50" data-testid="enq-delete">
+                          <Trash2 size={12} /> Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )

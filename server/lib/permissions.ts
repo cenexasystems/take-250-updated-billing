@@ -89,9 +89,12 @@ export const PERMISSIONS = {
   // online shop (0016). PUBLIC, allow-listed: the shop's branches, a branch's "show online" catalogue, sending a request
   // (rate limited per IP, honeypot, idempotency key). The customer names the branch; the server checks it is active.
   'shop.public':           { roles: 'public' as Allowed, scope: 'none' as Scope },
-  // Admin only: the online catalogue of the branch in the switcher, and the enquiry dashboard (all branches or one)
+  // Admin only: the online catalogue of the branch in the switcher
   'shop.catalogue':        { roles: A, scope: 'branch' as Scope },
-  'shop.enquiries':        { roles: A, scope: 'global' as Scope },
+  // enquiry dashboard: Admin sees every branch (or one), Manager only the token's branch. Scope 'none' so no branch selector
+  // is accepted; the handlers lock a Manager to session.branch themselves (enquiryBranchLock in routes/shop.ts).
+  'shop.enquiries':        { roles: AM, scope: 'none' as Scope },
+  'shop.enquiries.delete': { roles: A, scope: 'none' as Scope },
   // public invoice lookup (row 35): rate limited, no auth
   'public.invoice':        { roles: 'public' as Allowed, scope: 'none' as Scope },
 } as const

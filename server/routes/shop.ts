@@ -21,6 +21,13 @@ const SHOP_ID = /^[a-z0-9_]{2,32}$/
 const clean = (max: number) => z.string().max(max * 2).transform((v) => v.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max))
 export const ENQUIRY_STATUSES = ['new', 'contacted', 'confirmed', 'delivered', 'cancelled'] as const
 
+/** The branch a Manager is locked to on the enquiry routes (null = Admin, every branch). Never taken from the request. */
+function enquiryBranchLock(session: { role: string; branch: string | null } | null): string | null {
+  if (session?.role === 'admin') return null
+  if (!session?.branch) throw new ApiError(403, 'Forbidden')
+  return session.branch
+}
+
 async function activeShop(db: Db, id: string) {
   if (!SHOP_ID.test(id)) throw notFound('This shop is not available')
   const b = (await db.query(`SELECT id FROM public.branches WHERE id = $1 AND is_active`, [id])).rows[0]
@@ -173,7 +180,7 @@ const adminRoutes = [
     },
   }),
 
-  // ---- enquiry dashboard: all branches, or one (in_branch), Admin only
+  // ---- enquiry dashboard: Admin all branches or one (in_branch); Manager only their own branch (in_branch ignored)
   route({
     method: 'get', path: '/api/shop-admin/enquiries', perm: 'shop.enquiries',
     query: z.object({
@@ -181,12 +188,14 @@ const adminRoutes = [
       from: z.string().max(40).optional(), to: z.string().max(40).optional(), q: z.string().max(100).optional(),
       limit: z.coerce.number().int().min(1).max(1000).default(300),
     }).strict(),
-    async handler({ db, query }) {
+    async handler({ db, query, session }) {
+      const lock = enquiryBranchLock(session)
       const p: unknown[] = []
       const bind = (v: unknown) => { p.push(v); return `$${p.length}` }
       const conds: string[] = ['true']
       if (query.status) conds.push(`e.status = ${bind(query.status)}`)
-      if (query.in_branch) conds.push(`e.branch_id = ${bind(query.in_branch)}`)
+      const only = lock ?? query.in_branch
+      if (only) conds.push(`e.branch_id = ${bind(only)}`)
       if (query.from) conds.push(`e.created_at >= ${bind(query.from)}::timestamptz`)
       if (query.to) conds.push(`e.created_at <= ${bind(query.to)}::timestamptz`)
       if (query.q) {
@@ -203,23 +212,24 @@ const adminRoutes = [
                             FROM public.shop_enquiry_items i WHERE i.enquiry_id = e.id AND i.branch_id = e.branch_id), '[]'::jsonb) AS items
            FROM public.shop_enquiries e JOIN public.branches b ON b.id = e.branch_id
           WHERE ${conds.join(' AND ')} ORDER BY e.created_at DESC LIMIT ${query.limit}`, p)
-      // New counts: all branches (Global Admin badge) and per branch (the badge inside a branch)
-      const counts = await db.query(`SELECT count(*) FILTER (WHERE status = 'new')::int AS new_count, (SELECT COALESCE(jsonb_object_agg(branch_id, n), '{}'::jsonb) FROM (SELECT branch_id, count(*)::int n FROM public.shop_enquiries WHERE status = 'new' GROUP BY branch_id) x) AS new_by_branch FROM public.shop_enquiries`)
+      // New counts: all branches (Global Admin badge) and per branch (the badge inside a branch); a Manager's own branch only
+      const counts = await db.query(`SELECT count(*) FILTER (WHERE status = 'new')::int AS new_count, (SELECT COALESCE(jsonb_object_agg(branch_id, n), '{}'::jsonb) FROM (SELECT branch_id, count(*)::int n FROM public.shop_enquiries WHERE status = 'new' AND ($1::text IS NULL OR branch_id = $1) GROUP BY branch_id) x) AS new_by_branch FROM public.shop_enquiries WHERE ($1::text IS NULL OR branch_id = $1)`, [lock])
       return { enquiries: r.rows, new_count: counts.rows[0].new_count, new_by_branch: counts.rows[0].new_by_branch ?? {} }
     },
   }),
-  // the Admin's notification poll (~12 s): New count + the requests that arrived after `since`, any branch
+  // the notification poll (~12 s): New count + the requests that arrived after `since`; Admin any branch, Manager own branch
   route({
     method: 'get', path: '/api/shop-admin/enquiries/pulse', perm: 'shop.enquiries',
     query: z.object({ since: z.string().max(40).optional() }).strict(),
-    async handler({ db, query }) {
+    async handler({ db, query, session }) {
+      const lock = enquiryBranchLock(session)
       // latest as TEXT: full microsecond precision, so "after since" never re-reports the newest request
-      const n = (await db.query(`SELECT count(*) FILTER (WHERE status = 'new')::int AS n, max(created_at)::text AS latest, (SELECT COALESCE(jsonb_object_agg(branch_id, n), '{}'::jsonb) FROM (SELECT branch_id, count(*)::int n FROM public.shop_enquiries WHERE status = 'new' GROUP BY branch_id) x) AS new_by_branch FROM public.shop_enquiries`)).rows[0]
+      const n = (await db.query(`SELECT count(*) FILTER (WHERE status = 'new')::int AS n, max(created_at)::text AS latest, (SELECT COALESCE(jsonb_object_agg(branch_id, n), '{}'::jsonb) FROM (SELECT branch_id, count(*)::int n FROM public.shop_enquiries WHERE status = 'new' AND ($1::text IS NULL OR branch_id = $1) GROUP BY branch_id) x) AS new_by_branch FROM public.shop_enquiries WHERE ($1::text IS NULL OR branch_id = $1)`, [lock])).rows[0]
       const fresh = query.since
         ? (await db.query(
             `SELECT e.id, e.enquiry_no, e.branch_id, b.short_label AS branch_name, e.customer_name, e.created_at
                FROM public.shop_enquiries e JOIN public.branches b ON b.id = e.branch_id
-              WHERE e.created_at > $1::timestamptz ORDER BY e.created_at DESC LIMIT 10`, [query.since])).rows.map((r) => ({ ...r, created_at: r.created_at }))
+              WHERE e.created_at > $1::timestamptz AND ($2::text IS NULL OR e.branch_id = $2) ORDER BY e.created_at DESC LIMIT 10`, [query.since, lock])).rows.map((r) => ({ ...r, created_at: r.created_at }))
         : []
       return { new_count: n.n, new_by_branch: n.new_by_branch ?? {}, latest: n.latest, fresh }
     },
@@ -232,8 +242,10 @@ const adminRoutes = [
       delivery_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Delivery date must be a date').nullable(),
     }).partial().strict(),
     async handler({ db, body, params, session }) {
+      const lock = enquiryBranchLock(session)
       if (!/^[0-9a-f-]{36}$/i.test(params.id)) throw notFound()
-      const e = (await db.query(`SELECT id, branch_id FROM public.shop_enquiries WHERE id = $1`, [params.id])).rows[0]
+      // a Manager reaching another branch's request gets 404, as if it did not exist
+      const e = (await db.query(`SELECT id, branch_id FROM public.shop_enquiries WHERE id = $1 AND ($2::text IS NULL OR branch_id = $2)`, [params.id, lock])).rows[0]
       if (!e) throw notFound()
       return db.tx(async (t) => {
         if (body.status) await t.query(`SELECT public.set_shop_enquiry_status($1, $2, $3, $4)`, [e.id, e.branch_id, body.status, session!.role])
@@ -259,7 +271,7 @@ const adminRoutes = [
   }),
   // Admin only: remove a request for good (its items and status history go with it, ON DELETE CASCADE)
   route({
-    method: 'delete', path: '/api/shop-admin/enquiries/:id', perm: 'shop.enquiries',
+    method: 'delete', path: '/api/shop-admin/enquiries/:id', perm: 'shop.enquiries.delete',
     async handler({ db, params }) {
       if (!/^[0-9a-f-]{36}$/i.test(params.id)) throw notFound()
       const r = await db.query(`DELETE FROM public.shop_enquiries WHERE id = $1`, [params.id])
@@ -269,9 +281,10 @@ const adminRoutes = [
   }),
   route({
     method: 'get', path: '/api/shop-admin/enquiries/:id/history', perm: 'shop.enquiries',
-    async handler({ db, params }) {
+    async handler({ db, params, session }) {
+      const lock = enquiryBranchLock(session)
       if (!/^[0-9a-f-]{36}$/i.test(params.id)) throw notFound()
-      const r = await db.query(`SELECT old_status, new_status, changed_at, changed_by_role FROM public.shop_enquiry_status_history WHERE enquiry_id = $1 ORDER BY changed_at, id`, [params.id])
+      const r = await db.query(`SELECT old_status, new_status, changed_at, changed_by_role FROM public.shop_enquiry_status_history WHERE enquiry_id = $1 AND ($2::text IS NULL OR branch_id = $2) ORDER BY changed_at, id`, [params.id, lock])
       return { history: r.rows }
     },
   }),

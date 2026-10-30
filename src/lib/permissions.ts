@@ -29,9 +29,10 @@ export const TAB_ACCESS: Record<TabKey, Role[]> = {
   branch_hub: ['staff'],
   expenses: ['admin', 'manager'],
   coupons: ['admin'],
-  // the online shop (0016): the branch's online catalogue and the enquiry dashboard, Admin only
+  // the online shop (0016): the branch's online catalogue is Admin only; the enquiry dashboard is Admin (every branch)
+  // and Manager (own branch only, enforced by the server)
   online_shop: ['admin'],
-  online_enquiries: ['admin'],
+  online_enquiries: ['admin', 'manager'],
   returns: ['admin', 'manager'], // reached from Order History (a Returns button), not a sidebar item
   store_settings: ['admin'],
   whatsapp: ['admin', 'manager'],
@@ -49,14 +50,14 @@ export const TAB_ACCESS: Record<TabKey, Role[]> = {
 /** Sidebar order (the original's), per portal. Manager = admin's list minus the Analytics Dashboard. */
 export const NAV_ORDER: Record<Role, TabKey[]> = {
   admin: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'pos_analytics', 'coupons', 'online_shop', 'online_enquiries', 'store_settings'],
-  manager: ['billing', 'inventory', 'expenses', 'advance_orders', 'history'],
+  manager: ['billing', 'inventory', 'expenses', 'advance_orders', 'history', 'online_enquiries'],
   staff: ['branch_hub', 'billing', 'advance_orders', 'history'],
 }
 export const GLOBAL_NAV: TabKey[] = ['business_overview', 'online_enquiries', 'staff_memberships']
 
 export type Feature =
   | 'inventory.delete' | 'catalog.edit' | 'advance.delete' | 'orders.status' | 'orders.delete' | 'orders.return' | 'settings.write' | 'coupons.manage'
-  | 'coupons.send' | 'customers.lookup' | 'shop.manage'
+  | 'coupons.send' | 'customers.lookup' | 'shop.manage' | 'enquiries.view' | 'enquiries.delete'
   | 'branch.switch' | 'passcodes.manage' | 'analytics.view' | 'global.view' | 'expenses.use'
 
 export const FEATURE_ACCESS: Record<Feature, Role[]> = {
@@ -69,7 +70,9 @@ export const FEATURE_ACCESS: Record<Feature, Role[]> = {
   'settings.write': ['admin'],
   'coupons.manage': ['admin'],
   'coupons.send': ['admin'], // Send button on each coupon (PDF to a customer)
-  'shop.manage': ['admin'], // online catalogue + enquiry dashboard (0016)
+  'shop.manage': ['admin'], // online catalogue (0016)
+  'enquiries.view': ['admin', 'manager'], // enquiry dashboard: list, status, notes, delivery (Manager: own branch only)
+  'enquiries.delete': ['admin'], // removing a request for good
   'customers.lookup': ['admin', 'manager', 'staff'], // POS status line under the phone field + that customer's coupon status
   'expenses.use': ['admin', 'manager'],
   'branch.switch': ['admin'],
@@ -89,7 +92,9 @@ export const FEATURE_SERVER_PERM: Record<Feature, string[]> = {
   'settings.write': ['settings.write'],
   'coupons.manage': ['coupons.write', 'coupons.read'],
   'coupons.send': ['coupons.send'],
-  'shop.manage': ['shop.catalogue', 'shop.enquiries'],
+  'shop.manage': ['shop.catalogue'],
+  'enquiries.view': ['shop.enquiries'],
+  'enquiries.delete': ['shop.enquiries.delete'],
   'customers.lookup': ['customers.lookup'],
   'expenses.use': ['expenses.read', 'expenses.write'],
   'branch.switch': [],

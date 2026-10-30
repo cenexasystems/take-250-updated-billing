@@ -140,20 +140,46 @@ export async function shopSuite(c: ShopCtx) {
     }
     const search = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { q: '98765 00088' } })
     check((search.body.enquiries as any[]).some((e) => e.enquiry_no === no1), `${L} search by phone finds the request`)
-    for (const who of [mgr, staff]) {
-      const codes = [
-        (await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[who] })).status,
-        (await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[who], query: { branch_id: other } })).status,
-        (await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[who], query: { in_branch: other } })).status,
-        (await call('GET', '/api/shop-admin/enquiries/pulse', { cookie: cookies[who] })).status,
-        (await call('PATCH', `/api/shop-admin/enquiries/${e1.body.enquiry ? (await one(`SELECT id FROM shop_enquiries WHERE enquiry_no = $1`, [no1])).id : 'x'}`, { cookie: cookies[who], body: { status: 'contacted' } })).status,
-        (await call('GET', '/api/shop-admin/catalogue', { cookie: cookies[who] })).status,
-        (await call('GET', '/api/shop-admin/catalogue', { cookie: cookies[who], query: { branch_id: other } })).status,
-        (await call('PATCH', `/api/shop-admin/catalogue/${P1}`, { cookie: cookies[who], body: { show_online: false } })).status,
-      ]
-      check(codes.every((x) => x === 403), `${L} ${who} gets 403 on the catalogue and enquiry endpoints (forged branch_id too)`, JSON.stringify(codes))
-    }
     const id1 = (await one(`SELECT id FROM shop_enquiries WHERE enquiry_no = $1`, [no1])).id
+    // a request in the OTHER branch, to prove a Manager never sees or touches it
+    const eo = await call('POST', '/api/shop/enquiries', { body: { ...body({ shop: other, items: [{ product_id: O1, quantity: 1 }] }) }, ip: `${ip}8` })
+    const idOther = (await one(`SELECT id FROM shop_enquiries WHERE enquiry_no = $1`, [eo.body.enquiry?.enquiry_no])).id
+    check(eo.status === 201 && !!idOther, `${L} a request exists in ${other} for the isolation checks`, JSON.stringify(eo.body))
+    // Staff: no catalogue, no enquiries
+    {
+      const codes = [
+        (await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[staff] })).status,
+        (await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[staff], query: { in_branch: other } })).status,
+        (await call('GET', '/api/shop-admin/enquiries/pulse', { cookie: cookies[staff] })).status,
+        (await call('PATCH', `/api/shop-admin/enquiries/${id1}`, { cookie: cookies[staff], body: { status: 'contacted' } })).status,
+        (await call('GET', `/api/shop-admin/enquiries/${id1}/history`, { cookie: cookies[staff] })).status,
+        (await call('DELETE', `/api/shop-admin/enquiries/${id1}`, { cookie: cookies[staff] })).status,
+        (await call('GET', '/api/shop-admin/catalogue', { cookie: cookies[staff] })).status,
+        (await call('PATCH', `/api/shop-admin/catalogue/${P1}`, { cookie: cookies[staff], body: { show_online: false } })).status,
+      ]
+      check(codes.every((x) => x === 403), `${L} ${staff} gets 403 on the catalogue and enquiry endpoints`, JSON.stringify(codes))
+    }
+    // Manager: sees and works on their OWN branch's requests only; no delete, no catalogue
+    {
+      const list = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[mgr] })
+      const forgedIn = await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[mgr], query: { in_branch: other } })
+      const pulseM = await call('GET', '/api/shop-admin/enquiries/pulse', { cookie: cookies[mgr], query: { since: '2000-01-01T00:00:00Z' } })
+      const ownOnly = (rows: any[]) => rows.length > 0 && rows.every((e) => e.branch_id === b)
+      check(list.status === 200 && ownOnly(list.body.enquiries) && (list.body.enquiries as any[]).some((e) => e.id === id1), `${L} ${mgr} lists only ${b}'s requests`, JSON.stringify((list.body.enquiries as any[])?.map((e) => e.branch_id)))
+      check(forgedIn.status === 200 && ownOnly(forgedIn.body.enquiries), `${L} ${mgr} asking for ${other} (in_branch) still gets only ${b}`)
+      check(Object.keys(list.body.new_by_branch ?? {}).every((k) => k === b) && Object.keys(pulseM.body.new_by_branch ?? {}).every((k) => k === b), `${L} ${mgr}'s New counts cover ${b} only`, JSON.stringify(pulseM.body.new_by_branch))
+      check(pulseM.status === 200 && (pulseM.body.fresh as any[]).every((e) => e.branch_id === b), `${L} ${mgr}'s notification poll reports only ${b}'s requests`)
+      check((await call('GET', '/api/shop-admin/enquiries', { cookie: cookies[mgr], query: { branch_id: other } })).status === 400, `${L} ${mgr} sending a branch selector is refused`)
+      check((await call('PATCH', `/api/shop-admin/enquiries/${idOther}`, { cookie: cookies[mgr], body: { status: 'contacted' } })).status === 404, `${L} ${mgr} cannot change ${other}'s request (404)`)
+      check(((await call('GET', `/api/shop-admin/enquiries/${idOther}/history`, { cookie: cookies[mgr] })).body.history as any[]).length === 0, `${L} ${mgr} sees no history of ${other}'s request`)
+      check((await call('DELETE', `/api/shop-admin/enquiries/${id1}`, { cookie: cookies[mgr] })).status === 403, `${L} ${mgr} cannot delete a request (403)`)
+      const cat = [
+        (await call('GET', '/api/shop-admin/catalogue', { cookie: cookies[mgr] })).status,
+        (await call('PATCH', `/api/shop-admin/catalogue/${P1}`, { cookie: cookies[mgr], body: { show_online: false } })).status,
+      ]
+      check(cat.every((x) => x === 403), `${L} ${mgr} gets 403 on the online catalogue`, JSON.stringify(cat))
+      await call('DELETE', `/api/shop-admin/enquiries/${idOther}`, { cookie: cookies.admin })
+    }
     const st = await call('PATCH', `/api/shop-admin/enquiries/${id1}`, { cookie: cookies.admin, body: { status: 'contacted', delivery_charge: 60, admin_note: 'Will deliver Friday' } })
     const hist = (await call('GET', `/api/shop-admin/enquiries/${id1}/history`, { cookie: cookies.admin })).body.history as any[]
     check(st.status === 200 && st.body.enquiry.status === 'contacted' && num(st.body.enquiry.delivery_charge) === 60 && st.body.enquiry.admin_note === 'Will deliver Friday', `${L} status, delivery charge and admin note saved`, JSON.stringify(st.body))
@@ -170,7 +196,9 @@ export async function shopSuite(c: ShopCtx) {
     check(bad.every((r) => r.status === 400) && /valid date/.test(bad[0].body.error) && /before the request date/.test(bad[1].body.error) && /one year/.test(bad[2].body.error),
       `${L} an impossible date, a date before the request, more than a year ahead, or text is refused`, bad.map((r) => `${r.status} ${r.body?.error}`).join(' | '))
     check(((await call('GET', '/api/shop-admin/enquiries', { cookie: cookies.admin, query: { in_branch: b } })).body.enquiries as any[]).find((x) => x.id === id1)?.delivery_date === in3, `${L} a refused date leaves the saved one unchanged`)
-    check((await pd(in3, mgr)).status === 403 && (await pd(in3, staff)).status === 403, `${L} Manager and Staff cannot set a delivery date (403)`)
+    check((await pd(in3, staff)).status === 403, `${L} Staff cannot set a delivery date (403)`)
+    const mgrD = await pd(in3, mgr)
+    check(mgrD.status === 200 && mgrD.body.enquiry.delivery_date === in3, `${L} the branch Manager can set a delivery date on their own branch's request`, JSON.stringify(mgrD.body))
     const clr = await pd(null)
     check(clr.status === 200 && clr.body.enquiry.delivery_date === null, `${L} the delivery date can be cleared`)
     await pd(in3)
